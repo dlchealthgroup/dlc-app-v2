@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>DLC OS</title>
+<meta name="theme-color" content="#123A63">
+<link rel="manifest" href="./manifest.webmanifest">
+<link rel="apple-touch-icon" href="./dlc-apple-touch-180.png">
+<style>
+:root{
+  --navy:#123A63; --navy-2:#1C4E82; --sky:#2B6CB0; --sky-soft:#E6EEF6;
+  --bg:#F4F7FA; --panel:#fff; --ink:#152238; --muted:#5B6B7F; --line:#DCE5EE;
+  --warn:#B45309; --ok:#1F8A5B; --dang:#9B2C2C;
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);font-size:15px;line-height:1.45}
+body{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+button,input,select{font:inherit;color:inherit}
+.hide{display:none!important}
+
+/* ---------- acceso ---------- */
+#login{min-height:100dvh;display:grid;place-items:center;padding:24px}
+.lbox{width:100%;max-width:380px;background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:26px;box-shadow:0 10px 30px rgba(16,40,70,.08)}
+.lbox img{height:38px;margin-bottom:18px}
+.lbox h1{font-size:19px;margin:0 0 4px;color:var(--navy)}
+.lbox p.sub{margin:0 0 18px;color:var(--muted);font-size:13.5px}
+label{display:block;font-size:12.5px;color:var(--muted);margin:12px 0 4px;font-weight:600}
+input,select{width:100%;border:1px solid var(--line);border-radius:10px;padding:11px 12px;background:var(--bg);min-height:44px}
+input:focus,select:focus{outline:2px solid var(--sky);outline-offset:0;background:#fff}
+.btn{border:1px solid var(--navy);background:var(--navy);color:#fff;border-radius:10px;padding:11px 16px;font-weight:700;cursor:pointer;min-height:44px}
+.btn.sec{background:var(--panel);color:var(--navy)}
+.btn.block{width:100%;margin-top:18px}
+.btn[disabled]{opacity:.6;cursor:default}
+.msg{margin-top:12px;font-size:13.5px;color:var(--dang);min-height:20px}
+
+/* ---------- estructura ---------- */
+header{position:sticky;top:0;z-index:40;background:var(--panel);border-bottom:1px solid var(--line)}
+.top{max-width:1240px;margin:0 auto;padding:10px 16px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.top img{height:30px}
+.top .sp{flex:1}
+.who{font-size:13px;color:var(--muted)}
+.who b{color:var(--navy)}
+.reg{border:1px solid var(--line);background:var(--panel);border-radius:9px;padding:7px 12px;font-weight:600;color:var(--navy);cursor:pointer}
+main{max-width:1240px;margin:0 auto;padding:16px}
+.nav{display:flex;gap:2px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:4px;margin-bottom:14px;overflow-x:auto}
+.nav button{border:0;background:none;padding:9px 15px;border-radius:9px;font-weight:600;color:var(--muted);cursor:pointer;white-space:nowrap}
+.nav button[aria-selected=true]{background:var(--sky-soft);color:var(--navy)}
+
+/* ---------- indicadores ---------- */
+.kpis{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;margin-bottom:16px}
+.kpi{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px}
+.kpi b{display:block;font-size:26px;color:var(--navy);line-height:1.1}
+.kpi span{font-size:12.5px;color:var(--muted)}
+
+/* ---------- filtros y lista ---------- */
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:hidden}
+.filtros{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;padding:14px;border-bottom:1px solid var(--line)}
+.buscar{position:relative;margin-bottom:12px}
+.buscar input{padding-left:38px;background:var(--panel)}
+.buscar::before{content:"⌕";position:absolute;left:13px;top:50%;transform:translateY(-50%);font-size:20px;color:var(--muted)}
+.chips{display:flex;gap:6px;flex-wrap:wrap;padding:0 14px 12px}
+.chip{background:var(--sky-soft);color:var(--navy);border:0;border-radius:999px;padding:5px 12px;font-size:12.5px;font-weight:600;cursor:pointer}
+.cuenta{padding:10px 14px;border-bottom:1px solid var(--line);color:var(--muted);font-size:13.5px}
+.cuenta b{color:var(--navy);font-size:17px}
+.fila{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1.6fr) minmax(0,1fr) auto;gap:10px;align-items:center;padding:11px 14px;border-top:1px solid var(--line);cursor:pointer;background:none;border-left:0;border-right:0;border-bottom:0;width:100%;text-align:left}
+.fila:hover{background:var(--bg)}
+.fila .nm{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fila .sm,.sm{font-size:12.5px;color:var(--muted)}
+.fila .sm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pill{font-size:11px;font-weight:700;border-radius:999px;padding:2px 8px;white-space:nowrap}
+.p-urg{background:#FCEBD0;color:#8A5A00}
+.p-est{background:var(--sky-soft);color:var(--navy)}
+.vacio{padding:26px 14px;text-align:center;color:var(--muted)}
+.mas{width:100%;border:0;border-top:1px solid var(--line);background:var(--bg);padding:13px;font-weight:700;color:var(--navy);cursor:pointer}
+.cargando{padding:14px;color:var(--muted);font-size:13.5px}
+
+/* ---------- ficha ---------- */
+dialog{border:0;border-radius:16px;padding:0;max-width:640px;width:calc(100% - 28px);box-shadow:0 20px 50px rgba(10,20,30,.25)}
+dialog::backdrop{background:rgba(15,30,50,.4)}
+.fbox{padding:20px}
+.fh{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:6px}
+.fh h2{margin:0;font-size:18px;color:var(--navy)}
+.x{border:0;background:none;font-size:20px;cursor:pointer;color:var(--muted)}
+.blk{border:1px solid var(--line);border-radius:12px;padding:12px;margin-top:12px}
+.blk h3{margin:0 0 6px;font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.dias{display:flex;gap:4px;margin-top:6px}
+.dias span{width:24px;height:24px;border-radius:6px;display:grid;place-items:center;font-size:11px;font-weight:700;background:var(--bg);color:var(--muted);border:1px solid var(--line)}
+.dias span.on{background:var(--navy);color:#fff;border-color:var(--navy)}
+@media (max-width:760px){
+  .fila{grid-template-columns:minmax(0,1fr) auto}
+  .fila .col3{display:none}
+  main{padding:12px}
+}
+</style>
+</head>
+<body>
+
+<!-- ACCESO -->
+<section id="login">
+  <form class="lbox" id="lform">
+    <img src="./logo.png" alt="DLC Health Group">
+    <h1>DLC OS</h1>
+    <p class="sub">Entra con tu correo y contraseña.</p>
+    <label for="lu">Correo</label>
+    <input id="lu" type="email" autocomplete="username" required>
+    <label for="lp">Contraseña</label>
+    <input id="lp" type="password" autocomplete="current-password" required>
+    <button class="btn block" id="lbtn">Entrar</button>
+    <div class="msg" id="lmsg"></div>
+  </form>
+</section>
+
+<!-- APP -->
+<div id="app" class="hide">
+  <header>
+    <div class="top">
+      <img src="./logo.png" alt="DLC">
+      <span class="who" id="who"></span>
+      <span class="sp"></span>
+      <button class="reg" id="salir">Salir</button>
+    </div>
+  </header>
+  <main>
+    <div class="nav" role="tablist">
+      <button data-t="inicio" aria-selected="true">Inicio</button>
+      <button data-t="medicos" aria-selected="false">Médicos</button>
+    </div>
+
+    <section id="vinicio">
+      <div class="kpis" id="kpis"></div>
+      <p class="sm">Versión de pruebas de DLC OS 2.0, conectada a la base de datos nueva. Los datos que ves son los migrados.</p>
+    </section>
+
+    <section id="vmedicos" class="hide">
+      <div class="buscar"><input id="q" type="search" placeholder="Buscar médico, centro o municipio" autocomplete="off"></div>
+      <div class="panel">
+        <div class="filtros">
+          <div><label for="fprov">Provincia</label><select id="fprov"></select></div>
+          <div><label for="fmuni">Municipio</label><select id="fmuni"></select></div>
+          <div><label for="fesp">Especialidad</label><select id="fesp"></select></div>
+          <div><label for="fest">Estado comercial</label><select id="fest"></select></div>
+          <div><label for="forden">Ordenar por</label>
+            <select id="forden">
+              <option value="nombre">Nombre</option>
+              <option value="urgentes">Urgentes primero</option>
+              <option value="reciente">Visita más reciente</option>
+            </select></div>
+        </div>
+        <div class="chips" id="chips"></div>
+        <div class="cuenta" id="cuenta">Cargando…</div>
+        <div id="lista"></div>
+        <button class="mas hide" id="mas">Cargar 50 más</button>
+      </div>
+    </section>
+  </main>
+</div>
+
+<dialog id="ficha"><div class="fbox" id="fbody"></div></dialog>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="./config.js"></script>
+<script src="./app.js?v=2.0.0"></script>
+</body>
+</html>
