@@ -164,6 +164,11 @@ dialog::backdrop{background:rgba(14,47,82,.4)}
 .conex.off{background:var(--warn-bg);color:var(--warn);border:1px solid var(--warn)}
 .conex.esp{background:var(--sky-soft);color:var(--navy);border:1px solid var(--sky)}
 .item .acts .btn{padding:6px 10px;min-height:32px;font-size:12.5px}
+
+.subnav{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
+.subnav button{border:1px solid var(--line);background:var(--panel);border-radius:999px;padding:7px 15px;font-weight:600;color:var(--navy);cursor:pointer}
+.subnav button[aria-pressed=true]{background:var(--navy);color:#fff;border-color:var(--navy)}
+.opt input[type=checkbox]{width:18px;height:18px;min-height:0}
 @media (max-width:900px){ .cols{grid-template-columns:1fr} }
 @media (max-width:760px){
   .fila{grid-template-columns:minmax(0,1fr) auto}
@@ -257,6 +262,8 @@ dialog::backdrop{background:rgba(14,47,82,.4)}
 
     <section id="v-agenda" class="hide"></section>
     <section id="v-rutas" class="hide"></section>
+    <section id="v-config" class="hide"></section>
+    <section id="v-admin" class="hide"></section>
   </main>
 </div>
 
@@ -267,6 +274,6 @@ dialog::backdrop{background:rgba(14,47,82,.4)}
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="./config.js"></script>
-<script src="./app.js?v=2.3.0"></script>
+<script src="./app.js?v=2.4.0"></script>
 </body>
 </html>

@@ -75,7 +75,8 @@ document.addEventListener('click', () => $('umenu').classList.add('hide'));
 $('umenu').addEventListener('click', async e => {
   const b = e.target.closest('[data-u]'); if (!b) return;
   if (b.dataset.u === 'salir') { await db.auth.signOut(); location.reload(); }
-  else alert('Esta sección llega en una entrega posterior.');
+  else if (b.dataset.u === 'cfg') ir('config');
+  else if (b.dataset.u === 'adm') ir('admin');
 });
 
 /* ---------------- navegación ---------------- */
@@ -88,11 +89,13 @@ $('nav').addEventListener('click', e => {
 function ir(t) {
   TAB = t;
   document.querySelectorAll('#nav button[data-t]').forEach(x => x.setAttribute('aria-selected', String(x.dataset.t === t)));
-  ['inicio', 'agenda', 'rutas', 'directorio'].forEach(k => $('v-' + k).classList.toggle('hide', k !== t));
+  ['inicio', 'agenda', 'rutas', 'directorio', 'config', 'admin'].forEach(k => $('v-' + k).classList.toggle('hide', k !== t));
   window.scrollTo({ top: 0 });
   if (t === 'directorio' && !$('lista').children.length) buscar(true);
   if (t === 'agenda') cargarAgenda();
   if (t === 'rutas') cargarRutas();
+  if (t === 'config') cargarConfig();
+  if (t === 'admin') cargarAdmin();
 }
 
 /* ---------------- inicio ---------------- */
@@ -976,6 +979,447 @@ document.addEventListener('click', async e => {
   toast('Añadido a tu agenda el ' + fechaCorta(f));
   cargarInicio();
 });
+
+
+
+/* ============================================================
+   DLC OS 2.0 · Entrega 5: configuración, gestor de rutas y usuarios
+   ============================================================ */
+
+let CFG_SEC = 'prefs', ADM_SEC = 'usuarios', USUARIOS = [], CATS = [];
+const AREAS = [['H', 'Inicio'], ['G', 'Agenda'], ['R', 'Rutas'], ['M', 'Directorio'], ['S', 'Visitas'], ['K', 'Configuración']];
+const NIVELES = ['Sin acceso', 'Ver', 'Editar', 'Completo'];
+const ROLES = ['Administrador', 'Comercial', 'Televenta', 'Solo consulta', 'Medico'];
+const puedeCatalogos = () => PERFIL && (PERFIL.rol === 'Administrador' || ((PERFIL.areas || {}).K || 0) >= 2);
+
+/* ---------------- configuración ---------------- */
+
+async function cargarConfig() {
+  const secs = [['prefs', 'Mis preferencias'], ['rutas', 'Gestor de rutas']]
+    .concat(puedeCatalogos() ? [['cat', 'Clasificadores']] : []);
+  $('v-config').innerHTML = `
+    <div class="saludo"><div><h1>Configuración</h1><div class="fecha">Ajustes de tu cuenta y de la plataforma</div></div></div>
+    <div class="subnav">${secs.map(([k, t]) => `<button data-cs="${k}" aria-pressed="${CFG_SEC === k}">${t}</button>`).join('')}</div>
+    <div id="cfgcuerpo"></div>`;
+  if (CFG_SEC === 'prefs') pintarPrefs();
+  if (CFG_SEC === 'rutas') pintarGestorRutas();
+  if (CFG_SEC === 'cat') pintarCatalogos();
+}
+
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-cs]');
+  if (b) { CFG_SEC = b.dataset.cs; cargarConfig(); }
+  const a = e.target.closest('[data-as]');
+  if (a) { ADM_SEC = a.dataset.as; cargarAdmin(); }
+});
+
+const punto = k => (PERFIL.preferencias || {})[k] || null;
+
+function pintarPrefs() {
+  const s = punto('salida') || { nombre: 'Santpedor', dir: 'Santpedor', lat: 41.7833, lon: 1.8414 };
+  const l = punto('llegada');
+  const caja = (k, x, titulo, sub) => `<div class="card" style="padding:16px">
+    <h2 style="padding:0">${titulo}</h2><p class="sm" style="padding:0">${sub}</p>
+    <div class="g2" style="margin-top:10px">
+      <div><label>Nombre</label><input data-pn="${k}" value="${esc(x ? x.nombre || '' : '')}" placeholder="Casa, Oficina…"></div>
+      <div><label>Dirección</label><input data-pd="${k}" value="${esc(x ? x.dir || '' : '')}" placeholder="Calle, número y población"></div>
+    </div>
+    <div class="sm" style="margin-top:8px" data-pe="${k}">${x && x.lat
+      ? `<b style="color:var(--ok)">✓ Ubicado</b> ${esc(x.dir || '')}`
+      : '<span style="color:var(--warn)">Sin ubicar: pulsa Buscar dirección</span>'}</div>
+    <div class="acts"><button class="btn sec" data-pg="${k}">Buscar dirección</button>
+      <button class="btn sec" data-pgps="${k}">Usar mi ubicación</button></div></div>`;
+
+  $('cfgcuerpo').innerHTML = `
+    <p class="sm">El punto de salida y el de llegada se usan para calcular el plan del día y los recorridos.</p>
+    <div class="cols" style="grid-template-columns:1fr 1fr">
+      ${caja('salida', s, 'Punto de salida', 'Dónde empiezas el día')}
+      ${caja('llegada', l, 'Punto de llegada', 'Déjalo vacío para volver al punto de salida')}
+    </div>
+    <div class="acts" style="justify-content:flex-end"><button class="btn" id="pfguardar">Guardar preferencias</button></div>`;
+
+  $('cfgcuerpo').querySelectorAll('[data-pg]').forEach(b => b.onclick = async () => {
+    const k = b.dataset.pg, dir = $('cfgcuerpo').querySelector(`[data-pd="${k}"]`).value.trim();
+    if (!dir) { toast('Escribe la dirección', true); return; }
+    b.disabled = true; b.textContent = 'Buscando…';
+    try {
+      const r = await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=es&q=' + encodeURIComponent(dir));
+      const j = await r.json();
+      b.disabled = false; b.textContent = 'Buscar dirección';
+      if (!j.length) { toast('No se ha encontrado esa dirección', true); return; }
+      b.dataset.lat = j[0].lat; b.dataset.lon = j[0].lon;
+      $('cfgcuerpo').querySelector(`[data-pe="${k}"]`).innerHTML =
+        `<b style="color:var(--ok)">✓ Ubicado</b> ${esc(j[0].display_name.split(',').slice(0, 3).join(','))}`;
+      toast('Dirección encontrada');
+    } catch (err) {
+      b.disabled = false; b.textContent = 'Buscar dirección';
+      toast('No se ha podido buscar la dirección', true);
+    }
+  });
+
+  $('cfgcuerpo').querySelectorAll('[data-pgps]').forEach(b => b.onclick = () => {
+    const k = b.dataset.pgps;
+    if (!navigator.geolocation) { toast('Este dispositivo no tiene ubicación', true); return; }
+    b.disabled = true; b.textContent = 'Localizando…';
+    navigator.geolocation.getCurrentPosition(p => {
+      b.disabled = false; b.textContent = 'Usar mi ubicación';
+      const g = $('cfgcuerpo').querySelector(`[data-pg="${k}"]`);
+      g.dataset.lat = p.coords.latitude.toFixed(6); g.dataset.lon = p.coords.longitude.toFixed(6);
+      $('cfgcuerpo').querySelector(`[data-pd="${k}"]`).value = 'Mi ubicación';
+      $('cfgcuerpo').querySelector(`[data-pe="${k}"]`).innerHTML = '<b style="color:var(--ok)">✓ Ubicado</b> desde el GPS';
+      toast('Ubicación tomada');
+    }, () => { b.disabled = false; b.textContent = 'Usar mi ubicación'; toast('No se ha podido obtener la ubicación', true); },
+      { enableHighAccuracy: true, timeout: 15000 });
+  });
+
+  $('pfguardar').onclick = async ev => {
+    const leer = k => {
+      const n = $('cfgcuerpo').querySelector(`[data-pn="${k}"]`).value.trim();
+      const d = $('cfgcuerpo').querySelector(`[data-pd="${k}"]`).value.trim();
+      const g = $('cfgcuerpo').querySelector(`[data-pg="${k}"]`);
+      const ant = punto(k) || (k === 'salida' ? s : null);
+      const lat = g.dataset.lat ? +g.dataset.lat : (ant && ant.dir === d ? ant.lat : null);
+      const lon = g.dataset.lon ? +g.dataset.lon : (ant && ant.dir === d ? ant.lon : null);
+      return d ? { nombre: n || d, dir: d, lat, lon } : null;
+    };
+    const salida = leer('salida'), llegada = leer('llegada');
+    if (!salida || !salida.lat) { toast('Ubica el punto de salida antes de guardar', true); return; }
+    if (llegada && !llegada.lat) { toast('Ubica el punto de llegada o déjalo vacío', true); return; }
+    ev.target.disabled = true; ev.target.textContent = 'Guardando…';
+    const prefs = Object.assign({}, PERFIL.preferencias || {}, { salida, llegada });
+    const { data, error } = await db.rpc('guardar_preferencias', { p: prefs });
+    ev.target.disabled = false; ev.target.textContent = 'Guardar preferencias';
+    if (error) { toast('No se ha podido guardar: ' + error.message, true); return; }
+    PERFIL.preferencias = data || prefs;
+    toast(`Guardado · sales de ${salida.nombre} y terminas en ${(llegada || salida).nombre}`);
+    pintarPrefs();
+  };
+}
+
+/* ---------------- gestor de rutas ---------------- */
+
+async function pintarGestorRutas() {
+  $('cfgcuerpo').innerHTML = '<div class="card"><div class="skel"></div><div class="skel" style="width:60%"></div></div>';
+  const { data } = await db.rpc('rutas_visibles');
+  RUTAS = data || [];
+  $('cfgcuerpo').innerHTML = `
+    <div class="acts"><button class="btn" id="rnueva">+ Nueva ruta</button></div>
+    <div class="card">${RUTAS.length ? `<h2>Rutas<span class="n">${RUTAS.length}</span></h2><div class="lista">${
+      RUTAS.map(r => `<div class="item" style="cursor:default">
+        <span class="ic ${r.tipo === 'Urgente' ? 'w' : ''}">${r.tipo === 'Urgente' ? '★' : '◉'}</span>
+        <span class="tx"><b>${esc(r.nombre)}</b><span class="sm">${r.dinamica ? 'Por criterios' : r.n_fijos + ' médicos'} · ${r.visitados} visitados</span></span>
+        <span class="acts" style="margin:0">
+          <button class="btn sec" data-ruta="${r.id}">Planificar</button>
+          ${r.mia || PERFIL.rol === 'Administrador' ? `<button class="btn sec" data-redit="${r.id}">Editar</button>
+          <button class="btn sec" data-rdel="${r.id}">Eliminar</button>` : ''}</span></div>`).join('')}</div>`
+      : '<div class="vacio">Todavía no hay rutas. Crea la primera con el botón de arriba.</div>'}</div>`;
+
+  $('rnueva').onclick = () => editorRuta(null);
+  $('cfgcuerpo').querySelectorAll('[data-redit]').forEach(b => b.onclick = () => editorRuta(b.dataset.redit));
+  $('cfgcuerpo').querySelectorAll('[data-rdel]').forEach(b => b.onclick = async () => {
+    const r = RUTAS.find(x => x.id === b.dataset.rdel);
+    if (!confirm(`¿Eliminar la ruta "${r.nombre}"? Los médicos y sus visitas no se borran.`)) return;
+    const { error } = await db.rpc('guardar_ruta', { p: { id: r.id, activa: false } });
+    if (error) { toast('No se ha podido: ' + error.message, true); return; }
+    toast('Ruta eliminada'); pintarGestorRutas();
+  });
+}
+
+async function editorRuta(id) {
+  const r = id ? RUTAS.find(x => x.id === id) : null;
+  const { data: op } = await db.rpc('opciones_filtros', {});
+  const sel = (lista, v) => '<option value=""></option>' + (lista || []).map(o =>
+    `<option ${v === o.v ? 'selected' : ''}>${esc(o.v)}</option>`).join('');
+
+  $('dbody').innerHTML = `
+    <div class="fh"><div><h2>${id ? 'Editar ruta' : 'Nueva ruta'}</h2>
+      <div class="sm">Por criterios se recalcula sola cada día</div></div>
+      <button class="x" data-cerrar aria-label="Cerrar">✕</button></div>
+    <label for="rn">Nombre</label><input id="rn" value="${esc(r ? r.nombre : '')}" placeholder="p. ej. Urgentes zona alta">
+    <div class="g2">
+      <div><label for="rt">Tipo</label><select id="rt">
+        <option ${r && r.tipo === 'Normal' ? 'selected' : ''}>Normal</option>
+        <option ${r && r.tipo === 'Urgente' ? 'selected' : ''}>Urgente</option></select></div>
+      <div><label for="rd">Contar visitas desde</label><input id="rd" type="date" value="${esc((r && r.desde) || hoyISO())}"></div>
+    </div>
+    <label>Criterios <span class="sm">· deja todo vacío para incluir a todos los que puedas ver</span></label>
+    <div class="g2">
+      <div><label for="cprov">Provincia</label><select id="cprov">${sel(op.provincias)}</select></div>
+      <div><label for="cmuni">Municipio</label><select id="cmuni">${sel(op.municipios)}</select></div>
+    </div>
+    <div class="g2">
+      <div><label for="cesp">Especialidad</label><select id="cesp">${sel(op.especialidades)}</select></div>
+      <div><label for="cest">Estado comercial</label><select id="cest">${sel(op.estados)}</select></div>
+    </div>
+    <div class="g2">
+      <div><label for="csv">Sin visitar hace más de (días)</label><input id="csv" type="number" min="1" max="365" placeholder="p. ej. 20"></div>
+      <div><label for="cdia">Pasan consulta</label><select id="cdia"><option value=""></option>
+        ${DIAS.map(k => `<option value="${k}">${DIAN[k]}</option>`).join('')}</select></div>
+    </div>
+    <label class="opt" style="margin-top:10px"><input type="checkbox" id="curg"> Solo urgentes</label>
+    <div id="rprev" class="sm" style="margin-top:10px"></div>
+    <div class="acts" style="justify-content:flex-end">
+      <button class="btn sec" data-cerrar>Cancelar</button>
+      <button class="btn sec" id="rprob">Ver cuántos cumplen</button>
+      <button class="btn" id="rguardar">${id ? 'Guardar' : 'Crear ruta'}</button>
+    </div>`;
+
+  const reglas = () => {
+    const g = {};
+    if ($('cprov').value) g.provincia = $('cprov').value;
+    if ($('cmuni').value) g.municipio = $('cmuni').value;
+    if ($('cesp').value) g.especialidad = $('cesp').value;
+    if ($('cest').value) g.estado = $('cest').value;
+    if ($('csv').value) g.sinVisita = +$('csv').value;
+    if ($('cdia').value) g.dia = $('cdia').value;
+    if ($('curg').checked) g.urgentes = true;
+    return g;
+  };
+
+  $('rprob').onclick = async ev => {
+    ev.target.disabled = true;
+    const { data } = await db.rpc('ids_filtrados', {
+      f_provincia: reglas().provincia || null, f_municipio: reglas().municipio || null,
+      f_estado: reglas().estado || null, f_especialidad: reglas().especialidad || null,
+      f_urgentes: !!reglas().urgentes
+    });
+    ev.target.disabled = false;
+    $('rprev').innerHTML = `<b>${num((data || []).length)}</b> médicos cumplen ahora estos criterios
+      ${reglas().sinVisita ? ' (antes de aplicar el filtro de días sin visitar)' : ''}.`;
+  };
+
+  $('rguardar').onclick = async ev => {
+    if (!$('rn').value.trim()) { toast('Ponle un nombre a la ruta', true); return; }
+    ev.target.disabled = true; ev.target.textContent = 'Guardando…';
+    const { error } = await db.rpc('guardar_ruta', { p: {
+      id: id || null, nombre: $('rn').value.trim(), tipo: $('rt').value, desde: $('rd').value,
+      visible_para: PERFIL.rol === 'Administrador' ? '*' : '', reglas: reglas(), codigos: []
+    }});
+    ev.target.disabled = false; ev.target.textContent = id ? 'Guardar' : 'Crear ruta';
+    if (error) { toast('No se ha podido guardar: ' + error.message, true); return; }
+    $('dlg').close(); toast('Ruta guardada'); pintarGestorRutas();
+  };
+  $('dlg').showModal();
+}
+
+/* ---------------- clasificadores ---------------- */
+
+async function pintarCatalogos() {
+  $('cfgcuerpo').innerHTML = '<div class="card"><div class="skel"></div><div class="skel" style="width:50%"></div></div>';
+  const { data } = await db.rpc('catalogos_todos');
+  CATS = data || [];
+  const completo = PERFIL.rol === 'Administrador' || ((PERFIL.areas || {}).K || 0) >= 3;
+
+  $('cfgcuerpo').innerHTML = `
+    <p class="sm">Listas que usan todos los usuarios en fichas, visitas y filtros.</p>
+    ${completo ? '<div class="acts"><button class="btn" id="cnuevo">+ Nuevo clasificador</button></div>' : ''}
+    <div class="cols" style="grid-template-columns:repeat(auto-fit,minmax(320px,1fr))">
+      ${CATS.map(c => `<div class="card" style="padding:16px">
+        <h2 style="padding:0">${esc(c.nombre)}</h2>
+        <p class="sm" style="padding:0">${c.valores.filter(v => v.activo).length} valores activos</p>
+        <div class="lista" style="padding:8px 0 0">${c.valores.map(v => `<div class="item" style="cursor:default;padding:6px 8px">
+          <span class="tx"><b style="${v.activo ? '' : 'opacity:.5;text-decoration:line-through'}">${esc(v.valor)}</b>
+            ${v.extra ? `<span class="sm">${v.extra === 'neg' ? 'sin visita' : 'visita realizada'}</span>` : ''}</span>
+          <span class="acts" style="margin:0">
+            <button class="btn sec" data-vtog="${v.id}|${v.activo ? 0 : 1}">${v.activo ? 'Desactivar' : 'Activar'}</button>
+            ${completo ? `<button class="btn sec" data-vdel="${v.id}">Eliminar</button>` : ''}</span></div>`).join('')}</div>
+        <div class="acts"><input data-vnew="${c.id}" placeholder="Nuevo valor" style="flex:1;min-width:140px">
+          <button class="btn sec" data-vadd="${c.id}">Añadir</button></div>
+      </div>`).join('')}
+    </div>`;
+
+  $('cfgcuerpo').querySelectorAll('[data-vadd]').forEach(b => b.onclick = async () => {
+    const inp = $('cfgcuerpo').querySelector(`[data-vnew="${b.dataset.vadd}"]`);
+    if (!inp.value.trim()) return;
+    const { error } = await db.rpc('guardar_valor', { p: { clasificador_id: b.dataset.vadd, valor: inp.value.trim() } });
+    if (error) { toast('No se ha podido: ' + error.message, true); return; }
+    toast('Valor añadido'); cargarCatalogos(); pintarCatalogos();
+  });
+  $('cfgcuerpo').querySelectorAll('[data-vtog]').forEach(b => b.onclick = async () => {
+    const [id, activo] = b.dataset.vtog.split('|');
+    await db.rpc('guardar_valor', { p: { id, activo: activo === '1' } });
+    cargarCatalogos(); pintarCatalogos();
+  });
+  $('cfgcuerpo').querySelectorAll('[data-vdel]').forEach(b => b.onclick = async () => {
+    if (!confirm('¿Eliminar este valor? Las fichas y visitas que ya lo usan lo conservan, pero dejará de aparecer.')) return;
+    const { data: r } = await db.rpc('borrar_valor', { p_id: b.dataset.vdel });
+    if (r && r.ok === false) { toast('No tienes permiso', true); return; }
+    toast('Valor eliminado'); cargarCatalogos(); pintarCatalogos();
+  });
+  const cn = $('cnuevo');
+  if (cn) cn.onclick = async () => {
+    const nombre = prompt('Nombre del clasificador (p. ej. Tipo de centro):', '');
+    if (!nombre) return;
+    const valores = prompt('Valores separados por comas:', '');
+    const { data: r } = await db.rpc('crear_clasificador', {
+      p_nombre: nombre.trim(), p_valores: (valores || '').split(',').map(x => x.trim()).filter(Boolean)
+    });
+    if (r && r.ok === false) { toast('No tienes permiso', true); return; }
+    toast('Clasificador creado'); pintarCatalogos();
+  };
+}
+
+/* ---------------- administración de usuarios ---------------- */
+
+async function cargarAdmin() {
+  $('v-admin').innerHTML = `
+    <div class="saludo"><div><h1>Administración</h1><div class="fecha">Usuarios, permisos y cartera</div></div>
+      <div class="acts" style="margin:0"><button class="btn" id="unuevo">+ Nuevo usuario</button></div></div>
+    <div class="card" id="admcuerpo"><div class="skel"></div><div class="skel" style="width:60%"></div></div>`;
+  $('unuevo').onclick = nuevoUsuario;
+
+  const { data, error } = await db.rpc('usuarios_lista');
+  if (error) { $('admcuerpo').innerHTML = `<div class="vacio">No se ha podido cargar: ${esc(error.message)}</div>`; return; }
+  USUARIOS = data || [];
+  $('admcuerpo').innerHTML = `<h2>Usuarios<span class="n">${USUARIOS.length}</span></h2>
+    <div class="lista">${USUARIOS.map(u => `<div class="item" style="cursor:default">
+      <span class="ic">${esc(iniciales(u.nombre))}</span>
+      <span class="tx"><b>${esc(u.nombre)}${u.activo ? '' : ' <span class="sm">· desactivado</span>'}</b>
+        <span class="sm">${esc(u.rol)} · ${esc(u.email || '')} · ${num(u.medicos)} médicos · ${num(u.visitas)} visitas</span></span>
+      <span class="acts" style="margin:0">
+        <button class="btn sec" data-uedit="${u.id}">Editar</button>
+        <button class="btn sec" data-ucart="${u.id}">Cartera</button></span></div>`).join('')}</div>`;
+
+  $('admcuerpo').querySelectorAll('[data-uedit]').forEach(b => b.onclick = () => editarUsuario(b.dataset.uedit));
+  $('admcuerpo').querySelectorAll('[data-ucart]').forEach(b => b.onclick = () => asignarCartera(b.dataset.ucart));
+}
+
+function editarUsuario(id) {
+  const u = USUARIOS.find(x => x.id === id); if (!u) return;
+  const areas = u.areas || {};
+  $('dbody').innerHTML = `
+    <div class="fh"><div><h2>${esc(u.nombre)}</h2><div class="sm">${esc(u.email || '')}</div></div>
+      <button class="x" data-cerrar aria-label="Cerrar">✕</button></div>
+    <div class="g2">
+      <div><label for="un">Nombre</label><input id="un" value="${esc(u.nombre)}"></div>
+      <div><label for="uu">Usuario</label><input id="uu" value="${esc(u.usuario)}"></div>
+    </div>
+    <div class="g2">
+      <div><label for="ur">Rol</label><select id="ur">${ROLES.map(r => `<option ${r === u.rol ? 'selected' : ''}>${r}</option>`).join('')}</select></div>
+      <div><label for="ua">Estado</label><select id="ua">
+        <option value="1" ${u.activo ? 'selected' : ''}>Activo</option>
+        <option value="0" ${u.activo ? '' : 'selected'}>Desactivado</option></select></div>
+    </div>
+    <label>Permisos por área</label>
+    ${AREAS.map(([k, t]) => `<div class="dprow" style="grid-template-columns:130px 1fr"><b>${t}</b>
+      <select data-area="${k}">${NIVELES.map((n, i) => `<option value="${i}" ${(+areas[k] || 0) === i ? 'selected' : ''}>${n}</option>`).join('')}</select></div>`).join('')}
+    <div class="acts" style="justify-content:flex-end">
+      <button class="btn sec" data-cerrar>Cancelar</button>
+      <button class="btn" id="uguardar">Guardar</button>
+    </div>`;
+
+  $('ur').onchange = () => {
+    const preset = {
+      'Administrador': { H: 3, G: 3, R: 3, M: 3, S: 3, K: 3 },
+      'Comercial': { H: 2, G: 2, R: 2, M: 2, S: 2, K: 0 },
+      'Televenta': { H: 2, G: 1, R: 1, M: 2, S: 1, K: 0 },
+      'Solo consulta': { H: 1, G: 1, R: 1, M: 1, S: 1, K: 0 },
+      'Medico': { H: 1, G: 0, R: 0, M: 0, S: 0, K: 0 }
+    }[$('ur').value] || {};
+    AREAS.forEach(([k]) => { const s = $('dbody').querySelector(`[data-area="${k}"]`); if (s) s.value = String(preset[k] || 0); });
+  };
+
+  $('uguardar').onclick = async ev => {
+    const areasN = {};
+    AREAS.forEach(([k]) => areasN[k] = +$('dbody').querySelector(`[data-area="${k}"]`).value);
+    ev.target.disabled = true; ev.target.textContent = 'Guardando…';
+    const { data: r, error } = await db.rpc('guardar_perfil', { p: {
+      id, nombre: $('un').value.trim(), usuario: $('uu').value.trim(),
+      rol: $('ur').value, activo: $('ua').value === '1', areas: areasN
+    }});
+    ev.target.disabled = false; ev.target.textContent = 'Guardar';
+    if (error || (r && r.ok === false)) { toast('No se ha podido guardar', true); return; }
+    $('dlg').close(); toast('Usuario guardado'); cargarAdmin();
+  };
+  $('dlg').showModal();
+}
+
+function nuevoUsuario() {
+  $('dbody').innerHTML = `
+    <div class="fh"><div><h2>Nuevo usuario</h2><div class="sm">Se crea con una contraseña temporal que deberá cambiar</div></div>
+      <button class="x" data-cerrar aria-label="Cerrar">✕</button></div>
+    <div class="g2">
+      <div><label for="nn">Nombre</label><input id="nn" placeholder="Nombre y apellidos"></div>
+      <div><label for="ne">Correo</label><input id="ne" type="email" placeholder="nombre@dlchealthgroup.com"></div>
+    </div>
+    <div class="g2">
+      <div><label for="nr">Rol</label><select id="nr">${ROLES.map(r => `<option ${r === 'Comercial' ? 'selected' : ''}>${r}</option>`).join('')}</select></div>
+      <div><label for="np">Contraseña temporal</label><input id="np" value="DLC-${Math.random().toString(36).slice(2, 8)}"></div>
+    </div>
+    <div class="acts" style="justify-content:flex-end">
+      <button class="btn sec" data-cerrar>Cancelar</button>
+      <button class="btn" id="ncrear">Crear usuario</button></div>
+    <div id="nmsg" class="sm" style="margin-top:10px"></div>`;
+
+  $('ncrear').onclick = async ev => {
+    const email = $('ne').value.trim(), pass = $('np').value, nombre = $('nn').value.trim();
+    if (!email || !nombre || pass.length < 6) { toast('Completa nombre, correo y contraseña', true); return; }
+    ev.target.disabled = true; ev.target.textContent = 'Creando…';
+    // Cliente aparte para no tocar tu sesión actual
+    const tmp = window.supabase.createClient(CFG.url, CFG.anon, { auth: { persistSession: false, autoRefreshToken: false } });
+    const { data, error } = await tmp.auth.signUp({
+      email, password: pass,
+      options: { data: { nombre, usuario: email.split('@')[0] } }
+    });
+    ev.target.disabled = false; ev.target.textContent = 'Crear usuario';
+    if (error) { $('nmsg').innerHTML = `<span style="color:var(--dang)">No se ha podido crear: ${esc(error.message)}</span>`; return; }
+    if (data && data.user) {
+      await db.rpc('guardar_perfil', { p: { id: data.user.id, nombre, usuario: email.split('@')[0], rol: $('nr').value } });
+    }
+    $('nmsg').innerHTML = `<b style="color:var(--ok)">Usuario creado.</b> Contraseña temporal: <b>${esc(pass)}</b>.
+      Pásasela y que la cambie al entrar. Si Supabase tiene activada la confirmación por correo, deberá confirmarlo primero.`;
+    cargarAdmin();
+  };
+  $('dlg').showModal();
+}
+
+async function asignarCartera(id) {
+  const u = USUARIOS.find(x => x.id === id); if (!u) return;
+  const { data: op } = await db.rpc('opciones_filtros', {});
+  const sel = lista => '<option value=""></option>' + (lista || []).map(o => `<option>${esc(o.v)}</option>`).join('');
+  $('dbody').innerHTML = `
+    <div class="fh"><div><h2>Cartera de ${esc(u.nombre)}</h2>
+      <div class="sm">Ahora tiene ${num(u.medicos)} médicos asignados</div></div>
+      <button class="x" data-cerrar aria-label="Cerrar">✕</button></div>
+    <p class="sm">Elige los filtros y asigna en bloque. Un médico puede tener varios comerciales.</p>
+    <div class="g2">
+      <div><label for="aprov">Provincia</label><select id="aprov">${sel(op.provincias)}</select></div>
+      <div><label for="amuni">Municipio</label><select id="amuni">${sel(op.municipios)}</select></div>
+    </div>
+    <div class="g2">
+      <div><label for="aesp">Especialidad</label><select id="aesp">${sel(op.especialidades)}</select></div>
+      <div><label for="aest">Estado</label><select id="aest">${sel(op.estados)}</select></div>
+    </div>
+    <label class="opt" style="margin-top:10px"><input type="checkbox" id="aurg"> Solo urgentes</label>
+    <div id="amsg" class="sm" style="margin-top:10px"></div>
+    <div class="acts" style="justify-content:flex-end">
+      <button class="btn sec" id="acont">Ver cuántos</button>
+      <button class="btn sec" id="aquitar">Quitar</button>
+      <button class="btn" id="aasignar">Asignar</button></div>`;
+
+  const filtros = () => ({
+    f_provincia: $('aprov').value || null, f_municipio: $('amuni').value || null,
+    f_especialidad: $('aesp').value || null, f_estado: $('aest').value || null,
+    f_urgentes: $('aurg').checked
+  });
+  const ids = async () => (await db.rpc('ids_filtrados', filtros())).data || [];
+
+  $('acont').onclick = async () => { const l = await ids(); $('amsg').innerHTML = `<b>${num(l.length)}</b> médicos con estos filtros.`; };
+  const aplicar = async (quitar, ev) => {
+    const l = await ids();
+    if (!l.length) { toast('Ningún médico con esos filtros', true); return; }
+    if (!confirm(`¿${quitar ? 'Quitar' : 'Asignar'} ${l.length} médicos ${quitar ? 'de' : 'a'} ${u.nombre}?`)) return;
+    ev.target.disabled = true;
+    const { data: r, error } = await db.rpc('asignar_cartera', { p: { usuario_id: id, medicos: l, quitar } });
+    ev.target.disabled = false;
+    if (error || (r && r.ok === false)) { toast('No se ha podido: ' + ((error && error.message) || 'sin permiso'), true); return; }
+    toast(`${num(r.filas)} médicos ${quitar ? 'retirados' : 'asignados'}`);
+    $('dlg').close(); cargarAdmin();
+  };
+  $('aasignar').onclick = ev => aplicar(false, ev);
+  $('aquitar').onclick = ev => aplicar(true, ev);
+  $('dlg').showModal();
+}
 
 
 pintarConexion();
