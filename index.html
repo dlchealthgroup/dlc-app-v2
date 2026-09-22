@@ -159,6 +159,11 @@ dialog::backdrop{background:rgba(14,47,82,.4)}
 .dupbox{border:1px solid var(--warn);background:var(--warn-bg);border-radius:12px;padding:12px;margin-top:12px}
 .dupbox .l{display:flex;justify-content:space-between;gap:10px;padding:6px 0;border-top:1px solid rgba(180,83,9,.2)}
 @media (max-width:620px){.g2,.opciones{grid-template-columns:1fr}.dprow{grid-template-columns:52px 1fr 1fr}}
+
+.conex{position:fixed;left:50%;bottom:70px;transform:translateX(-50%);z-index:80;border-radius:999px;padding:7px 16px;font-size:13px;font-weight:600;box-shadow:0 8px 24px rgba(10,20,30,.18)}
+.conex.off{background:var(--warn-bg);color:var(--warn);border:1px solid var(--warn)}
+.conex.esp{background:var(--sky-soft);color:var(--navy);border:1px solid var(--sky)}
+.item .acts .btn{padding:6px 10px;min-height:32px;font-size:12.5px}
 @media (max-width:900px){ .cols{grid-template-columns:1fr} }
 @media (max-width:760px){
   .fila{grid-template-columns:minmax(0,1fr) auto}
@@ -250,23 +255,18 @@ dialog::backdrop{background:rgba(14,47,82,.4)}
       </div>
     </section>
 
-    <section id="v-agenda" class="hide">
-      <div class="card"><h2>Agenda</h2><p class="sm" style="padding:6px 16px 16px">
-        Se construye en la siguiente entrega, junto con el registro de visitas.</p></div>
-    </section>
-    <section id="v-rutas" class="hide">
-      <div class="card"><h2>Rutas</h2><p class="sm" style="padding:6px 16px 16px">
-        Se construye en la siguiente entrega, con el plan del día y el gestor de rutas.</p></div>
-    </section>
+    <section id="v-agenda" class="hide"></section>
+    <section id="v-rutas" class="hide"></section>
   </main>
 </div>
 
 <dialog id="ficha"><div class="fbox" id="fbody"></div></dialog>
 <dialog id="dlg"><div class="fbox" id="dbody"></div></dialog>
 <div id="toast" class="toast hide"></div>
+<div id="conex" class="conex hide"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="./config.js"></script>
-<script src="./app.js?v=2.2.0"></script>
+<script src="./app.js?v=2.3.0"></script>
 </body>
 </html>

@@ -32,8 +32,7 @@ $('lform').addEventListener('submit', async e => {
       ? 'Correo o contraseña incorrectos.' : 'No se ha podido entrar: ' + error.message;
     return;
   }
-  arrancar();
-});
+  });
 
 async function arrancar() {
   const { data: { user } } = await db.auth.getUser();
@@ -92,6 +91,8 @@ function ir(t) {
   ['inicio', 'agenda', 'rutas', 'directorio'].forEach(k => $('v-' + k).classList.toggle('hide', k !== t));
   window.scrollTo({ top: 0 });
   if (t === 'directorio' && !$('lista').children.length) buscar(true);
+  if (t === 'agenda') cargarAgenda();
+  if (t === 'rutas') cargarRutas();
 }
 
 /* ---------------- inicio ---------------- */
@@ -287,6 +288,7 @@ async function abrirFicha(id) {
       ${puedeRegistrar() ? `<button class="btn" data-act="visita" data-id="${m.id}">Registrar visita</button>` : ''}
       ${puedeEditar() ? `<button class="btn sec" data-act="editar" data-id="${m.id}">Editar ficha</button>` : ''}
       ${puedeEditar() ? `<button class="btn ${m.urgente ? 'sec' : 'warn'}" data-act="urgente" data-id="${m.id}" data-urg="${m.urgente ? 1 : 0}">${m.urgente ? 'Quitar urgente' : 'Marcar urgente'}</button>` : ''}
+      <button class="btn sec" data-agendar="${m.id}">+ Añadir a mi agenda</button>
     </div>` : ''}
     <div class="blk"><h3>Estado</h3>
       <div>${puedeEditar()
@@ -680,4 +682,302 @@ $('nuevoBtn').addEventListener('click', () => {
 });
 
 
+
+/* ============================================================
+   DLC OS 2.0 · Entrega 4: agenda, rutas, plan del día y cola sin conexión
+   ============================================================ */
+
+/* ---------------- cola sin conexión ---------------- */
+
+const COLA = 'dlc-cola';
+const colaLeer = () => { try { return JSON.parse(localStorage.getItem(COLA) || '[]'); } catch (e) { return []; } };
+const colaGuardar = c => localStorage.setItem(COLA, JSON.stringify(c));
+
+function pintarConexion() {
+  const n = colaLeer().length;
+  const el = $('conex');
+  if (!navigator.onLine) { el.className = 'conex off'; el.textContent = n ? `Sin conexión · ${n} ${n === 1 ? 'cambio' : 'cambios'} en espera` : 'Sin conexión'; }
+  else if (n) { el.className = 'conex esp'; el.textContent = `Enviando ${n} ${n === 1 ? 'cambio' : 'cambios'}…`; }
+  else { el.className = 'conex hide'; el.textContent = ''; }
+}
+
+/** Ejecuta una escritura; si no hay conexión, la guarda y la reenvía después. */
+async function escribir(fn, payload, etiqueta) {
+  if (!navigator.onLine) {
+    colaGuardar(colaLeer().concat([{ fn, payload, etiqueta, t: Date.now() }]));
+    pintarConexion();
+    toast('Sin conexión: se enviará al recuperarla');
+    return { offline: true };
+  }
+  const { data, error } = await db.rpc(fn, payload);
+  if (error) {
+    if (String(error.message || '').match(/fetch|network|Failed/i)) {
+      colaGuardar(colaLeer().concat([{ fn, payload, etiqueta, t: Date.now() }]));
+      pintarConexion();
+      toast('Guardado en este dispositivo: se enviará luego');
+      return { offline: true };
+    }
+    return { error };
+  }
+  return { data };
+}
+
+async function vaciarCola() {
+  if (!navigator.onLine) return;
+  let c = colaLeer();
+  if (!c.length) return;
+  pintarConexion();
+  while (c.length) {
+    const op = c[0];
+    const { error } = await db.rpc(op.fn, op.payload);
+    if (error && String(error.message || '').match(/fetch|network|Failed/i)) break;
+    c = c.slice(1);
+    colaGuardar(c);
+  }
+  pintarConexion();
+  if (!colaLeer().length) { cargarInicio(); if (TAB === 'agenda') cargarAgenda(); }
+}
+
+window.addEventListener('online', () => { pintarConexion(); vaciarCola(); });
+window.addEventListener('offline', pintarConexion);
+setInterval(vaciarCola, 60000);
+
+/* ---------------- agenda ---------------- */
+
+let AG_MODO = 'dia', AG_FECHA = null;
+
+const isoMas = (iso, n) => { const d = new Date(iso + 'T00:00:00'); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
+const lunesDe = iso => { const d = new Date(iso + 'T00:00:00'); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return d.toISOString().slice(0, 10); };
+const EST_COL = { Planificada: 'var(--navy)', Visitada: 'var(--ok)', Pendiente: 'var(--warn)', Reprogramada: 'var(--sky)', Descartada: 'var(--muted)' };
+
+async function cargarAgenda() {
+  if (!AG_FECHA) AG_FECHA = hoyISO();
+  const desde = AG_MODO === 'dia' ? AG_FECHA : lunesDe(AG_FECHA);
+  const hasta = AG_MODO === 'dia' ? AG_FECHA : isoMas(desde, 6);
+
+  $('v-agenda').innerHTML = `
+    <div class="saludo"><div><h1>Agenda</h1><div class="fecha" id="agtit">…</div></div>
+      <div class="acts" style="margin:0">
+        <button class="btn sec" data-ag="ant">←</button>
+        <button class="btn sec" data-ag="hoy">Hoy</button>
+        <button class="btn sec" data-ag="sig">→</button>
+        <button class="btn ${AG_MODO === 'dia' ? '' : 'sec'}" data-ag="dia">Día</button>
+        <button class="btn ${AG_MODO === 'semana' ? '' : 'sec'}" data-ag="semana">Semana</button>
+      </div></div>
+    <div class="card" id="agcuerpo"><div class="skel"></div><div class="skel" style="width:70%"></div></div>
+    <div class="card" id="agpend"></div>`;
+
+  $('agtit').textContent = AG_MODO === 'dia'
+    ? fechaLarga(new Date(AG_FECHA + 'T00:00:00')).replace(/^./, c => c.toUpperCase())
+    : `Semana del ${fechaCorta(desde)} al ${fechaCorta(hasta)}`;
+
+  const [{ data: citas, error }, { data: pend }] = await Promise.all([
+    db.rpc('agenda_rango', { p_desde: desde, p_hasta: hasta, p_usuario: PERFIL.rol === 'Administrador' ? null : PERFIL.id }),
+    db.rpc('pendientes_ruta')
+  ]);
+
+  if (error) { $('agcuerpo').innerHTML = `<div class="vacio">No se ha podido cargar: ${esc(error.message)}</div>`; return; }
+
+  const porDia = {};
+  (citas || []).forEach(c => { (porDia[c.fecha] = porDia[c.fecha] || []).push(c); });
+  const dias = AG_MODO === 'dia' ? [AG_FECHA] : Array.from({ length: 7 }, (_, i) => isoMas(desde, i));
+
+  $('agcuerpo').innerHTML = dias.map(f => {
+    const lista = porDia[f] || [];
+    const hechas = lista.filter(c => c.estado === 'Visitada').length;
+    return `<h2 style="padding:14px 16px 0">${fechaLarga(new Date(f + 'T00:00:00')).replace(/^./, c => c.toUpperCase())}
+        ${lista.length ? `<span class="n">${hechas}/${lista.length}</span>` : ''}</h2>
+      ${lista.length ? `<div class="lista">${lista.map(c => `
+        <div class="item" style="cursor:default">
+          <span class="ic" style="background:${EST_COL[c.estado]}20;color:${EST_COL[c.estado]}">${c.hora ? esc(c.hora).slice(0, 5) : '·'}</span>
+          <span class="tx"><b>${c.urgente ? '<span class="pill p-urg">Urgente</span> ' : ''}${esc(c.nombre)}</b>
+            <span class="sm">${esc(c.centro_nombre || '')} · <b style="color:${EST_COL[c.estado]}">${esc(c.estado)}</b>${PERFIL.rol === 'Administrador' && c.usuario ? ' · ' + esc(c.usuario) : ''}</span></span>
+          <span class="acts" style="margin:0">
+            <button class="btn sec" data-cita="ficha|${c.medico_id}">Ficha</button>
+            ${c.estado !== 'Visitada' ? `<button class="btn sec" data-cita="visita|${c.medico_id}">Registrar</button>
+              <button class="btn sec" data-cita="repro|${c.id}">Mover</button>
+              <button class="btn sec" data-cita="desc|${c.id}">Descartar</button>` : ''}
+          </span></div>`).join('')}</div>`
+      : '<div class="vacio">Sin citas este día.</div>'}`;
+  }).join('');
+
+  const pendientes = pend || [];
+  $('agpend').innerHTML = pendientes.length
+    ? `<h2>Pendientes de rutas anteriores<span class="n">${pendientes.length}</span></h2>
+       <p class="sm">Los planificaste y no se visitaron. Puedes moverlos a hoy o descartarlos.</p>
+       <div class="lista">${pendientes.map(p => `<div class="item" style="cursor:default">
+         <span class="ic w">!</span>
+         <span class="tx"><b>${esc(p.nombre)}</b><span class="sm">${fechaCorta(p.fecha)} · ${esc(p.centro_nombre || '')}</span></span>
+         <span class="acts" style="margin:0">
+           <button class="btn sec" data-cita="hoy|${p.id}">Mover a hoy</button>
+           <button class="btn sec" data-cita="desc|${p.id}">Descartar</button></span></div>`).join('')}</div>`
+    : '';
+}
+
+document.addEventListener('click', async e => {
+  const b = e.target.closest('[data-ag]');
+  if (b) {
+    const k = b.dataset.ag;
+    if (k === 'hoy') AG_FECHA = hoyISO();
+    if (k === 'ant') AG_FECHA = isoMas(AG_FECHA, AG_MODO === 'dia' ? -1 : -7);
+    if (k === 'sig') AG_FECHA = isoMas(AG_FECHA, AG_MODO === 'dia' ? 1 : 7);
+    if (k === 'dia' || k === 'semana') AG_MODO = k;
+    cargarAgenda();
+    return;
+  }
+  const c = e.target.closest('[data-cita]');
+  if (!c) return;
+  const [acc, id] = c.dataset.cita.split('|');
+  if (acc === 'ficha') return abrirFicha(id);
+  if (acc === 'visita') return abrirVisita(id);
+  if (acc === 'desc') {
+    await escribir('estado_cita', { p_id: id, p_estado: 'Descartada' });
+    toast('Cita descartada'); cargarAgenda(); cargarInicio(); return;
+  }
+  if (acc === 'hoy') {
+    await escribir('estado_cita', { p_id: id, p_estado: 'Planificada', p_fecha: hoyISO() });
+    toast('Movida a hoy'); cargarAgenda(); cargarInicio(); return;
+  }
+  if (acc === 'repro') {
+    const f = prompt('Nueva fecha (AAAA-MM-DD):', isoMas(hoyISO(), 1));
+    if (!f) return;
+    await escribir('estado_cita', { p_id: id, p_estado: 'Reprogramada', p_fecha: f });
+    toast('Cita movida al ' + fechaCorta(f)); cargarAgenda(); return;
+  }
+});
+
+/* ---------------- rutas y plan del día ---------------- */
+
+let RUTAS = [], PLAN = null;
+
+async function cargarRutas() {
+  $('v-rutas').innerHTML = `
+    <div class="saludo"><div><h1>Rutas</h1><div class="fecha">Elige una ruta para planificar el día</div></div></div>
+    <div class="card" id="rlista"><div class="skel"></div><div class="skel" style="width:60%"></div></div>
+    <div id="rplan"></div>`;
+  const { data, error } = await db.rpc('rutas_visibles');
+  if (error) { $('rlista').innerHTML = `<div class="vacio">No se ha podido cargar: ${esc(error.message)}</div>`; return; }
+  RUTAS = data || [];
+  if (!RUTAS.length) {
+    $('rlista').innerHTML = `<div class="vacio">Todavía no hay rutas creadas. El gestor de rutas llega en la próxima entrega;
+      mientras tanto puedes planificar desde el Directorio con los filtros.</div>`;
+    return;
+  }
+  $('rlista').innerHTML = `<h2>Tus rutas<span class="n">${RUTAS.length}</span></h2><div class="lista">${
+    RUTAS.map(r => `<div class="item" style="cursor:default">
+      <span class="ic ${r.tipo === 'Urgente' ? 'w' : ''}">${r.tipo === 'Urgente' ? '★' : '◉'}</span>
+      <span class="tx"><b>${esc(r.nombre)}</b><span class="sm">${r.dinamica ? 'Por criterios' : r.n_fijos + ' médicos'} · ${r.visitados} visitados${r.desde ? ' desde ' + fechaCorta(r.desde) : ''}</span></span>
+      <span class="acts" style="margin:0"><button class="btn" data-ruta="${r.id}">Planificar hoy</button></span>
+    </div>`).join('')}</div>`;
+}
+
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-ruta]');
+  if (b) planificar(b.dataset.ruta, b);
+});
+
+/* distancia aproximada en km entre dos puntos */
+function km(a, b) {
+  const R = 6371, r = Math.PI / 180;
+  const dLat = (b[0] - a[0]) * r, dLon = (b[1] - a[1]) * r;
+  const s = Math.sin(dLat / 2) ** 2 + Math.cos(a[0] * r) * Math.cos(b[0] * r) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(s));
+}
+const minutosEntre = (a, b) => Math.max(6, Math.round(km(a, b) / 40 * 60) + 5);
+const hm = m => String(Math.floor(m / 60) % 24).padStart(2, '0') + ':' + String(Math.round(m) % 60).padStart(2, '0');
+
+async function planificar(rutaId, btn) {
+  const orig = btn.textContent; btn.disabled = true; btn.textContent = 'Calculando…';
+  const { data, error } = await db.rpc('medicos_de_ruta', { p_id: rutaId });
+  btn.disabled = false; btn.textContent = orig;
+  if (error) { toast('No se ha podido planificar: ' + error.message, true); return; }
+
+  const conXY = (data || []).filter(m => m.lat && m.lon);
+  if (!conXY.length) { toast('Esta ruta no tiene médicos con ubicación', true); return; }
+
+  // Agrupamos por centro y ordenamos por cercanía desde el punto de salida
+  const salida = (PERFIL.preferencias && PERFIL.preferencias.salida) || { nombre: 'Santpedor', lat: 41.7833, lon: 1.8414 };
+  const paradas = {};
+  conXY.forEach(m => {
+    const k = (m.centro_nombre || 'Consulta') + '|' + (m.municipio || '');
+    (paradas[k] = paradas[k] || { centro: m.centro_nombre || 'Consulta privada', municipio: m.municipio, dir: m.direccion, xy: [m.lat, m.lon], medicos: [] }).medicos.push(m);
+  });
+
+  let pos = [salida.lat, salida.lon], t = 9 * 60, libres = Object.values(paradas), orden = [];
+  while (libres.length && t < 18 * 60 && orden.length < 12) {
+    libres.sort((a, b) => km(pos, a.xy) - km(pos, b.xy));
+    const p = libres.shift();
+    const viaje = minutosEntre(pos, p.xy);
+    const dura = 10 + 15 * Math.min(p.medicos.length, 6);
+    if (t + viaje + dura > 18 * 60) break;
+    orden.push({ ...p, llegada: t + viaje, fin: t + viaje + dura, viaje });
+    t += viaje + dura; pos = p.xy;
+  }
+
+  PLAN = { rutaId, salida, paradas: orden, fin: t + minutosEntre(pos, [salida.lat, salida.lon]) };
+  pintarPlan();
+  window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+}
+
+function pintarPlan() {
+  if (!PLAN) { $('rplan').innerHTML = ''; return; }
+  const total = PLAN.paradas.reduce((n, p) => n + p.medicos.length, 0);
+  const enlace = 'https://www.google.com/maps/dir/?api=1&origin=' + PLAN.salida.lat + ',' + PLAN.salida.lon +
+    '&destination=' + PLAN.salida.lat + ',' + PLAN.salida.lon + '&travelmode=driving&waypoints=' +
+    encodeURIComponent(PLAN.paradas.map(p => p.xy.join(',')).join('|'));
+
+  $('rplan').innerHTML = `<div class="card">
+    <h2>Plan de hoy<span class="n">${total} médicos</span></h2>
+    <p class="sm">Salida de ${esc(PLAN.salida.nombre)} a las 09:00 · ${PLAN.paradas.length} paradas · vuelta sobre las ${hm(PLAN.fin)}</p>
+    <div class="lista">${PLAN.paradas.map((p, i) => `<div class="item" style="cursor:default">
+      <span class="ic">${i + 1}</span>
+      <span class="tx"><b>${esc(p.centro)}</b>
+        <span class="sm">${hm(p.llegada)}–${hm(p.fin)} · ${esc([p.dir, p.municipio].filter(Boolean).join(', '))} · ${p.medicos.length} ${p.medicos.length === 1 ? 'médico' : 'médicos'}</span>
+        <span class="sm">${p.medicos.map(m => esc(m.nombre)).join(' · ')}</span></span>
+    </div>`).join('')}</div>
+    <div class="acts" style="padding:0 16px 16px">
+      <a class="btn" href="${enlace}" target="_blank" rel="noopener">Abrir en Google Maps</a>
+      <button class="btn sec" id="planag">Guardar en mi agenda</button>
+      <button class="btn sec" id="plancerrar">Cerrar</button>
+    </div></div>`;
+
+  $('plancerrar').onclick = () => { PLAN = null; pintarPlan(); };
+  $('planag').onclick = async ev => {
+    ev.target.disabled = true; ev.target.textContent = 'Guardando…';
+    let n = 0;
+    for (const p of PLAN.paradas) {
+      for (const m of p.medicos) {
+        await escribir('guardar_cita', { p: {
+          medico_id: m.id, fecha: hoyISO(), hora: hm(p.llegada), centro_nombre: p.centro,
+          estado: 'Planificada', origen: 'Plan del día',
+          op_id: 'c-' + m.id + '-' + hoyISO()
+        }});
+        n++;
+      }
+    }
+    ev.target.disabled = false; ev.target.textContent = 'Guardar en mi agenda';
+    toast(`${n} citas guardadas en tu agenda`);
+    cargarInicio();
+  };
+}
+
+/* ---------------- añadir cita desde la ficha ---------------- */
+
+document.addEventListener('click', async e => {
+  const b = e.target.closest('[data-agendar]');
+  if (!b) return;
+  const f = prompt('¿Para qué día? (AAAA-MM-DD)', hoyISO());
+  if (!f) return;
+  const r = await escribir('guardar_cita', { p: {
+    medico_id: b.dataset.agendar, fecha: f, estado: 'Planificada', origen: 'Ficha',
+    op_id: 'c-' + b.dataset.agendar + '-' + f
+  }});
+  if (r.error) { toast('No se ha podido: ' + r.error.message, true); return; }
+  toast('Añadido a tu agenda el ' + fechaCorta(f));
+  cargarInicio();
+});
+
+
+pintarConexion();
+vaciarCola();
 arrancar();
