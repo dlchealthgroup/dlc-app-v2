@@ -205,6 +205,7 @@ dialog::backdrop{background:rgba(14,47,82,.4)}
         <div class="umenu hide" id="umenu">
           <div class="uh"><div id="umnom" style="font-weight:600"></div><div class="sm" id="umrol"></div></div>
           <button data-u="cfg">Configuración</button>
+          <button data-u="pass">Cambiar contraseña</button>
           <button data-u="adm" class="hide">Administración</button>
           <button data-u="salir" class="sal">Cerrar sesión</button>
         </div>
@@ -215,6 +216,7 @@ dialog::backdrop{background:rgba(14,47,82,.4)}
       <button data-t="agenda" aria-selected="false">Agenda</button>
       <button data-t="rutas" aria-selected="false">Rutas</button>
       <button data-t="directorio" aria-selected="false">Directorio</button>
+      <button data-t="seguimiento" aria-selected="false">Seguimiento</button>
       <button disabled>Analítica<span class="pronto">Pronto</span></button>
       <button disabled>Facturación<span class="pronto">Pronto</span></button>
     </div></nav>
@@ -262,6 +264,7 @@ dialog::backdrop{background:rgba(14,47,82,.4)}
 
     <section id="v-agenda" class="hide"></section>
     <section id="v-rutas" class="hide"></section>
+    <section id="v-seguimiento" class="hide"></section>
     <section id="v-config" class="hide"></section>
     <section id="v-admin" class="hide"></section>
   </main>
@@ -274,6 +277,6 @@ dialog::backdrop{background:rgba(14,47,82,.4)}
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="./config.js"></script>
-<script src="./app.js?v=2.4.0"></script>
+<script src="./app.js?v=2.5.0"></script>
 </body>
 </html>

@@ -76,6 +76,7 @@ $('umenu').addEventListener('click', async e => {
   const b = e.target.closest('[data-u]'); if (!b) return;
   if (b.dataset.u === 'salir') { await db.auth.signOut(); location.reload(); }
   else if (b.dataset.u === 'cfg') ir('config');
+  else if (b.dataset.u === 'pass') { /* lo gestiona el módulo de contraseñas */ }
   else if (b.dataset.u === 'adm') ir('admin');
 });
 
@@ -89,11 +90,12 @@ $('nav').addEventListener('click', e => {
 function ir(t) {
   TAB = t;
   document.querySelectorAll('#nav button[data-t]').forEach(x => x.setAttribute('aria-selected', String(x.dataset.t === t)));
-  ['inicio', 'agenda', 'rutas', 'directorio', 'config', 'admin'].forEach(k => $('v-' + k).classList.toggle('hide', k !== t));
+  ['inicio', 'agenda', 'rutas', 'directorio', 'seguimiento', 'config', 'admin'].forEach(k => $('v-' + k).classList.toggle('hide', k !== t));
   window.scrollTo({ top: 0 });
   if (t === 'directorio' && !$('lista').children.length) buscar(true);
   if (t === 'agenda') cargarAgenda();
   if (t === 'rutas') cargarRutas();
+  if (t === 'seguimiento') cargarSeguimiento();
   if (t === 'config') cargarConfig();
   if (t === 'admin') cargarAdmin();
 }
@@ -1420,6 +1422,268 @@ async function asignarCartera(id) {
   $('aquitar').onclick = ev => aplicar(true, ev);
   $('dlg').showModal();
 }
+
+
+
+/* ============================================================
+   DLC OS 2.0 · Entrega 6: seguimiento, duplicados, exportar y contraseñas
+   ============================================================ */
+
+let SEG = { estado: '', prov: '', muni: '', modo: 'todos', pagina: 0 };
+let DUPS = null, PARES = null;
+
+/* ---------------- seguimiento ---------------- */
+
+async function cargarSeguimiento() {
+  $('v-seguimiento').innerHTML = `
+    <div class="saludo"><div><h1>Seguimiento</h1><div class="fecha">Cómo avanza cada médico</div></div>
+      <div class="acts" style="margin:0">
+        ${PERFIL.rol === 'Administrador' ? '<button class="btn sec" id="segdup">Duplicados</button>' : ''}
+        <button class="btn sec" id="segcsv">Descargar CSV</button></div></div>
+    <div class="kpis" id="segkpis"><div class="skel"></div></div>
+    <div class="panel">
+      <div class="filtros">
+        <div><label for="sest">Estado comercial</label><select id="sest"></select></div>
+        <div><label for="sprov">Provincia</label><select id="sprov"></select></div>
+        <div><label for="smuni">Municipio</label><select id="smuni"></select></div>
+        <div><label for="smodo">Mostrar</label><select id="smodo">
+          <option value="todos">Todos</option>
+          <option value="visitados">Solo visitados</option>
+          <option value="sin_visitar">Sin visitar</option>
+          <option value="con_accion">Con próxima acción</option>
+          <option value="atrasados">Acciones atrasadas</option>
+        </select></div>
+      </div>
+      <div class="cuenta" id="scuenta">Cargando…</div>
+      <div id="slista"></div>
+      <button class="mas hide" id="smas">Cargar más</button>
+    </div>`;
+
+  const { data: op } = await db.rpc('opciones_filtros', {});
+  const pon = (id, lista, todo) => $(id).innerHTML = `<option value="">${todo}</option>` +
+    (lista || []).map(o => `<option>${esc(o.v)}</option>`).join('');
+  pon('sest', op.estados, 'Todos los estados');
+  pon('sprov', op.provincias, 'Todas las provincias');
+  pon('smuni', op.municipios, 'Todos los municipios');
+  ['sest', 'sprov', 'smuni', 'smodo'].forEach(id => $(id).onchange = () => {
+    SEG = { estado: $('sest').value, prov: $('sprov').value, muni: $('smuni').value, modo: $('smodo').value, pagina: 0 };
+    listaSeguimiento(true);
+  });
+  $('segcsv').onclick = ev => descargarCSV(ev.target);
+  if ($('segdup')) $('segdup').onclick = () => { DUPS = null; abrirDuplicados(); };
+
+  const { data: r } = await db.rpc('resumen_seguimiento');
+  if (r) {
+    const pct = (a, b) => b ? Math.round(a / b * 100) + '%' : '0%';
+    const emb = (r.embudo || []).map(e => `<div class="kpi"><b>${num(e.n)}</b><span>${esc(e.estado)}</span></div>`).join('');
+    $('segkpis').innerHTML = emb +
+      `<div class="kpi ok"><b>${num(r.visitados)}</b><span>médicos visitados</span></div>
+       <div class="kpi"><b>${num(r.visitas_total)}</b><span>visitas registradas</span></div>
+       <div class="kpi"><b>${num(r.muestras_total)}</b><span>muestras entregadas</span></div>
+       <div class="kpi"><b>${pct(r.con_direccion, r.total)}</b><span>fichas con dirección</span></div>
+       <div class="kpi"><b>${pct(r.con_dias, r.total)}</b><span>con días de consulta</span></div>`;
+  }
+  listaSeguimiento(true);
+}
+
+async function listaSeguimiento(reinicia) {
+  if (reinicia) { SEG.pagina = 0; $('slista').innerHTML = ''; }
+  $('scuenta').textContent = 'Buscando…';
+  const { data, error } = await db.rpc('seguimiento_lista', {
+    f_estado: SEG.estado || null, f_provincia: SEG.prov || null, f_municipio: SEG.muni || null,
+    f_modo: SEG.modo, lim: 100, desplaz: SEG.pagina * 100
+  });
+  if (error) { $('scuenta').textContent = 'No se ha podido cargar: ' + error.message; return; }
+  $('scuenta').innerHTML = `<b>${num(data.total)}</b> médicos`;
+  const filas = data.filas || [];
+  if (!filas.length && SEG.pagina === 0) { $('slista').innerHTML = '<div class="vacio">Nada que mostrar con estos filtros.</div>'; }
+  else $('slista').insertAdjacentHTML('beforeend', filas.map(m => `
+    <button class="fila" data-id="${m.id}">
+      <span><span class="nm">${m.urgente ? '<span class="pill p-urg">Urgente</span> ' : ''}${esc(m.nombre)}</span>
+        <span class="sm">${esc(m.especialidad || '')} · ${esc(m.centro_nombre || '')} ${esc(m.municipio || '')}</span></span>
+      <span class="c2"><span class="sm">${m.ultima_visita ? 'Última: <b>' + fechaCorta(m.ultima_visita) + '</b> · ' + esc(m.ultimo_resultado || '') : 'Sin visitar'}</span>
+        <span class="sm">${m.n_visitas} visitas${m.muestras ? ' · ' + m.muestras + ' muestras' : ''}</span></span>
+      <span class="c3"><span class="sm">${m.proxima_fecha
+        ? `<b style="color:${m.proxima_fecha < hoyISO() ? 'var(--warn)' : 'var(--navy)'}">${fechaCorta(m.proxima_fecha)}</b><br>${esc(m.proxima_accion || '')}`
+        : ''}</span></span>
+      <span class="pill p-est">${esc(m.estado_comercial)}</span>
+    </button>`).join(''));
+  const most = SEG.pagina * 100 + filas.length;
+  $('smas').classList.toggle('hide', most >= data.total);
+  $('smas').onclick = () => { SEG.pagina++; listaSeguimiento(false); };
+  $('slista').onclick = e => { const b = e.target.closest('[data-id]'); if (b) abrirFicha(b.dataset.id); };
+}
+
+/* ---------------- exportar ---------------- */
+
+function aCSV(filas) {
+  if (!filas.length) return '';
+  const cols = Object.keys(filas[0]);
+  const val = v => v == null ? '' : /[";\n]/.test(String(v)) ? '"' + String(v).replace(/"/g, '""') + '"' : String(v);
+  return '\uFEFF' + [cols.join(';')].concat(filas.map(f => cols.map(c => val(f[c])).join(';'))).join('\n');
+}
+
+async function descargarCSV(btn) {
+  btn.disabled = true; btn.textContent = 'Preparando…';
+  const { data, error } = await db.rpc('exportar_medicos', {
+    q: F.q || null, f_provincia: SEG.prov || F.prov || null, f_municipio: SEG.muni || F.muni || null,
+    f_estado: SEG.estado || F.est || null, f_especialidad: F.esp || null, f_urgentes: !!F.urg
+  });
+  btn.disabled = false; btn.textContent = 'Descargar CSV';
+  if (error) { toast('No se ha podido exportar: ' + error.message, true); return; }
+  const csv = aCSV(data || []);
+  if (!csv) { toast('No hay nada que exportar', true); return; }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+  a.download = 'DLC_medicos_' + hoyISO() + '.csv';
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  {const n=(data||[]).length;toast(`${num(n)} ${n === 1 ? 'médico exportado' : 'médicos exportados'}`);}
+}
+
+/* ---------------- duplicados ---------------- */
+
+async function abrirDuplicados() {
+  $('dbody').innerHTML = `<div class="fh"><div><h2>Duplicados</h2>
+      <div class="sm">Fichas marcadas y búsqueda de parecidos en toda la base</div></div>
+      <button class="x" data-cerrar aria-label="Cerrar">✕</button></div>
+    <div class="acts"><button class="btn sec" id="dscan">Buscar parecidos (≥80%)</button></div>
+    <div id="dcuerpo"><div class="skel"></div><div class="skel" style="width:60%"></div></div>`;
+  $('dlg').showModal();
+
+  $('dscan').onclick = async ev => {
+    ev.target.disabled = true; ev.target.textContent = 'Buscando…';
+    const { data } = await db.rpc('escanear_duplicados', { p_umbral: 80, p_tope: 100 });
+    ev.target.disabled = false; ev.target.textContent = 'Buscar parecidos (≥80%)';
+    PARES = data || [];
+    pintarDuplicados();
+  };
+
+  const { data } = await db.rpc('duplicados_pendientes');
+  DUPS = data || [];
+  pintarDuplicados();
+}
+
+function pintarDuplicados() {
+  const pend = (DUPS || []).map(d => `<div class="item" style="cursor:default">
+      <span class="ic w">!</span>
+      <span class="tx"><b>${esc(d.nombre)}</b><span class="sm">Código ${esc(d.codigo)} · ${esc(d.centro || '')} ${esc(d.municipio || '')}${d.duplicado_de ? ' · parecido a ' + esc(d.duplicado_de) : ''}</span></span>
+      <span class="acts" style="margin:0"><button class="btn sec" data-dficha="${d.id}">Ver ficha</button></span></div>`).join('');
+
+  const pares = (PARES || []).map(p => `<div class="item" style="cursor:default">
+      <span class="ic">${p.pct}%</span>
+      <span class="tx"><b>${esc(p.a_nombre)}</b><span class="sm">códigos ${esc(p.a_codigo)} y ${esc(p.b_codigo)} · ${esc(p.b_nombre)}</span></span>
+      <span class="acts" style="margin:0"><button class="btn" data-unif="${p.a_id}|${p.b_id}">Comparar</button></span></div>`).join('');
+
+  $('dcuerpo').innerHTML =
+    `<h2 style="padding:8px 0 0">Pendientes de unificar<span class="n">${(DUPS || []).length}</span></h2>
+     ${pend ? `<div class="lista">${pend}</div>` : '<div class="vacio">Ninguna ficha marcada.</div>'}
+     ${PARES ? `<h2 style="padding:12px 0 0">Parecidos encontrados<span class="n">${PARES.length}</span></h2>
+       ${pares ? `<div class="lista">${pares}</div>` : '<div class="vacio">Sin parejas por encima del 80%.</div>'}` : ''}`;
+
+  $('dcuerpo').querySelectorAll('[data-dficha]').forEach(b => b.onclick = () => { $('dlg').close(); abrirFicha(b.dataset.dficha); });
+  $('dcuerpo').querySelectorAll('[data-unif]').forEach(b => b.onclick = () => {
+    const [a, c] = b.dataset.unif.split('|'); compararFichas(a, c);
+  });
+}
+
+const CAMPOS_UNI = [['nombre', 'Nombre'], ['especialidad', 'Especialidad'], ['area', 'Área'],
+  ['telefono', 'Teléfono'], ['email', 'Email'], ['contacto', 'Contacto'], ['nota', 'Nota'],
+  ['estado_comercial', 'Estado comercial'], ['cuando_visitar', 'Cuándo visitar']];
+
+async function compararFichas(idA, idB) {
+  const [{ data: A }, { data: B }] = await Promise.all([
+    db.rpc('ficha_medico', { p_id: idA }), db.rpc('ficha_medico', { p_id: idB })
+  ]);
+  const a = A.medico, b = B.medico;
+  if (a.id === b.id) { toast('Es la misma ficha', true); return; }
+  let queda = b.id;
+  const eleccion = {};
+  CAMPOS_UNI.forEach(([k]) => eleccion[k] = b[k] ? 'queda' : (a[k] ? 'va' : 'queda'));
+
+  const pinta = () => {
+    const va = queda === a.id ? b : a, qu = queda === a.id ? a : b;
+    const dif = CAMPOS_UNI.filter(([k]) => (a[k] || '') !== (b[k] || ''));
+    $('dbody').innerHTML = `
+      <div class="fh"><div><h2>Unificar fichas</h2>
+        <div class="sm">Elige cuál se conserva y con qué datos. Consultas, visitas, citas y cartera se juntan en la que quede.</div></div>
+        <button class="x" data-cerrar aria-label="Cerrar">✕</button></div>
+      <div class="opciones">
+        ${[a, b].map(m => `<button class="opt" data-queda="${m.id}" aria-pressed="${queda === m.id}">
+          <span class="mk"></span><span><b>${esc(m.nombre)}</b><br><span class="sm">Código ${esc(m.codigo)} · se conserva esta</span></span></button>`).join('')}
+      </div>
+      ${dif.length ? `<div style="margin-top:12px">${dif.map(([k, t]) => `
+        <label>${t}</label>
+        <div class="opciones">
+          <button class="opt" data-campo="${k}|queda" aria-pressed="${eleccion[k] === 'queda'}"><span class="mk"></span>${esc(qu[k] || '(vacío)')}</button>
+          <button class="opt" data-campo="${k}|va" aria-pressed="${eleccion[k] === 'va'}"><span class="mk"></span>${esc(va[k] || '(vacío)')}</button>
+        </div>`).join('')}</div>` : '<p class="sm" style="margin-top:12px">Los datos principales coinciden.</p>'}
+      <div class="acts" style="justify-content:flex-end">
+        <button class="btn sec" data-cerrar>Cancelar</button>
+        <button class="btn dang" id="uniok">Unificar</button></div>`;
+
+    $('dbody').querySelectorAll('[data-queda]').forEach(x => x.onclick = () => { queda = x.dataset.queda; pinta(); });
+    $('dbody').querySelectorAll('[data-campo]').forEach(x => x.onclick = () => {
+      const [k, v] = x.dataset.campo.split('|'); eleccion[k] = v; pinta();
+    });
+    $('uniok').onclick = async ev => {
+      const desaparece = queda === a.id ? b.id : a.id;
+      if (!confirm(`¿Unificar? La ficha que desaparece es la de ${esc(queda === a.id ? b.nombre : a.nombre)}. No se puede deshacer desde la app.`)) return;
+      ev.target.disabled = true; ev.target.textContent = 'Unificando…';
+      const { data: r, error } = await db.rpc('unificar_medicos', { p: { queda, va: desaparece, campos: eleccion } });
+      ev.target.disabled = false; ev.target.textContent = 'Unificar';
+      if (error || (r && r.ok === false)) { toast('No se ha podido unificar', true); return; }
+      toast('Fichas unificadas');
+      DUPS = null; PARES = (PARES || []).filter(p => p.a_id !== desaparece && p.b_id !== desaparece);
+      abrirDuplicados();
+      buscar(true); cargarInicio();
+    };
+  };
+  pinta();
+}
+
+/* ---------------- contraseñas ---------------- */
+
+$('lform').insertAdjacentHTML('beforeend',
+  '<button type="button" id="lolv" style="border:0;background:none;color:var(--navy);font-weight:600;cursor:pointer;margin-top:10px;font-size:13.5px">He olvidado la contraseña</button>');
+
+$('lolv').onclick = async () => {
+  const email = $('lu').value.trim();
+  if (!email) { $('lmsg').textContent = 'Escribe primero tu correo.'; return; }
+  const { error } = await db.auth.resetPasswordForEmail(email, { redirectTo: location.origin + location.pathname });
+  $('lmsg').style.color = error ? 'var(--dang)' : 'var(--ok)';
+  $('lmsg').textContent = error ? 'No se ha podido enviar: ' + error.message
+    : 'Te hemos enviado un correo para crear una contraseña nueva.';
+};
+
+/* Si el usuario llega desde el correo de recuperación, pedimos la contraseña nueva. */
+db.auth.onAuthStateChange(async (evento) => {
+  if (evento !== 'PASSWORD_RECOVERY') return;
+  $('dbody').innerHTML = `
+    <div class="fh"><div><h2>Nueva contraseña</h2><div class="sm">Elige una de al menos 8 caracteres</div></div></div>
+    <label for="np1">Contraseña</label><input id="np1" type="password">
+    <label for="np2">Repítela</label><input id="np2" type="password">
+    <div class="acts" style="justify-content:flex-end"><button class="btn" id="npok">Guardar</button></div>`;
+  $('dlg').showModal();
+  $('npok').onclick = async ev => {
+    if ($('np1').value.length < 8 || $('np1').value !== $('np2').value) { toast('Revisa las contraseñas', true); return; }
+    ev.target.disabled = true;
+    const { error } = await db.auth.updateUser({ password: $('np1').value });
+    ev.target.disabled = false;
+    if (error) { toast('No se ha podido cambiar: ' + error.message, true); return; }
+    $('dlg').close(); toast('Contraseña actualizada'); arrancar();
+  };
+});
+
+/* Cambiar la contraseña desde el menú de usuario */
+document.addEventListener('click', async e => {
+  if (!e.target.closest('[data-u="pass"]')) return;
+  const p1 = prompt('Nueva contraseña (mínimo 8 caracteres):', '');
+  if (!p1) return;
+  if (p1.length < 8) { toast('Demasiado corta', true); return; }
+  const { error } = await db.auth.updateUser({ password: p1 });
+  toast(error ? 'No se ha podido: ' + error.message : 'Contraseña actualizada', !!error);
+});
 
 
 pintarConexion();
