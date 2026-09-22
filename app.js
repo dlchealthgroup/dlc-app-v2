@@ -63,6 +63,8 @@ async function arrancar() {
   $('hola').textContent = (h < 13 ? 'Buenos días' : h < 20 ? 'Buenas tardes' : 'Buenas noches') + ', ' + nombre;
   $('hoyfecha').textContent = fechaLarga(new Date()).replace(/^./, c => c.toUpperCase());
 
+  $('nuevoBtn').classList.toggle('hide', !puedeCrear());
+  cargarCatalogos();
   cargarInicio();
   cargarFiltros();
 }
@@ -266,6 +268,7 @@ $('lista').addEventListener('click', e => { const b = e.target.closest('[data-id
 /* ---------------- ficha ---------------- */
 
 async function abrirFicha(id) {
+  FICHA_ID = id;
   $('fbody').innerHTML = '<div class="skel" style="width:50%"></div><div class="skel"></div><div class="skel" style="width:80%"></div>';
   $('ficha').showModal();
   const { data, error } = await db.rpc('ficha_medico', { p_id: id });
@@ -280,8 +283,16 @@ async function abrirFicha(id) {
         <div class="sm">${esc(m.especialidad || '')}${m.area ? ' · ' + esc(m.area) : ''} · código ${esc(m.codigo)}</div></div>
       <button class="x" id="fx" aria-label="Cerrar">✕</button>
     </div>
+    ${(puedeRegistrar() || puedeEditar()) ? `<div class="acts">
+      ${puedeRegistrar() ? `<button class="btn" data-act="visita" data-id="${m.id}">Registrar visita</button>` : ''}
+      ${puedeEditar() ? `<button class="btn sec" data-act="editar" data-id="${m.id}">Editar ficha</button>` : ''}
+      ${puedeEditar() ? `<button class="btn ${m.urgente ? 'sec' : 'warn'}" data-act="urgente" data-id="${m.id}" data-urg="${m.urgente ? 1 : 0}">${m.urgente ? 'Quitar urgente' : 'Marcar urgente'}</button>` : ''}
+    </div>` : ''}
     <div class="blk"><h3>Estado</h3>
-      <div><span class="pill p-est">${esc(m.estado_comercial)}</span>${m.prioridad ? ' <span class="sm">· ' + esc(m.prioridad) + '</span>' : ''}</div>
+      <div>${puedeEditar()
+        ? `<select data-estado="${m.id}" style="max-width:240px">${ESTADOS.map(x => `<option ${x === m.estado_comercial ? 'selected' : ''}>${x}</option>`).join('')}</select>`
+        : `<span class="pill p-est">${esc(m.estado_comercial)}</span>`}${m.prioridad ? ' <span class="sm">· ' + esc(m.prioridad) + '</span>' : ''}</div>
+      ${m.urgente && m.urgente_motivo ? `<div class="sm" style="margin-top:6px">Urgente: ${esc(m.urgente_motivo)}</div>` : ''}
       ${m.cuando_visitar ? `<div class="sm" style="margin-top:6px">Cuándo visitar: ${esc(m.cuando_visitar)}</div>` : ''}
       ${com.length ? `<div class="sm" style="margin-top:6px">Comercial: ${com.map(esc).join(', ')}</div>` : ''}
       ${m.telefono ? `<div class="sm" style="margin-top:6px">Teléfono: ${esc(m.telefono)}</div>` : ''}
@@ -310,4 +321,363 @@ $('ficha').addEventListener('click', e => { if (e.target.id === 'ficha') $('fich
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(() => {}));
 }
+
+/* ============================================================
+   DLC OS 2.0 · Entrega 3: registrar visitas, editar fichas y altas
+   ============================================================ */
+
+const CAT = { RESULTADO: [], ESPECIALIDAD: [], AREA: [], MOTIVO_URGENCIA: [] };
+const ESTADOS = ['Sin contactar', 'Presentado', 'Interesado', 'Prescribe', 'No interesado'];
+const DIAS = ['L', 'M', 'X', 'J', 'V'];
+const DIAN = { L: 'Lunes', M: 'Martes', X: 'Miércoles', J: 'Jueves', V: 'Viernes' };
+const HM = ['09:00-13:00', '09:30-13:30', '10:00-14:00', '08:00-15:00'];
+const HT = ['15:00-19:00', '16:00-19:00', '16:00-20:00', '17:00-20:00'];
+let FICHA_ID = null;
+
+const puedeEditar = () => PERFIL && (PERFIL.rol === 'Administrador' || ((PERFIL.areas || {}).M || 0) >= 2);
+const puedeCrear = () => PERFIL && (PERFIL.rol === 'Administrador' || ((PERFIL.areas || {}).M || 0) >= 3);
+const puedeRegistrar = () => PERFIL && (PERFIL.rol === 'Administrador' || ((PERFIL.areas || {}).S || 0) >= 2);
+
+let tToast;
+function toast(msg, err) {
+  const t = $('toast');
+  t.textContent = msg; t.className = 'toast' + (err ? ' err' : '');
+  clearTimeout(tToast); tToast = setTimeout(() => t.classList.add('hide'), 3200);
+}
+
+async function cargarCatalogos() {
+  const claves = Object.keys(CAT);
+  const res = await Promise.all(claves.map(k => db.rpc('catalogo', { p_clave: k })));
+  claves.forEach((k, i) => { CAT[k] = res[i].data || []; });
+}
+
+/* ---------------- selector de días ---------------- */
+
+function dpHTML(dias, idx) {
+  const st = {};
+  DIAS.forEach(k => {
+    const t = String((dias || {})[k] || '');
+    const r = /(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})/.exec(t);
+    st[k] = {
+      M: /mañana/i.test(t) || (r && +r[1].slice(0, 2) < 14),
+      T: /tarde/i.test(t) || (r && +r[1].slice(0, 2) >= 14),
+      h: r ? r[1] + '-' + r[2] : ''
+    };
+  });
+  const sel = (k, f) => `<select data-dh="${idx}|${k}|${f}"><option value="">Sin hora</option>${
+    (f === 'M' ? HM : HT).map(x => `<option ${st[k].h === x ? 'selected' : ''}>${x.replace('-', ' - ')}</option>`).join('')}</select>`;
+  return `<div class="dp" data-dp="${idx}">
+    <div class="qk"><button type="button" data-qk="${idx}|lvm">L-V mañanas</button>
+      <button type="button" data-qk="${idx}|lvt">L-V tardes</button>
+      <button type="button" data-qk="${idx}|clr">Limpiar</button></div>
+    ${DIAS.map(k => `<div class="dprow"><b>${DIAN[k].slice(0, 3)}</b>
+      <div class="dpc"><button type="button" class="dpt" data-dt="${idx}|${k}|M" aria-pressed="${!!st[k].M}">${st[k].M ? '✓ ' : ''}Mañana</button>${st[k].M ? sel(k, 'M') : ''}</div>
+      <div class="dpc"><button type="button" class="dpt" data-dt="${idx}|${k}|T" aria-pressed="${!!st[k].T}">${st[k].T ? '✓ ' : ''}Tarde</button>${st[k].T ? sel(k, 'T') : ''}</div>
+    </div>`).join('')}</div>`;
+}
+
+function dpLeer(cont, idx) {
+  const out = {};
+  DIAS.forEach(k => {
+    const partes = [];
+    ['M', 'T'].forEach(f => {
+      const b = cont.querySelector(`[data-dt="${idx}|${k}|${f}"]`);
+      if (b && b.getAttribute('aria-pressed') === 'true') {
+        const s = cont.querySelector(`[data-dh="${idx}|${k}|${f}"]`);
+        const h = s && s.value ? ' ' + s.value.replace(/\s/g, '') : '';
+        partes.push((f === 'M' ? 'Mañana' : 'Tarde') + h);
+      }
+    });
+    if (partes.length) out[k] = partes.join('; ');
+  });
+  return out;
+}
+
+document.addEventListener('click', e => {
+  const t = e.target.closest('[data-dt]');
+  if (t) {
+    const cont = t.closest('.dp'), [idx, k, f] = t.dataset.dt.split('|');
+    const dias = dpLeer(cont.parentElement, idx);
+    const st = dpEstado(cont, idx);
+    st[k][f] = !st[k][f];
+    repintarDp(cont, idx, st);
+    return;
+  }
+  const q = e.target.closest('[data-qk]');
+  if (q) {
+    const cont = q.closest('.dp'), [idx, modo] = q.dataset.qk.split('|');
+    const st = dpEstado(cont, idx);
+    DIAS.forEach(k => {
+      if (modo === 'clr') { st[k].M = st[k].T = false; st[k].h = { M: '', T: '' }; }
+      if (modo === 'lvm') st[k].M = true;
+      if (modo === 'lvt') st[k].T = true;
+    });
+    repintarDp(cont, idx, st);
+  }
+});
+
+function dpEstado(cont, idx) {
+  const st = {};
+  DIAS.forEach(k => {
+    st[k] = { M: false, T: false, h: { M: '', T: '' } };
+    ['M', 'T'].forEach(f => {
+      const b = cont.querySelector(`[data-dt="${idx}|${k}|${f}"]`);
+      if (b) st[k][f] = b.getAttribute('aria-pressed') === 'true';
+      const s = cont.querySelector(`[data-dh="${idx}|${k}|${f}"]`);
+      if (s) st[k].h[f] = s.value;
+    });
+  });
+  return st;
+}
+
+function repintarDp(cont, idx, st) {
+  const dias = {};
+  DIAS.forEach(k => {
+    const p = [];
+    if (st[k].M) p.push('Mañana' + (st[k].h.M ? ' ' + st[k].h.M.replace(/\s/g, '') : ''));
+    if (st[k].T) p.push('Tarde' + (st[k].h.T ? ' ' + st[k].h.T.replace(/\s/g, '') : ''));
+    if (p.length) dias[k] = p.join('; ');
+  });
+  cont.outerHTML = dpHTML(dias, idx);
+}
+
+/* ---------------- registrar visita ---------------- */
+
+async function abrirVisita(id) {
+  const { data, error } = await db.rpc('ficha_medico', { p_id: id });
+  if (error) { toast('No se ha podido abrir: ' + error.message, true); return; }
+  const m = data.medico, cons = data.consultas || [];
+  const pos = CAT.RESULTADO.filter(r => r.extra !== 'neg'), neg = CAT.RESULTADO.filter(r => r.extra === 'neg');
+
+  $('dbody').innerHTML = `
+    <div class="fh"><div><h2>Registrar visita</h2><div class="sm">${esc(m.nombre)}</div></div>
+      <button class="x" data-cerrar aria-label="Cerrar">✕</button></div>
+    <div class="g2">
+      <div><label for="vf">Fecha</label><input id="vf" type="date" value="${hoyISO()}"></div>
+      <div><label for="vc">Centro de la visita</label><select id="vc">
+        ${cons.map(c => `<option value="${c.id}">${esc(c.centro_nombre || 'Consulta privada')}${c.municipio ? ' · ' + esc(c.municipio) : ''}</option>`).join('')}
+      </select></div>
+    </div>
+    <label>Resultado <span class="sm">· puedes marcar varios de "visita realizada"</span></label>
+    <div class="opciones">${pos.map(r => `<button type="button" class="opt" data-res="${esc(r.valor)}" aria-pressed="false"><span class="mk"></span>${esc(r.valor)}</button>`).join('')}</div>
+    <div class="opciones" style="margin-top:8px">${neg.map(r => `<button type="button" class="opt neg" data-res="${esc(r.valor)}" data-neg="1" aria-pressed="false"><span class="mk"></span>${esc(r.valor)}</button>`).join('')}</div>
+    <div class="g2" style="margin-top:6px">
+      <div><label for="vm">Muestras entregadas</label><input id="vm" type="number" min="0" max="99" value="0"></div>
+      <div><label for="vpf">Próxima acción · fecha</label><input id="vpf" type="date"></div>
+    </div>
+    <label for="vpa">Próxima acción</label><input id="vpa" placeholder="p. ej. Llevar reporting">
+    <label for="vn">Nota</label><textarea id="vn" rows="3"></textarea>
+    <div class="acts" style="justify-content:flex-end">
+      <button class="btn sec" data-cerrar>Cancelar</button>
+      <button class="btn" id="vguardar">Guardar visita</button>
+    </div>`;
+
+  $('dbody').querySelectorAll('[data-res]').forEach(b => b.onclick = () => {
+    const esNeg = b.dataset.neg === '1', on = b.getAttribute('aria-pressed') === 'true';
+    $('dbody').querySelectorAll('[data-res]').forEach(x => {
+      if (esNeg || x.dataset.neg === '1') x.setAttribute('aria-pressed', 'false');
+    });
+    b.setAttribute('aria-pressed', String(!on));
+  });
+
+  $('vguardar').onclick = async ev => {
+    const res = [...$('dbody').querySelectorAll('[data-res][aria-pressed=true]')].map(b => b.dataset.res);
+    if (!res.length) { toast('Elige al menos un resultado', true); return; }
+    ev.target.disabled = true; ev.target.textContent = 'Guardando…';
+    const { data: r, error: err } = await db.rpc('registrar_visita', { p: {
+      medico_id: id, consulta_id: $('vc').value || null, fecha: $('vf').value,
+      resultados: res, muestras: +$('vm').value || 0, nota: $('vn').value.trim(),
+      proxima_accion: $('vpa').value.trim(), proxima_fecha: $('vpf').value || null,
+      op_id: 'v-' + id + '-' + Date.now()
+    }});
+    ev.target.disabled = false; ev.target.textContent = 'Guardar visita';
+    if (err) { toast('No se ha podido guardar: ' + err.message, true); return; }
+    $('dlg').close();
+    toast('Visita registrada' + (r && r.estado ? ' · estado: ' + r.estado : ''));
+    cargarInicio();
+    if (FICHA_ID === id) abrirFicha(id);
+  };
+  $('dlg').showModal();
+}
+
+/* ---------------- editar ficha y altas ---------------- */
+
+function consHTML(c, i) {
+  return `<div class="cons" data-cons="${i}">
+    ${i > 0 ? `<button type="button" class="quitar" data-quitar="${i}">Quitar</button>` : ''}
+    <input type="hidden" data-cid="${i}" value="${esc(c.id || '')}">
+    <div class="g2">
+      <div><label>Centro</label><input data-cf="${i}|centro_nombre" value="${esc(c.centro_nombre || '')}" placeholder="Nombre del centro o vacío si es privada"></div>
+      <div><label>Municipio</label><input data-cf="${i}|municipio" value="${esc(c.municipio || '')}"></div>
+    </div>
+    <div class="g2">
+      <div><label>Dirección</label><input data-cf="${i}|direccion" value="${esc(c.direccion || '')}"></div>
+      <div><label>Código postal</label><input data-cf="${i}|cp" value="${esc(c.cp || '')}"></div>
+    </div>
+    <div class="g2">
+      <div><label>Provincia</label><input data-cf="${i}|provincia" value="${esc(c.provincia || 'BARCELONA')}"></div>
+      <div><label>Teléfono</label><input data-cf="${i}|telefono" value="${esc(c.telefono || '')}" inputmode="tel"></div>
+    </div>
+    <label>Días y horario</label>${dpHTML(c.dias || {}, i)}
+  </div>`;
+}
+
+async function abrirEditor(id, tipo) {
+  let m = { tipo: tipo || 'Persona', estado_comercial: 'Sin contactar' }, cons = [{}];
+  if (id) {
+    const { data, error } = await db.rpc('ficha_medico', { p_id: id });
+    if (error) { toast('No se ha podido abrir: ' + error.message, true); return; }
+    m = data.medico; cons = (data.consultas || []).length ? data.consultas : [{}];
+  }
+  const esCentro = m.tipo === 'Centro';
+  const opts = (lista, v) => `<option value=""></option>` + lista.map(x =>
+    `<option ${v === x.valor ? 'selected' : ''}>${esc(x.valor)}</option>`).join('');
+
+  $('dbody').innerHTML = `
+    <div class="fh"><div><h2>${id ? 'Editar ficha' : esCentro ? 'Nuevo centro' : 'Nuevo médico'}</h2>
+      <div class="sm">${id ? esc(m.nombre) : esCentro ? 'Clínica, hospital o centro médico' : 'Profesional con sus consultas'}</div></div>
+      <button class="x" data-cerrar aria-label="Cerrar">✕</button></div>
+    <label for="en">${esCentro ? 'Nombre del centro' : 'Apellidos, Nombre'}</label>
+    <input id="en" value="${esc(m.nombre || '')}" placeholder="${esCentro ? 'CLÍNICA SANT JORDI' : 'GARCIA LOPEZ, ANA'}" autocapitalize="characters">
+    ${esCentro ? '' : `<div class="g2">
+      <div><label for="ee">Especialidad</label><select id="ee">${opts(CAT.ESPECIALIDAD, m.especialidad)}</select></div>
+      <div><label for="ea">Área</label><select id="ea">${opts(CAT.AREA, m.area)}</select></div></div>`}
+    <div class="g2">
+      <div><label for="et">Teléfono</label><input id="et" value="${esc(m.telefono || '')}" inputmode="tel"></div>
+      <div><label for="em">Email</label><input id="em" type="email" value="${esc(m.email || '')}"></div>
+    </div>
+    <label for="ect">Contacto (secretaría, teléfono, email)</label><input id="ect" value="${esc(m.contacto || '')}">
+    <label for="ecv">Cuándo visitar</label><input id="ecv" value="${esc(m.cuando_visitar || '')}" placeholder="p. ej. martes por la mañana">
+    <label for="eno">Nota</label><textarea id="eno" rows="3">${esc(m.nota || '')}</textarea>
+    <div id="econs">${cons.map(consHTML).join('')}</div>
+    <div class="acts"><button type="button" class="btn sec" id="eadd">+ Añadir consulta</button></div>
+    <div id="edup"></div>
+    <div class="acts" style="justify-content:flex-end">
+      <button class="btn sec" data-cerrar>Cancelar</button>
+      <button class="btn" id="eguardar">${id ? 'Guardar cambios' : 'Crear'}</button>
+    </div>`;
+
+  $('eadd').onclick = () => {
+    const i = $('econs').children.length;
+    $('econs').insertAdjacentHTML('beforeend', consHTML({}, i));
+  };
+  $('econs').onclick = e => {
+    const q = e.target.closest('[data-quitar]');
+    if (q) q.closest('.cons').remove();
+  };
+
+  const recoger = () => {
+    const consultas = [...$('econs').children].map(box => {
+      const i = box.dataset.cons;
+      const g = f => (box.querySelector(`[data-cf="${i}|${f}"]`) || {}).value || '';
+      return {
+        id: (box.querySelector(`[data-cid="${i}"]`) || {}).value || null,
+        centro_nombre: g('centro_nombre').toUpperCase(), municipio: g('municipio').toUpperCase(),
+        provincia: g('provincia').toUpperCase(), direccion: g('direccion'), cp: g('cp'),
+        telefono: g('telefono'), dias: dpLeer(box, i)
+      };
+    });
+    return {
+      id: id || null, tipo: m.tipo,
+      nombre: $('en').value.trim().toUpperCase(),
+      especialidad: esCentro ? '' : ($('ee') || {}).value || '',
+      area: esCentro ? '' : ($('ea') || {}).value || '',
+      telefono: $('et').value.trim(), email: $('em').value.trim(),
+      contacto: $('ect').value.trim(), cuando_visitar: $('ecv').value.trim(),
+      nota: $('eno').value.trim(), estado_comercial: m.estado_comercial, consultas
+    };
+  };
+
+  let avisado = false;
+  $('eguardar').onclick = async ev => {
+    const p = recoger();
+    if (!p.nombre || p.nombre.length < 3) { toast('Escribe el nombre', true); return; }
+    if (!id && !esCentro && p.nombre.indexOf(',') < 0) { toast('Escribe el nombre como APELLIDOS, NOMBRE', true); return; }
+
+    if (!id && !avisado) {
+      const { data: dup } = await db.rpc('duplicados_de', {
+        p_nombre: p.nombre, p_tipo: p.tipo, p_municipio: (p.consultas[0] || {}).municipio || null
+      });
+      const altos = (dup || []).filter(d => d.pct >= 70);
+      if (altos.length) {
+        avisado = true;
+        $('edup').innerHTML = `<div class="dupbox"><b>Puede que ya exista</b>
+          <div class="sm">Si es la misma persona, cancela y abre su ficha. Si no lo es, vuelve a pulsar Crear.</div>
+          ${altos.map(d => `<div class="l"><span><b>${esc(d.nombre)}</b><br><span class="sm">${esc(d.especialidad || '')} · ${esc(d.centro || '')} · ${esc(d.municipio || '')}</span></span>
+            <span><b>${d.pct}%</b></span></div>`).join('')}</div>`;
+        $('eguardar').textContent = 'Crear de todos modos';
+        return;
+      }
+    }
+
+    ev.target.disabled = true; ev.target.textContent = 'Guardando…';
+    const { data, error } = await db.rpc('guardar_medico', { p });
+    ev.target.disabled = false; ev.target.textContent = id ? 'Guardar cambios' : 'Crear';
+    if (error) { toast('No se ha podido guardar: ' + error.message, true); return; }
+    $('dlg').close();
+    toast(id ? 'Ficha guardada' : 'Creado correctamente');
+    buscar(true); cargarInicio();
+    if (data && data.medico) abrirFicha(data.medico.id);
+  };
+  $('dlg').showModal();
+}
+
+/* ---------------- acciones desde la ficha ---------------- */
+
+async function cambiarEstado(id, estado) {
+  const { error } = await db.from('medicos').update({ estado_comercial: estado }).eq('id', id);
+  if (error) { toast('No se ha podido cambiar: ' + error.message, true); return; }
+  toast('Estado: ' + estado);
+  buscar(true); cargarInicio();
+}
+
+async function alternarUrgente(id, esUrgente, nombre) {
+  let motivo = null;
+  if (!esUrgente) {
+    motivo = prompt('Motivo para marcarlo como urgente (opcional):', '');
+    if (motivo === null) return;
+  }
+  const { error } = await db.from('medicos')
+    .update({ urgente: !esUrgente, urgente_motivo: esUrgente ? null : (motivo || 'Marcado desde la app') })
+    .eq('id', id);
+  if (error) { toast('No se ha podido cambiar: ' + error.message, true); return; }
+  toast(esUrgente ? 'Ya no es urgente' : 'Marcado como urgente');
+  abrirFicha(id); buscar(true); cargarInicio();
+}
+
+/* ---------------- enganches ---------------- */
+
+document.addEventListener('click', e => {
+  if (e.target.closest('[data-cerrar]')) $('dlg').close();
+  const a = e.target.closest('[data-act]');
+  if (!a) return;
+  const id = a.dataset.id;
+  if (a.dataset.act === 'visita') abrirVisita(id);
+  if (a.dataset.act === 'editar') abrirEditor(id);
+  if (a.dataset.act === 'urgente') alternarUrgente(id, a.dataset.urg === '1');
+});
+
+document.addEventListener('change', e => {
+  const s = e.target.closest('[data-estado]');
+  if (s) cambiarEstado(s.dataset.estado, s.value);
+});
+
+$('dlg').addEventListener('click', e => { if (e.target.id === 'dlg') $('dlg').close(); });
+
+$('nuevoBtn').addEventListener('click', () => {
+  if (!puedeCrear()) { toast('No tienes permiso para crear fichas', true); return; }
+  $('dbody').innerHTML = `
+    <div class="fh"><div><h2>Crear nuevo</h2><div class="sm">¿Qué quieres dar de alta?</div></div>
+      <button class="x" data-cerrar aria-label="Cerrar">✕</button></div>
+    <div class="opciones" style="margin-top:10px">
+      <button class="opt" data-crear="Persona" style="flex-direction:column;align-items:flex-start;gap:4px;padding:16px">
+        <b style="font-size:16px;color:var(--navy)">Médico</b><span class="sm">Profesional con sus consultas y horarios</span></button>
+      <button class="opt" data-crear="Centro" style="flex-direction:column;align-items:flex-start;gap:4px;padding:16px">
+        <b style="font-size:16px;color:var(--navy)">Centro</b><span class="sm">Clínica, hospital o centro médico</span></button>
+    </div>`;
+  $('dbody').querySelectorAll('[data-crear]').forEach(b => b.onclick = () => abrirEditor(null, b.dataset.crear));
+  $('dlg').showModal();
+});
+
+
 arrancar();
