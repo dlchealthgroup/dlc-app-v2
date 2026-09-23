@@ -152,6 +152,7 @@ async function cargarInicio() {
   });
 
   tarjetaComision();
+  tarjetasRuta();
   tarjeta($('c-agenda'), 'Tu agenda de hoy', data.agenda_hoy.length,
     data.agenda_hoy.map(a => itemHTML(a.medico_id, a.hora ? esc(a.hora).slice(0, 5) : '·',
       a.estado === 'Visitada' ? 'o' : '', a.nombre,
@@ -1057,8 +1058,14 @@ function pintarPrefs() {
     <div class="card" style="padding:16px;margin-top:14px"><h2 style="padding:0">Navegación</h2>
       <p class="sm" style="padding:0">Con qué app se abren las rutas y los "cómo llegar".</p>
       <div style="max-width:260px;margin-top:8px">${selectorNav()}</div></div>
+    ${bloquePlantillas()}
     <div class="acts" style="justify-content:flex-end"><button class="btn" id="pfguardar">Guardar preferencias</button></div>`;
   if ($('navsel')) $('navsel').onchange = e => cambiarNavegador(e.target.value);
+  if ($('tplok')) $('tplok').onclick = guardarPlantillas;
+  if ($('tplreset')) $('tplreset').onclick = () => {
+    $('tplwa').value = TPL_DEF.wa; $('tplas').value = TPL_DEF.asunto; $('tplem').value = TPL_DEF.email;
+    toast('Plantillas por defecto puestas: pulsa Guardar');
+  };
 
   $('cfgcuerpo').querySelectorAll('[data-pg]').forEach(b => b.onclick = async () => {
     const k = b.dataset.pg, dir = $('cfgcuerpo').querySelector(`[data-pd="${k}"]`).value.trim();
@@ -2087,6 +2094,7 @@ $('colsBtn').addEventListener('click', abrirColumnas);
 $('cercaBtn').addEventListener('click', e => cercaDeMi(e.target));
 $('dupBtn').addEventListener('click', () => { DUPS = null; abrirDuplicados(); });
 $('dirtools').addEventListener('click', () => abrirHerramientas('directorio'));
+$('compartirBtn').addEventListener('click', compartirSemana);
 
 
 
@@ -3742,6 +3750,176 @@ async function revisarPendientes() {
     const [a, c] = b.dataset.cmp.split('|'); compararFichas(a, c);
   });
   $('dbody').querySelectorAll('[data-dficha]').forEach(b => b.onclick = () => { $('dlg').close(); abrirFicha(b.dataset.dficha); });
+}
+
+
+
+/* ============================================================
+   DLC OS 2.0 · Entrega 16 · Bloque D: Inicio y configuración
+   ============================================================ */
+
+/* ---------------- plantillas de mensajes ---------------- */
+
+const TPL_DEF = {
+  wa: `*Resumen de la semana* ({semana})
+
+✅ Visitas: *{visitas}* a {medicos} médicos
+{resultados}
+📦 Muestras entregadas: *{muestras}*
+📈 Unidades atribuidas: *{unidades}*
+
+*Interesados o prescriben*
+{interesados}
+
+*Próximas acciones*
+{proximas}`,
+  asunto: 'DLC · Resumen semanal ({semana})',
+  email: `Hola,
+
+Te paso el resumen de la semana ({semana}):
+
+- Visitas realizadas: {visitas}, a {medicos} médicos
+{resultados}
+- Muestras entregadas: {muestras}
+- Unidades atribuidas: {unidades}
+
+Interesados o prescriben:
+{interesados}
+
+Próximas acciones (7 días):
+{proximas}
+
+Un saludo,
+{nombre}`
+};
+const TPL = () => Object.assign({}, TPL_DEF, (PERFIL.preferencias || {}).plantillas || {});
+const rellenar = (t, v) => String(t || '').replace(/\{(\w+)\}/g, (m, k) => v[k] != null ? v[k] : m);
+
+async function variablesSemana() {
+  const { data } = await db.rpc('resumen_semana', {});
+  if (!data) return null;
+  return {
+    semana: 'del ' + fechaCorta(data.desde) + ' al ' + fechaCorta(data.hasta),
+    visitas: num(data.visitas), medicos: num(data.medicos), muestras: num(data.muestras),
+    unidades: num(data.unidades), nombre: PERFIL.nombre,
+    resultados: (data.resultados || []).map(r => `· ${r.resultado}: ${r.n}`).join('\n') || '· Sin visitas registradas',
+    interesados: (data.interesados || []).map(i => `· ${i.nombre}${i.especialidad ? ' (' + i.especialidad + ')' : ''}`).join('\n') || '· Ninguno esta semana',
+    proximas: (data.proximas || []).map(p => `· ${fechaCorta(p.proxima_fecha)} ${p.nombre}: ${p.proxima_accion || 'seguimiento'}`).join('\n') || '· Sin acciones programadas'
+  };
+}
+
+let CANAL = 'wa';
+async function compartirSemana() {
+  cargando($('dbody'), 'Preparando el resumen…');
+  $('dlg').showModal();
+  const v = await variablesSemana();
+  if (!v) { $('dbody').innerHTML = '<div class="vacio">No se ha podido preparar el resumen.</div>'; return; }
+
+  const pinta = () => {
+    const t = TPL();
+    $('dbody').innerHTML = `
+      <div class="fh"><div><h2>Compartir la semana</h2>
+        <div class="sm">Edítalo antes de enviarlo. Las plantillas se cambian en Configuración → Mis preferencias</div></div>
+        <button class="x" data-cerrar aria-label="Cerrar">✕</button></div>
+      <div class="subnav" style="margin:6px 0 10px">
+        <button data-canal="wa" aria-pressed="${CANAL === 'wa'}">WhatsApp</button>
+        <button data-canal="email" aria-pressed="${CANAL === 'email'}">Email</button></div>
+      ${CANAL === 'email' ? `<div class="g2">
+        <div><label for="shto">Para</label><input id="shto" type="email" value="${esc(localStorage.getItem('dlc-shto') || '')}"></div>
+        <div><label for="shsub">Asunto</label><input id="shsub" value="${esc(rellenar(t.asunto, v))}"></div></div>` : ''}
+      <label for="shtxt">Mensaje</label>
+      <textarea id="shtxt" rows="14" style="font:13.5px/1.5 ui-monospace,Menlo,Consolas,monospace">${esc(rellenar(CANAL === 'email' ? t.email : t.wa, v))}</textarea>
+      <div class="acts" style="justify-content:flex-end">
+        <button class="btn sec" id="shcopy">Copiar</button>
+        <button class="btn" id="shsend">${CANAL === 'email' ? 'Abrir el correo' : 'Abrir WhatsApp'}</button></div>`;
+
+    $('dbody').querySelectorAll('[data-canal]').forEach(b => b.onclick = () => { CANAL = b.dataset.canal; pinta(); });
+    $('shcopy').onclick = async () => {
+      const txt = (CANAL === 'email' ? $('shsub').value + '\n\n' : '') + $('shtxt').value;
+      try { await navigator.clipboard.writeText(txt); toast('Copiado'); }
+      catch (e) { $('shtxt').select(); toast('Selecciona y copia'); }
+    };
+    $('shsend').onclick = () => {
+      if (CANAL === 'email') {
+        const to = $('shto').value.trim();
+        localStorage.setItem('dlc-shto', to);
+        location.href = 'mailto:' + encodeURIComponent(to) + '?subject=' + encodeURIComponent($('shsub').value) +
+          '&body=' + encodeURIComponent($('shtxt').value);
+      } else window.open('https://wa.me/?text=' + encodeURIComponent($('shtxt').value), '_blank', 'noopener');
+    };
+  };
+  pinta();
+}
+
+/* ---------------- recomendaciones y pendientes en Inicio ---------------- */
+
+async function tarjetasRuta() {
+  const cr = $('c-recom'), cp = $('c-pend');
+  if (!cr) return;
+  const { data } = await db.rpc('propuestas_rutas', { lim: 40 });
+  if (!data) { cr.innerHTML = ''; return; }
+  PROPUESTAS = data;
+  const dn = { L: 'lunes', M: 'martes', X: 'miércoles', J: 'jueves', V: 'viernes' }[data.dia] || 'hoy';
+  const bloques = [
+    ['hoy', '📅', `Pasan consulta ${dn}`],
+    ['urgentes', '❗', 'Urgentes sin visitar'],
+    ['interesados', '🔥', 'Interesados sin visita en 20 días'],
+    ['sin_visitar', '🆕', 'Sin visitar nunca']
+  ].filter(([k]) => (data[k] || []).length);
+
+  cr.innerHTML = bloques.length ? `<h2>Recomendaciones de rutas</h2>
+    <p class="sm">Calculadas con tus datos de hoy. Al pulsar, se planifica la ruta.</p>
+    <div class="lista">${bloques.map(([k, ic, t]) => `<button class="item" data-recruta="${k}">
+      <span class="ic">${ic}</span><span class="tx"><b>${t}</b>
+        <span class="sm">${num(data[k].length)} médicos con ubicación</span></span>
+      <span class="rn">${num(data[k].length)}</span></button>`).join('')}</div>
+    <button class="verlo" data-ir-rutas>Ver todas las rutas</button>` : '';
+
+  cr.querySelectorAll('[data-recruta]').forEach(b => b.onclick = async e => {
+    const k = b.dataset.recruta;
+    ir('rutas');
+    await new Promise(r => setTimeout(r, 60));   // esperamos a que exista la pantalla de rutas
+    planDesdeLista(PROPUESTAS[k], k, e.currentTarget);
+  });
+  if (cr.querySelector('[data-ir-rutas]')) cr.querySelector('[data-ir-rutas]').onclick = () => ir('rutas');
+
+  const pend = data.pendientes || [];
+  if (cp) cp.innerHTML = pend.length ? `<h2><span style="color:var(--warn)">Pendientes de rutas anteriores</span>
+      <span class="n">${pend.length}</span></h2>
+    <p class="sm">Los planificaste y no se visitaron.</p>
+    <div class="lista">${pend.slice(0, 5).map(m => `<button class="item" data-id="${m.id}">
+      <span class="ic w">!</span><span class="tx"><b>${esc(m.nombre)}</b>
+        <span class="sm">${esc(m.especialidad || '')} · ${esc(m.centro_nombre || m.municipio || '')}</span></span></button>`).join('')}</div>
+    <button class="verlo" data-ir-agenda>Ver los ${pend.length} en Agenda</button>` : '';
+  if (cp && cp.querySelector('[data-ir-agenda]')) cp.querySelector('[data-ir-agenda]').onclick = () => ir('agenda');
+}
+
+/* ---------------- plantillas en preferencias ---------------- */
+
+function bloquePlantillas() {
+  const t = TPL();
+  return `<div class="card" style="padding:16px;margin-top:14px">
+    <div class="dayhead2"><div><h2 style="padding:0">Mensajes del resumen semanal</h2>
+      <p class="sm" style="padding:0">Variables: {semana} {visitas} {medicos} {muestras} {unidades} {resultados} {interesados} {proximas} {nombre}</p></div>
+      <button class="btn sec" id="tplreset">Restaurar por defecto</button></div>
+    <div class="g2" style="margin-top:10px">
+      <div><label for="tplwa">WhatsApp</label><textarea id="tplwa" rows="12">${esc(t.wa)}</textarea></div>
+      <div><label for="tplas">Email · asunto</label><input id="tplas" value="${esc(t.asunto)}">
+        <label for="tplem">Email · mensaje</label><textarea id="tplem" rows="9">${esc(t.email)}</textarea></div>
+    </div>
+    <div class="acts" style="justify-content:flex-end"><button class="btn" id="tplok">Guardar plantillas</button></div>
+  </div>`;
+}
+
+async function guardarPlantillas(ev) {
+  ev.target.disabled = true; ev.target.textContent = 'Guardando…';
+  const plantillas = { wa: $('tplwa').value, asunto: $('tplas').value, email: $('tplem').value };
+  const prefs = Object.assign({}, PERFIL.preferencias || {}, { plantillas });
+  const { data, error } = await db.rpc('guardar_preferencias', { p: prefs });
+  ev.target.disabled = false; ev.target.textContent = 'Guardar plantillas';
+  if (error) { toast('No se ha podido guardar: ' + error.message, true); return; }
+  PERFIL.preferencias = data || prefs;
+  toast('Plantillas guardadas');
 }
 
 
