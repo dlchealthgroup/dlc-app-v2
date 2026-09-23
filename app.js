@@ -63,6 +63,7 @@ async function arrancar() {
   $('hoyfecha').textContent = fechaLarga(new Date()).replace(/^./, c => c.toUpperCase());
 
   $('nuevoBtn').classList.toggle('hide', !puedeCrear());
+  $('dupBtn').classList.toggle('hide', PERFIL.rol !== 'Administrador');
   document.querySelectorAll('#nav [data-t="ventas"]').forEach(b => b.classList.toggle('hide', !veVentas()));
   cargarCatalogos();
   pintarRutaBarra();
@@ -325,13 +326,17 @@ async function abrirFicha(id) {
       ${c.lat ? `<div class="sm" style="margin-top:6px"><a href="${enlaceNav([c.lat, c.lon])}" target="_blank" rel="noopener">Cómo llegar</a></div>` : ''}
     </div>`).join('')}
     <div class="blk"><h3>Visitas</h3>
-      ${vis.length ? vis.slice(0, 8).map(v => `<div style="padding:6px 0;border-top:1px solid var(--line)">
-        <b>${fechaCorta(v.fecha)}</b> · ${esc((v.resultados || []).join(' + ') || 'Sin resultado')}
-        ${v.nota ? `<div class="sm">${esc(v.nota)}</div>` : ''}</div>`).join('')
-        : '<div class="sm">Todavía no hay visitas registradas.</div>'}</div>
+      ${vis.length ? vis.slice(0, 10).map(v => `<div style="padding:7px 0;border-top:1px solid var(--line);display:flex;justify-content:space-between;gap:10px;align-items:flex-start">
+        <span><b>${fechaCorta(v.fecha)}</b> · ${esc((v.resultados || []).join(' + ') || 'Sin resultado')}
+          ${v.muestras ? ` · ${v.muestras} muestras` : ''}
+          ${v.nota ? `<div class="sm">${esc(v.nota)}</div>` : ''}
+          ${v.proxima_fecha ? `<div class="sm">Próxima: ${fechaCorta(v.proxima_fecha)} · ${esc(v.proxima_accion || '')}</div>` : ''}</span>
+        ${puedeRegistrar() ? `<button class="btn sec" data-editv='${esc(JSON.stringify(v))}' style="min-height:30px;padding:5px 9px;font-size:12.5px">Editar</button>` : ''}
+      </div>`).join('') : '<div class="sm">Todavía no hay visitas registradas.</div>'}</div>
     ${m.nota ? `<div class="blk"><h3>Nota</h3><div>${esc(m.nota)}</div></div>` : ''}
     ${m.contacto ? `<div class="blk"><h3>Contacto</h3><div>${esc(m.contacto)}</div></div>` : ''}`;
   $('fx').onclick = () => $('ficha').close();
+  $('fbody').querySelectorAll('[data-editv]').forEach(b => b.onclick = () => editarVisita(JSON.parse(b.dataset.editv), id));
 }
 
 $('ficha').addEventListener('click', e => { if (e.target.id === 'ficha') $('ficha').close(); });
@@ -782,6 +787,8 @@ async function cargarAgenda() {
         <button class="btn sec" data-ag="sig">→</button>
         <button class="btn ${AG_MODO === 'dia' ? '' : 'sec'}" data-ag="dia">Día</button>
         <button class="btn ${AG_MODO === 'semana' ? '' : 'sec'}" data-ag="semana">Semana</button>
+        <button class="btn ${AG_MODO === 'mes' ? '' : 'sec'}" data-ag="mes">Mes</button>
+        <button class="btn" data-ag="nueva">+ Nueva cita</button>
       </div></div>
     <div class="card" id="agcuerpo"><div class="skel"></div><div class="skel" style="width:70%"></div></div>
     <div class="card" id="agpend"></div>`;
@@ -789,6 +796,8 @@ async function cargarAgenda() {
   $('agtit').textContent = AG_MODO === 'dia'
     ? fechaLarga(new Date(AG_FECHA + 'T00:00:00')).replace(/^./, c => c.toUpperCase())
     : `Semana del ${fechaCorta(desde)} al ${fechaCorta(hasta)}`;
+
+  if (AG_MODO === 'mes') { $('agtit').textContent = periodoTxt(AG_FECHA.slice(0, 7)); pintarMesAgenda(AG_FECHA.slice(0, 7)); return; }
 
   const [{ data: citas, error }, { data: pend }] = await Promise.all([
     db.rpc('agenda_rango', { p_desde: desde, p_hasta: hasta, p_usuario: PERFIL.rol === 'Administrador' ? null : PERFIL.id }),
@@ -814,6 +823,7 @@ async function cargarAgenda() {
           <span class="acts" style="margin:0">
             <button class="btn sec" data-cita="ficha|${c.medico_id}">Ficha</button>
             ${c.estado !== 'Visitada' ? `<button class="btn sec" data-cita="visita|${c.medico_id}">Registrar</button>
+              <button class="btn sec" data-cita="hora|${c.id}|${esc(c.hora || '')}">Hora</button>
               <button class="btn sec" data-cita="repro|${c.id}">Mover</button>
               <button class="btn sec" data-cita="desc|${c.id}">Descartar</button>` : ''}
           </span></div>`).join('')}</div>`
@@ -838,15 +848,17 @@ document.addEventListener('click', async e => {
   if (b) {
     const k = b.dataset.ag;
     if (k === 'hoy') AG_FECHA = hoyISO();
-    if (k === 'ant') AG_FECHA = isoMas(AG_FECHA, AG_MODO === 'dia' ? -1 : -7);
-    if (k === 'sig') AG_FECHA = isoMas(AG_FECHA, AG_MODO === 'dia' ? 1 : 7);
-    if (k === 'dia' || k === 'semana') AG_MODO = k;
+    if (k === 'ant') AG_FECHA = isoMas(AG_FECHA, AG_MODO === 'dia' ? -1 : AG_MODO === 'semana' ? -7 : -30);
+    if (k === 'sig') AG_FECHA = isoMas(AG_FECHA, AG_MODO === 'dia' ? 1 : AG_MODO === 'semana' ? 7 : 30);
+    if (k === 'dia' || k === 'semana' || k === 'mes') AG_MODO = k;
+    if (k === 'nueva') { nuevaCita(null, AG_FECHA); return; }
     cargarAgenda();
     return;
   }
   const c = e.target.closest('[data-cita]');
   if (!c) return;
-  const [acc, id] = c.dataset.cita.split('|');
+  const [acc, id, extra] = c.dataset.cita.split('|');
+  if (acc === 'hora') return cambiarHoraCita(id, extra);
   if (acc === 'ficha') return abrirFicha(id);
   if (acc === 'visita') return abrirVisita(id);
   if (acc === 'desc') {
@@ -1358,7 +1370,18 @@ async function cargarSeguimiento() {
     SEG = { estado: $('sest').value, prov: $('sprov').value, muni: $('smuni').value, modo: $('smodo').value, pagina: 0 };
     listaSeguimiento(true);
   });
-  $('segcsv').onclick = ev => descargarCSV(ev.target);
+  $('segcsv').onclick = async ev => {
+    ev.target.disabled = true; ev.target.textContent = 'Preparando…';
+    const { data } = await db.rpc('exportar_seguimiento', {
+      f_estado: SEG.estado || null, f_provincia: SEG.prov || null, f_municipio: SEG.muni || null, f_modo: SEG.modo });
+    ev.target.disabled = false; ev.target.textContent = 'Descargar CSV';
+    const csv = aCSV(data || []);
+    if (!csv) { toast('No hay nada que exportar', true); return; }
+    const a2 = document.createElement('a');
+    a2.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+    a2.download = 'DLC_seguimiento_' + hoyISO() + '.csv'; a2.click();
+    {const n=(data||[]).length;toast(`${num(n)} ${n===1?'fila exportada':'filas exportadas'}`);}
+  };
   if ($('segdup')) $('segdup').onclick = () => { DUPS = null; abrirDuplicados(); };
 
   const { data: r } = await db.rpc('resumen_seguimiento');
@@ -1393,14 +1416,30 @@ async function listaSeguimiento(reinicia) {
       <span class="c2"><span class="sm">${m.ultima_visita ? 'Última: <b>' + fechaCorta(m.ultima_visita) + '</b> · ' + esc(m.ultimo_resultado || '') : 'Sin visitar'}</span>
         <span class="sm">${m.n_visitas} visitas${m.muestras ? ' · ' + m.muestras + ' muestras' : ''}</span></span>
       <span class="c3"><span class="sm">${m.proxima_fecha
-        ? `<b style="color:${m.proxima_fecha < hoyISO() ? 'var(--warn)' : 'var(--navy)'}">${fechaCorta(m.proxima_fecha)}</b><br>${esc(m.proxima_accion || '')}`
+        ? `<b style="color:${m.proxima_fecha < hoyISO() ? 'var(--warn)' : 'var(--navy)'}">${fechaCorta(m.proxima_fecha)}</b><br>${esc(m.proxima_accion || '')}
+           <br><span class="acts" style="margin:4px 0 0"><button class="btn sec" data-acc="hecha|${m.id}" style="min-height:26px;padding:3px 8px;font-size:12px">Hecha</button>
+           <button class="btn sec" data-acc="aplazar|${m.id}" style="min-height:26px;padding:3px 8px;font-size:12px">Aplazar</button></span>`
         : ''}</span></span>
       <span class="pill p-est">${esc(m.estado_comercial)}</span>
     </button>`).join(''));
   const most = SEG.pagina * 100 + filas.length;
   $('smas').classList.toggle('hide', most >= data.total);
   $('smas').onclick = () => { SEG.pagina++; listaSeguimiento(false); };
-  $('slista').onclick = e => { const b = e.target.closest('[data-id]'); if (b) abrirFicha(b.dataset.id); };
+  $('slista').onclick = async e => {
+    const acc = e.target.closest('[data-acc]');
+    if (acc) {
+      e.stopPropagation();
+      const [modo, mid] = acc.dataset.acc.split('|');
+      let f = null;
+      if (modo === 'aplazar') { f = await pedirFecha('¿Para cuándo la aplazas?', isoMas(hoyISO(), 7), { titulo: 'Aplazar acción', ok: 'Aplazar' }); if (!f) return; }
+      const { data: r } = await db.rpc('resolver_accion', { p_medico: mid, p_modo: modo, p_fecha: f });
+      if (r && r.ok === false) { toast('No se ha podido', true); return; }
+      toast(modo === 'hecha' ? 'Acción marcada como hecha' : 'Acción aplazada');
+      listaSeguimiento(true); cargarInicio();
+      return;
+    }
+    const b = e.target.closest('[data-id]'); if (b) abrirFicha(b.dataset.id);
+  };
 }
 
 /* ---------------- exportar ---------------- */
@@ -2019,6 +2058,8 @@ function abrirColumnas() {
 }
 
 $('colsBtn').addEventListener('click', abrirColumnas);
+$('cercaBtn').addEventListener('click', e => cercaDeMi(e.target));
+$('dupBtn').addEventListener('click', () => { DUPS = null; abrirDuplicados(); });
 
 
 
@@ -2884,6 +2925,198 @@ function abrirHorarioPlan() {
     }
   };
   $('dlg').showModal();
+}
+
+
+
+/* ============================================================
+   DLC OS 2.0 · Entrega 13 · Bloque B: ficha, seguimiento y agenda
+   ============================================================ */
+
+let CERCA = null;
+
+/* ---------------- editar y borrar visitas ---------------- */
+
+async function editarVisita(v, medicoId) {
+  const pos = CAT.RESULTADO.filter(r => r.extra !== 'neg'), neg = CAT.RESULTADO.filter(r => r.extra === 'neg');
+  const marcados = v.resultados || [];
+  $('dbody').innerHTML = `
+    <div class="fh"><div><h2>Editar visita</h2><div class="sm">Registrada el ${fechaCorta(v.fecha)}</div></div>
+      <button class="x" data-cerrar aria-label="Cerrar">✕</button></div>
+    <div class="g2">
+      <div><label for="evf">Fecha</label><input id="evf" type="date" value="${esc(v.fecha)}"></div>
+      <div><label for="evm">Muestras</label><input id="evm" type="number" min="0" value="${v.muestras || 0}"></div>
+    </div>
+    <label>Resultado</label>
+    <div class="opciones">${pos.map(r => `<button type="button" class="opt" data-res="${esc(r.valor)}"
+      aria-pressed="${marcados.includes(r.valor)}"><span class="mk"></span>${esc(r.valor)}</button>`).join('')}</div>
+    <div class="opciones" style="margin-top:8px">${neg.map(r => `<button type="button" class="opt neg" data-res="${esc(r.valor)}" data-neg="1"
+      aria-pressed="${marcados.includes(r.valor)}"><span class="mk"></span>${esc(r.valor)}</button>`).join('')}</div>
+    <div class="g2" style="margin-top:6px">
+      <div><label for="evpa">Próxima acción</label><input id="evpa" value="${esc(v.proxima_accion || '')}"></div>
+      <div><label for="evpf">Fecha</label><input id="evpf" type="date" value="${esc(v.proxima_fecha || '')}"></div>
+    </div>
+    <label for="evn">Nota</label><textarea id="evn" rows="3">${esc(v.nota || '')}</textarea>
+    <div class="acts" style="justify-content:space-between">
+      <button class="btn sec dang" id="evborrar">Borrar visita</button>
+      <span class="acts" style="margin:0"><button class="btn sec" data-cerrar>Cancelar</button>
+        <button class="btn" id="evok">Guardar</button></span></div>`;
+
+  $('dbody').querySelectorAll('[data-res]').forEach(b => b.onclick = () => {
+    const esNeg = b.dataset.neg === '1', on = b.getAttribute('aria-pressed') === 'true';
+    $('dbody').querySelectorAll('[data-res]').forEach(x => { if (esNeg || x.dataset.neg === '1') x.setAttribute('aria-pressed', 'false'); });
+    b.setAttribute('aria-pressed', String(!on));
+  });
+
+  $('evok').onclick = async ev => {
+    const res = [...$('dbody').querySelectorAll('[data-res][aria-pressed=true]')].map(b => b.dataset.res);
+    ev.target.disabled = true; ev.target.textContent = 'Guardando…';
+    const { data: r, error } = await db.rpc('actualizar_visita', { p: {
+      id: v.id, fecha: $('evf').value, resultados: res, muestras: +$('evm').value || 0,
+      nota: $('evn').value.trim(), proxima_accion: $('evpa').value.trim(), proxima_fecha: $('evpf').value || ''
+    }});
+    ev.target.disabled = false; ev.target.textContent = 'Guardar';
+    if (error || (r && r.ok === false)) { toast('No se ha podido guardar', true); return; }
+    $('dlg').close(); toast('Visita actualizada'); abrirFicha(medicoId); cargarInicio();
+  };
+
+  $('evborrar').onclick = async () => {
+    if (!await preguntar('La visita desaparece del historial del médico.\nQueda constancia en la auditoría.',
+      { titulo: '¿Borrar la visita?', ok: 'Borrar', peligro: true })) return;
+    const { data: r, error } = await db.rpc('borrar_visita', { p_id: v.id });
+    if (error || (r && r.ok === false)) { toast('No se ha podido borrar', true); return; }
+    $('dlg').close(); toast('Visita borrada'); abrirFicha(medicoId); cargarInicio();
+  };
+  $('dlg').showModal();
+}
+
+/* ---------------- cerca de mí ---------------- */
+
+async function cercaDeMi(btn) {
+  if (!navigator.geolocation) { toast('Este dispositivo no tiene ubicación', true); return; }
+  btn.disabled = true; btn.textContent = 'Localizando…';
+  navigator.geolocation.getCurrentPosition(async p => {
+    const { data, error } = await db.rpc('medicos_cerca', {
+      p_lat: p.coords.latitude, p_lon: p.coords.longitude, p_km: 10, lim: 100
+    });
+    btn.disabled = false; btn.textContent = 'Cerca de mí';
+    if (error) { toast('No se ha podido buscar: ' + error.message, true); return; }
+    CERCA = { lista: data || [], pos: [p.coords.latitude, p.coords.longitude] };
+    pintarCerca();
+  }, () => {
+    btn.disabled = false; btn.textContent = 'Cerca de mí';
+    toast('No se ha podido obtener tu ubicación. Revisa los permisos del navegador.', true);
+  }, { enableHighAccuracy: true, timeout: 15000 });
+}
+
+function pintarCerca() {
+  const l = CERCA.lista;
+  $('thead').innerHTML = '';
+  $('cuenta').innerHTML = `<b>${num(l.length)}</b> ${l.length === 1 ? 'médico' : 'médicos'} a menos de 10 km de ti
+    <button class="kcfg" id="cercacerrar" style="margin-left:10px">Volver a la búsqueda</button>`;
+  $('lista').innerHTML = l.length ? l.map(m => `<button class="trow" data-id="${m.id}" style="padding:10px 14px;gap:12px">
+      <span class="tcell" style="width:70px;min-width:70px"><b style="color:var(--navy)">${m.km} km</b></span>
+      <span class="tcell" style="flex:1;width:auto">
+        <span class="nm">${m.urgente ? '<span class="pill p-urg">Urgente</span> ' : ''}${esc(m.nombre)}</span>
+        <span class="sm">${esc(m.especialidad || '')} · ${esc(m.centro_nombre || '')} ${esc(m.municipio || '')}</span></span>
+      <span class="tcell" style="width:140px;min-width:140px"><span class="pill p-est">${esc(m.estado_comercial)}</span></span>
+    </button>`).join('') : '<div class="vacio">No hay médicos con ubicación a menos de 10 km.</div>';
+  $('mas').classList.add('hide');
+  $('cercacerrar').onclick = () => { CERCA = null; buscar(true); };
+}
+
+/* ---------------- agenda: crear cita, hora y mes ---------------- */
+
+async function nuevaCita(medicoId, fecha) {
+  let m = null;
+  if (medicoId) {
+    const { data } = await db.rpc('ficha_medico', { p_id: medicoId });
+    m = data && data.medico;
+  }
+  $('dbody').innerHTML = `
+    <div class="fh"><div><h2>Nueva cita</h2><div class="sm">Se añade a tu agenda</div></div>
+      <button class="x" data-cerrar aria-label="Cerrar">✕</button></div>
+    <label for="ncm">Médico</label>
+    <input id="ncm" value="${esc(m ? m.nombre : '')}" placeholder="Busca por nombre, centro o municipio">
+    <div id="nccand" class="lista"></div>
+    <div class="g2">
+      <div><label for="ncf">Día</label><input id="ncf" type="date" value="${esc(fecha || hoyISO())}"></div>
+      <div><label for="nch">Hora</label><input id="nch" type="time"></div>
+    </div>
+    <label for="ncn">Nota</label><input id="ncn" placeholder="p. ej. llevar reporting">
+    <div class="acts" style="justify-content:flex-end">
+      <button class="btn sec" data-cerrar>Cancelar</button>
+      <button class="btn" id="ncok">Añadir a la agenda</button></div>`;
+
+  let elegido = m ? { id: m.id, nombre: m.nombre } : null;
+  let t;
+  $('ncm').oninput = e => {
+    elegido = null;
+    clearTimeout(t);
+    t = setTimeout(async () => {
+      const q = e.target.value.trim();
+      if (q.length < 2) { $('nccand').innerHTML = ''; return; }
+      const { data } = await db.rpc('buscar_medicos', { q, f_provincia: null, f_municipio: null, f_estado: null,
+        f_especialidad: null, f_area: null, f_urgentes: false, f_mios: false, f_sin_visitar: false,
+        orden: 'nombre', lim: 6, desplaz: 0 });
+      const res = (data && data.filas) || [];
+      $('nccand').innerHTML = res.map(x => `<button class="item" data-nc='${esc(JSON.stringify({ id: x.id, nombre: x.nombre, centro: x.centro_nombre }))}'>
+        <span class="ic">+</span><span class="tx"><b>${esc(x.nombre)}</b>
+          <span class="sm">${esc(x.especialidad || '')} · ${esc(x.centro_nombre || '')} ${esc(x.municipio || '')}</span></span></button>`).join('')
+        || '<div class="vacio">Sin coincidencias.</div>';
+      $('nccand').querySelectorAll('[data-nc]').forEach(b => b.onclick = () => {
+        elegido = JSON.parse(b.dataset.nc);
+        $('ncm').value = elegido.nombre; $('nccand').innerHTML = '';
+      });
+    }, 300);
+  };
+
+  $('ncok').onclick = async ev => {
+    if (!elegido) { toast('Elige un médico de la lista', true); return; }
+    ev.target.disabled = true;
+    const r = await escribir('guardar_cita', { p: {
+      medico_id: elegido.id, fecha: $('ncf').value, hora: $('nch').value || null,
+      centro_nombre: elegido.centro || null, estado: 'Planificada', origen: 'Agenda',
+      nota: $('ncn').value.trim(), op_id: 'c-' + elegido.id + '-' + $('ncf').value + '-' + Date.now()
+    }});
+    ev.target.disabled = false;
+    if (r.error) { toast('No se ha podido: ' + r.error.message, true); return; }
+    $('dlg').close(); toast('Cita añadida'); cargarAgenda(); cargarInicio();
+  };
+  $('dlg').showModal();
+}
+
+async function cambiarHoraCita(id, hora) {
+  const h = await appVentana({ titulo: 'Hora de la cita', ok: 'Guardar', campo: { valor: hora || '', tipo: 'time' } });
+  if (h === null) return;
+  const { error } = await db.from('agenda').update({ hora: h || null }).eq('id', id);
+  if (error) { toast('No se ha podido: ' + error.message, true); return; }
+  toast('Hora actualizada'); cargarAgenda();
+}
+
+async function pintarMesAgenda(mes) {
+  const { data } = await db.rpc('agenda_mes', { p_mes: mes, p_usuario: PERFIL.rol === 'Administrador' ? null : PERFIL.id });
+  const porDia = {};
+  (data || []).forEach(d => porDia[d.fecha] = d);
+  const primero = new Date(mes + '-01T00:00:00');
+  const dias = new Date(primero.getFullYear(), primero.getMonth() + 1, 0).getDate();
+  const hueco = (primero.getDay() + 6) % 7;
+
+  $('agcuerpo').innerHTML = `<h2 style="padding:14px 16px 0">${periodoTxt(mes)}</h2>
+    <div class="mes">
+      ${['L', 'M', 'X', 'J', 'V', 'S', 'D'].map(d => `<span class="mesdow">${d}</span>`).join('')}
+      ${Array.from({ length: hueco }, () => '<span></span>').join('')}
+      ${Array.from({ length: dias }, (_, i) => {
+        const f = mes + '-' + String(i + 1).padStart(2, '0');
+        const d = porDia[f];
+        return `<button class="mesdia ${f === hoyISO() ? 'hoy' : ''}" data-mesdia="${f}">
+          <b>${i + 1}</b>${d ? `<span class="mespunto">${d.visitadas}/${d.citas}</span>` : ''}</button>`;
+      }).join('')}
+    </div>`;
+  $('agcuerpo').querySelectorAll('[data-mesdia]').forEach(b => b.onclick = () => {
+    AG_FECHA = b.dataset.mesdia; AG_MODO = 'dia'; cargarAgenda();
+  });
+  $('agpend').innerHTML = '';
 }
 
 
