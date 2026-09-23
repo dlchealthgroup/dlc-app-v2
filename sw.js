@@ -1,6 +1,7 @@
-/* DLC OS 2.0 · Service worker: cachea la app, nunca los datos. */
-const CACHE = 'dlc-os-2.20.0';
-const FILES = ['./', './index.html', './app.js?v=2.20.0', './config.js', './manifest.webmanifest',
+/* DLC OS 2.0 · Service worker: la app se pide primero a la red (siempre la última versión)
+   y solo se usa la copia guardada si no hay conexión. Nunca guarda datos. */
+const CACHE = 'dlc-os-2.21.0';
+const FILES = ['./', './index.html', './app.js?v=2.21.0', './config.js', './manifest.webmanifest',
                './logo.png', './dlc-icon-192.png', './dlc-icon-512.png', './dlc-apple-touch-180.png'];
 
 self.addEventListener('install', e => {
@@ -11,6 +12,11 @@ self.addEventListener('activate', e => {
 });
 self.addEventListener('fetch', e => {
   const u = new URL(e.request.url);
-  if (u.origin !== location.origin) return;              // datos y CDN: siempre a la red
-  e.respondWith(caches.match(e.request).then(r => r || fetch(e.request)));
+  if (e.request.method !== 'GET' || u.origin !== location.origin) return;   // datos y CDN: siempre a la red
+  e.respondWith(
+    fetch(e.request, { cache: 'no-cache' }).then(r => {
+      if (r && r.ok) { const copia = r.clone(); caches.open(CACHE).then(c => c.put(e.request, copia)); }
+      return r;
+    }).catch(() => caches.match(e.request).then(r => r || caches.match('./index.html')))
+  );
 });

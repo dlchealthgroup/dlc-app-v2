@@ -303,6 +303,38 @@ body.conruta{padding-top:46px}
 .dupgrid .card{margin:0}
 .dupgrid > div > .card{margin:0 0 16px}
 .card:empty{display:none}
+/* v2.21.0 */
+.btn.icoonly{min-width:44px;padding:0 10px;display:inline-grid;place-items:center}
+.dgrid .dtot{background:var(--bg);cursor:default;font-weight:650}
+.dgrid.peds{--cols:86px minmax(150px,1.4fr) minmax(140px,1.2fr) 110px minmax(120px,1fr) 56px 92px 80px 96px 96px;min-width:1100px}
+.dgrid.peds .dh,.dgrid.peds .dr{gap:10px}
+.dgrid.arank{--cols:36px minmax(200px,2fr) 100px 120px 80px minmax(140px,1fr);min-width:720px}
+.dgrid.aprod{--cols:minmax(200px,2fr) 110px 80px 120px;min-width:520px;border-bottom:1px solid var(--line)}
+.dgrid .barra{position:relative;height:18px;background:var(--sky-soft);border-radius:5px;overflow:hidden}
+.dgrid .barra i{position:absolute;left:0;top:0;bottom:0;background:var(--sky);opacity:.55;border-radius:5px}
+.dgrid .barra em{position:relative;font-style:normal;font-size:11.5px;padding-left:6px;color:var(--navy);font-weight:650;line-height:18px}
+.vtot{padding:14px;margin:0;border-bottom:1px solid var(--line)}
+.vtot .kpi b{font-size:21px}
+.perpers{display:flex;gap:6px;align-items:center;margin-top:6px}
+.perpers input{min-width:0;flex:1}
+.perrango{margin-top:4px}
+.kcards{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px;margin-top:12px}
+.kcard{display:flex;gap:10px;align-items:flex-start;border:1px solid var(--line);border-radius:14px;padding:12px;background:var(--bg);opacity:.72}
+.kcard.on{background:var(--panel);border-color:var(--sky);opacity:1;box-shadow:0 2px 8px rgba(14,47,82,.06)}
+.kcard .ktx{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px}
+.kcard .ktx input{min-height:34px;padding:6px 9px;font-weight:650}
+.kojo{border:1px solid var(--line);background:var(--panel);border-radius:10px;width:38px;height:38px;display:grid;place-items:center;color:var(--muted);cursor:pointer;flex:0 0 auto}
+.kcard.on .kojo{color:var(--navy);border-color:var(--sky);background:var(--sky-soft)}
+.kord{display:flex;flex-direction:column;gap:4px}
+.kmv{border:1px solid var(--line);background:var(--panel);border-radius:8px;width:28px;height:26px;display:grid;place-items:center;color:var(--navy);cursor:pointer;padding:0;font-size:12px}
+.kmv:disabled{opacity:.35;cursor:default}
+.renc .parada{display:flex;align-items:center;gap:10px;justify-content:flex-start}
+.renc .parada .ptit{flex:1}
+.renc .pord{display:flex;gap:4px}
+.icobtn{display:inline-grid;place-items:center;width:36px;height:36px;border-radius:50%;background:var(--navy);color:#fff;text-decoration:none;flex:0 0 auto}
+.icobtn:hover{background:var(--sky)}
+.rmed{cursor:pointer!important}
+.rmed:hover{background:var(--sky-soft)}
 /* v2.20.0 */
 .dgrid-wrap{overflow-x:auto}
 .dgrid{display:grid;min-width:100%}
@@ -414,7 +446,7 @@ input[type=date],input[type=time],input[type=month],input[type=datetime-local]{c
     <section id="v-inicio">
       <div class="saludo">
         <div><h1 id="hola">Hola</h1><div class="fecha" id="hoyfecha"></div></div>
-        <div class="acts" style="margin:0"><button class="btn sec" id="compartirBtn">Compartir la semana</button></div>
+        <div class="acts" style="margin:0"><button class="btn sec icoonly" data-k="cfgkpis" title="Personalizar indicadores" aria-label="Personalizar indicadores"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></button><button class="btn sec" id="compartirBtn">Compartir la semana</button></div>
       </div>
       <div class="kpis" id="kpis"><div class="kpi ksk"><div class="skel" style="width:40%;height:24px;margin:2px 0 8px"></div><div class="skel" style="width:75%;margin:0"></div></div><div class="kpi ksk"><div class="skel" style="width:40%;height:24px;margin:2px 0 8px"></div><div class="skel" style="width:75%;margin:0"></div></div><div class="kpi ksk"><div class="skel" style="width:40%;height:24px;margin:2px 0 8px"></div><div class="skel" style="width:75%;margin:0"></div></div><div class="kpi ksk"><div class="skel" style="width:40%;height:24px;margin:2px 0 8px"></div><div class="skel" style="width:75%;margin:0"></div></div><div class="kpi ksk"><div class="skel" style="width:40%;height:24px;margin:2px 0 8px"></div><div class="skel" style="width:75%;margin:0"></div></div><div class="kpi ksk"><div class="skel" style="width:40%;height:24px;margin:2px 0 8px"></div><div class="skel" style="width:75%;margin:0"></div></div></div>
       <div class="cols">
@@ -491,6 +523,6 @@ input[type=date],input[type=time],input[type=month],input[type=datetime-local]{c
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js" defer></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="./config.js"></script>
-<script src="./app.js?v=2.20.0"></script>
+<script src="./app.js?v=2.21.0"></script>
 </body>
 </html>
