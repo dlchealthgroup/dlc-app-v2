@@ -5,11 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>DLC OS</title>
 <meta name="theme-color" content="#0E2F52">
+<meta name="color-scheme" content="light only">
 <link rel="manifest" href="./manifest.webmanifest">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <link rel="apple-touch-icon" href="./dlc-apple-touch-180.png">
 <style>
+html{color-scheme:light only}
 :root{
+  color-scheme:light only;
   --navy:#0E2F52; --navy-2:#17457A; --sky:#2B6CB0; --sky-soft:#EAF1F8;
   --bg:#F5F7FA; --panel:#fff; --ink:#16212F; --muted:#5E6E80; --line:#E2E8F0;
   --warn:#B45309; --warn-bg:#FEF3E2; --ok:#12805C; --ok-bg:#E7F6F0; --dang:#9B2C2C;
@@ -268,6 +271,41 @@ body.conruta{padding-top:46px}
   .top{flex-wrap:wrap}
   main{padding:16px 12px 50px}
 }
+/* ---------- v2.17.0 ---------- */
+.kebab{margin-left:auto;font-size:18px;min-width:44px}
+.acts:has(> .kebab){align-items:center}
+.acts .ai-dir{margin:0 2px 0 auto;width:26px;height:26px;font-size:13px}
+.acts .ai-dir + .kebab{margin-left:0}
+#v-inicio.ini-cargando > *:not(.ini-loader){display:none!important}
+.ini-loader{display:none}
+#v-inicio.ini-cargando .ini-loader{display:flex;min-height:60vh}
+.gsug .gload{display:flex;gap:10px;align-items:center;padding:14px 12px;color:var(--muted);font-size:13.5px}
+.gsug .gload .spin{width:18px;height:18px;border-width:2px}
+.gsearch.buscando::after{content:"";position:absolute;right:12px;top:50%;width:16px;height:16px;margin-top:-8px;border:2px solid var(--line);border-top-color:var(--navy);border-radius:50%;animation:gira .8s linear infinite}
+.pag{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;padding:10px 14px;border-top:1px solid var(--line);background:var(--panel);font-size:13px;color:var(--muted)}
+.pag .pbtns{display:flex;gap:4px;align-items:center;flex-wrap:wrap}
+.pag button{border:1px solid var(--line);background:var(--panel);border-radius:8px;min-width:34px;height:32px;padding:0 9px;font-weight:600;color:var(--navy);cursor:pointer}
+.pag button[aria-current=true]{background:var(--navy);color:#fff;border-color:var(--navy)}
+.pag button:disabled{opacity:.4;cursor:default}
+.pag select{width:auto;min-height:32px;padding:4px 8px;border-radius:8px}
+.pag .ptam{display:flex;gap:6px;align-items:center}
+.ai{display:inline-grid;place-items:center;width:18px;height:18px;border-radius:50%;border:1px solid var(--line);background:var(--panel);color:var(--sky);font:italic 700 11px/1 Georgia,serif;cursor:pointer;padding:0;margin-left:6px;vertical-align:middle;flex:0 0 auto}
+.ai:hover{border-color:var(--sky);background:var(--sky-soft)}
+.kpi .ai{position:absolute;top:8px;right:8px;margin:0}
+.kpi{position:relative}
+.aipop{position:fixed;z-index:120;max-width:320px;background:var(--navy);color:#fff;border-radius:12px;padding:12px 14px;font-size:13px;line-height:1.5;box-shadow:0 14px 34px rgba(10,20,30,.3)}
+.aipop b{display:block;margin-bottom:4px;font-size:13.5px}
+.aipop ul{margin:6px 0 0;padding-left:18px}
+.alerta{display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap;border:1px solid var(--warn);background:var(--warn-bg);color:var(--warn);border-radius:var(--r);padding:12px 16px;margin-bottom:16px;font-weight:600}
+.alerta .btn{background:var(--panel);color:var(--warn);border-color:var(--warn);min-height:36px;padding:6px 14px}
+.dupgrid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);gap:16px;align-items:start}
+.dupgrid .card{margin:0}
+.dupgrid > div > .card{margin:0 0 16px}
+.card:empty{display:none}
+.dupcmp{position:sticky;top:120px}
+.dupcmp .fbox{padding:18px}
+.item.sel{background:var(--sky-soft)}
+@media (max-width:900px){.dupgrid{grid-template-columns:1fr}.dupcmp{position:static}}
 </style>
 </head>
 <body>
@@ -351,15 +389,17 @@ body.conruta{padding-top:46px}
             </select></div>
         </div>
         <div class="chips" id="chips"></div>
-        <div class="acts" style="padding:12px 14px 0;margin:0"><button class="btn sec" id="nuevoBtn">+ Crear nuevo</button><button class="btn sec" id="mapaBtn">Ver mapa</button><button class="btn sec" id="guardarFiltro">★ Guardar filtro</button><button class="btn sec" id="colsBtn">⚙ Columnas</button><button class="btn sec" id="cercaBtn">Cerca de mí</button><button class="btn sec hide" id="dupBtn">Duplicados</button><button class="btn sec" id="dirtools" title="Filtros, columnas y descargas">⋮</button></div>
+        <div class="acts" style="padding:12px 14px 0;margin:0"><button class="btn sec" id="nuevoBtn">+ Crear nuevo</button><button class="btn sec" id="mapaBtn">Ver mapa</button><button class="btn sec" id="guardarFiltro">★ Guardar filtro</button><button class="btn sec" id="cercaBtn">Cerca de mí</button><button class="btn sec hide" id="dupBtn">Duplicados</button><button class="btn sec kebab" id="dirtools" title="Filtros, columnas y descargas">⋮</button></div>
         <div class="cuenta" id="cuenta">Cargando…</div>
         <div id="mapawrap" class="hide"><div id="mapa"></div><div class="mapleg" id="mapleg"></div></div>
         <div class="sm hide" id="scrollhint" style="padding:8px 14px 0">Desliza a los lados para ver todas las columnas</div>
         <div class="tabla" id="tabla"><div class="thead" id="thead"></div><div id="lista"></div></div>
         <button class="mas hide" id="mas">Cargar más</button>
+        <div id="dirpag"></div>
       </div>
     </section>
 
+    <section id="v-duplicados" class="hide"></section>
     <section id="v-agenda" class="hide"></section>
     <section id="v-rutas" class="hide"></section>
     <section id="v-seguimiento" class="hide"></section>
@@ -390,6 +430,6 @@ body.conruta{padding-top:46px}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js" defer></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="./config.js"></script>
-<script src="./app.js?v=2.16.0"></script>
+<script src="./app.js?v=2.17.0"></script>
 </body>
 </html>

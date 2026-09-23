@@ -104,7 +104,7 @@ $('nav').addEventListener('click', e => {
 var ir = function (t) {
   TAB = t;
   document.querySelectorAll('#nav button[data-t]').forEach(x => x.setAttribute('aria-selected', String(x.dataset.t === t)));
-  ['inicio', 'agenda', 'rutas', 'directorio', 'seguimiento', 'ventas', 'analitica', 'config', 'admin'].forEach(k => $('v-' + k).classList.toggle('hide', k !== t));
+  ['inicio', 'agenda', 'rutas', 'directorio', 'seguimiento', 'ventas', 'analitica', 'config', 'admin', 'duplicados'].forEach(k => $('v-' + k).classList.toggle('hide', k !== t));
   window.scrollTo({ top: 0 });
   if (t === 'directorio' && !$('lista').children.length) buscar(true);
   if (t === 'inicio') cargarInicio();
@@ -115,6 +115,7 @@ var ir = function (t) {
   if (t === 'analitica') cargarAnalitica();
   if (t === 'config') cargarConfig();
   if (t === 'admin') cargarAdmin();
+  if (t === 'duplicados') cargarDuplicados();
 };
 
 /* ---------------- inicio ---------------- */
@@ -190,7 +191,7 @@ $('v-inicio').addEventListener('click', e => {
   const k = e.target.closest('[data-k]');
   if (k) {
     if (k.dataset.k === 'cfgkpis') { abrirKpis(); return; }
-    if (k.dataset.k === 'dups') { revisarPendientes(); return; }
+    if (k.dataset.k === 'dups') { ir('duplicados'); return; }
     Object.assign(F, { q: '', prov: '', muni: '', esp: '', est: '', urg: false, orden: 'nombre' });
     if (k.dataset.k === 'urgentes') { F.urg = true; F.orden = 'urgentes'; }
     if (k.dataset.k === 'interesados') F.est = 'Interesado';
@@ -262,8 +263,8 @@ $('chips').addEventListener('click', e => {
 
 async function buscar(reiniciar) {
   if (typeof MODO_MAPA !== 'undefined' && MODO_MAPA && reiniciar) setTimeout(() => pintarMapa(), 10);
-  if (reiniciar) { F.pagina = 0; $('lista').innerHTML = ''; }
-  if (reiniciar) cargando($('lista'), 'Buscando médicos…');
+  if (reiniciar) F.pagina = 0;
+  cargando($('lista'), 'Buscando médicos…');
   $('cuenta').textContent = 'Buscando…';
   const t0 = performance.now();
 
@@ -271,7 +272,7 @@ async function buscar(reiniciar) {
     q: F.q || null, f_provincia: F.prov || null, f_municipio: F.muni || null,
     f_estado: F.est || null, f_especialidad: F.esp || null, f_area: null,
     f_urgentes: F.urg, f_mios: false, f_sin_visitar: false,
-    orden: F.orden, lim: PASO, desplaz: F.pagina * PASO
+    orden: F.orden, lim: tamPagina(), desplaz: F.pagina * tamPagina()
   });
 
   if (error) { $('cuenta').textContent = 'No se ha podido buscar: ' + error.message; return; }
@@ -282,15 +283,14 @@ async function buscar(reiniciar) {
   pintarChips();
 
   const filas = data.filas || [];
-  if (!filas.length && F.pagina === 0) { $('lista').innerHTML = '<div class="vacio">Ningún médico cumple estos filtros.</div>'; $('thead').innerHTML = ''; }
-  else {
-    if (F.pagina === 0) { $('lista').innerHTML = ''; cabeceraTabla(); }
-    $('lista').insertAdjacentHTML('beforeend', filas.map(filaTabla).join(''));
-  }
+  if (!filas.length) { $('lista').innerHTML = '<div class="vacio">Ningún médico cumple estos filtros.</div>'; $('thead').innerHTML = ''; }
+  else { cabeceraTabla(); $('lista').innerHTML = filas.map(filaTabla).join(''); }
 
-  const mostrados = F.pagina * PASO + filas.length;
-  $('mas').classList.toggle('hide', mostrados >= data.total);
-  $('mas').textContent = `Cargar más (${num(mostrados)} de ${num(data.total)})`;
+  $('mas').classList.add('hide');
+  paginador($('dirpag'), data.total, F.pagina, p => {
+    F.pagina = p; buscar(false);
+    $('tabla').scrollIntoView({ block: 'start', behavior: 'smooth' });
+  }, () => buscar(true));
 }
 
 function fila(m) {
@@ -305,7 +305,7 @@ function fila(m) {
   </button>`;
 }
 
-$('mas').addEventListener('click', () => { F.pagina++; buscar(false); });
+
 $('lista').addEventListener('click', e => { const b = e.target.closest('[data-id]'); if (b) abrirFicha(b.dataset.id); });
 
 /* ---------------- ficha ---------------- */
@@ -775,6 +775,7 @@ async function vaciarCola() {
   if (!navigator.onLine) return;
   let c = colaLeer();
   if (!c.length) return;
+  const habia = c.length;
   pintarConexion();
   while (c.length) {
     const op = c[0];
@@ -784,7 +785,7 @@ async function vaciarCola() {
     colaGuardar(c);
   }
   pintarConexion();
-  if (!colaLeer().length) { cargarInicio(); if (TAB === 'agenda') cargarAgenda(); }
+  if (colaLeer().length < habia) { invalidarCache(); cargarInicio(); if (TAB === 'agenda') cargarAgenda(); }
 }
 
 window.addEventListener('online', () => { pintarConexion(); vaciarCola(); });
@@ -1411,7 +1412,7 @@ async function cargarSeguimiento() {
       </div>
       <div class="cuenta" id="scuenta">Cargando…</div>
       <div id="slista"><div class="cargador"><span class="spin"></span><span class="sm">Cargando el seguimiento…</span></div></div>
-      <button class="mas hide" id="smas">Cargar más</button>
+      <div id="spag"></div>
     </div>`;
 
   const { data: op } = await db.rpc('opciones_filtros', {});
@@ -1429,7 +1430,7 @@ async function cargarSeguimiento() {
       f_estado: SEG.estado || null, f_provincia: SEG.prov || null, f_municipio: SEG.muni || null, f_modo: SEG.modo });
     descargar(data || [], 'DLC_seguimiento', fmt);
   };
-  if ($('segdup')) $('segdup').onclick = () => { DUPS = null; abrirDuplicados(); };
+  if ($('segdup')) $('segdup').onclick = () => ir('duplicados');
   $('segtools').onclick = () => abrirHerramientas('seguimiento');
 
   const { data: r } = await db.rpc('resumen_seguimiento');
@@ -1447,18 +1448,19 @@ async function cargarSeguimiento() {
 }
 
 async function listaSeguimiento(reinicia) {
-  if (reinicia) { SEG.pagina = 0; cargando($('slista'), 'Cargando el seguimiento…'); }
+  if (reinicia) SEG.pagina = 0;
+  cargando($('slista'), 'Cargando el seguimiento…');
   $('scuenta').textContent = 'Buscando…';
   const { data, error } = await db.rpc('seguimiento_lista', {
     f_estado: SEG.estado || null, f_provincia: SEG.prov || null, f_municipio: SEG.muni || null,
-    f_modo: SEG.modo, lim: 100, desplaz: SEG.pagina * 100
+    f_modo: SEG.modo, lim: tamPagina(), desplaz: SEG.pagina * tamPagina()
   });
   if (error) { $('scuenta').textContent = 'No se ha podido cargar: ' + error.message; return; }
   $('scuenta').innerHTML = `<b>${num(data.total)}</b> médicos`;
   const filas = data.filas || [];
-  if (!filas.length && SEG.pagina === 0) { $('slista').innerHTML = '<div class="vacio">Nada que mostrar con estos filtros.</div>'; }
+  if (!filas.length) { $('slista').innerHTML = '<div class="vacio">Nada que mostrar con estos filtros.</div>'; }
   else {
-    if (SEG.pagina === 0) $('slista').innerHTML = '';
+    $('slista').innerHTML = '';
     $('slista').insertAdjacentHTML('beforeend', filas.map(m => `
     <button class="fila" data-id="${m.id}">
       <span><span class="nm">${m.urgente ? '<span class="pill p-urg">Urgente</span> ' : ''}${esc(m.nombre)}</span>
@@ -1473,9 +1475,8 @@ async function listaSeguimiento(reinicia) {
       <span class="pill p-est">${esc(m.estado_comercial)}</span>
     </button>`).join(''));
   }
-  const most = SEG.pagina * 100 + filas.length;
-  $('smas').classList.toggle('hide', most >= data.total);
-  $('smas').onclick = () => { SEG.pagina++; listaSeguimiento(false); };
+  paginador($('spag'), data.total, SEG.pagina, p => { SEG.pagina = p; listaSeguimiento(false); $('slista').scrollIntoView({ block: 'start', behavior: 'smooth' }); },
+    () => listaSeguimiento(true));
   $('slista').onclick = async e => {
     const acc = e.target.closest('[data-acc]');
     if (acc) {
@@ -1698,7 +1699,8 @@ $('mapaBtn').addEventListener('click', () => {
   $('mapaBtn').textContent = MODO_MAPA ? 'Ver lista' : 'Ver mapa';
   $('mapawrap').classList.toggle('hide', !MODO_MAPA);
   $('lista').classList.toggle('hide', MODO_MAPA);
-  $('mas').classList.toggle('hide', MODO_MAPA || F.total <= 50);
+  $('mas').classList.add('hide');
+  $('dirpag').classList.toggle('hide', MODO_MAPA);
   if (MODO_MAPA) pintarMapa();
 });
 
@@ -2110,9 +2112,8 @@ function abrirColumnas() {
   $('dlg').showModal();
 }
 
-$('colsBtn').addEventListener('click', abrirColumnas);
 $('cercaBtn').addEventListener('click', e => cercaDeMi(e.target));
-$('dupBtn').addEventListener('click', () => { DUPS = null; abrirDuplicados(); });
+$('dupBtn').addEventListener('click', () => ir('duplicados'));
 $('dirtools').addEventListener('click', () => abrirHerramientas('directorio'));
 $('compartirBtn').addEventListener('click', compartirSemana);
 
@@ -3323,22 +3324,29 @@ function descargar(filas, nombre, formato) {
 
 /* ---------------- buscador global agrupado ---------------- */
 
-let TGLOB;
+let TGLOB, GPIDE = 0;
 $('q').addEventListener('input', e => {
   clearTimeout(TGLOB);
   const q = e.target.value.trim();
-  if (q.length < 2) { $('gsug').classList.add('hide'); return; }
+  const caja = e.target.closest('.gsearch');
+  if (q.length < 2) { $('gsug').classList.add('hide'); caja.classList.remove('buscando'); return; }
+  caja.classList.add('buscando');
+  $('gsug').innerHTML = '<div class="gload"><span class="spin"></span>Buscando…</div>';
+  $('gsug').classList.remove('hide');
+  const pide = ++GPIDE;
   TGLOB = setTimeout(async () => {
     const { data } = await db.rpc('buscar_global', { q, lim: 6 });
-    if (!data) return;
+    if (pide !== GPIDE) return;            // ya hay una búsqueda más nueva
+    caja.classList.remove('buscando');
+    if (!data) { $('gsug').innerHTML = '<div class="gload">No se ha podido buscar. Revisa la conexión.</div>'; return; }
     const m = data.municipios || [], c = data.centros || [], me = data.medicos || [];
-    if (!m.length && !c.length && !me.length) { $('gsug').classList.add('hide'); return; }
+    if (!m.length && !c.length && !me.length) { $('gsug').innerHTML = `<div class="gload">Sin resultados para «${esc(q)}».</div>`; return; }
     $('gsug').innerHTML =
       (m.length ? `<div class="gsh">Municipios</div>` + m.map(x => `<button data-gm="${esc(x.valor)}">
         <span class="gic">📍</span><span><b>${esc(x.valor)}</b><span class="sm">${num(x.n)} médicos</span></span></button>`).join('') : '') +
       (c.length ? `<div class="gsh">Centros</div>` + c.map(x => `<button data-gc="${esc(x.valor)}">
         <span class="gic">🏥</span><span><b>${esc(x.valor)}</b><span class="sm">${esc(x.municipio || '')} · ${num(x.n)} médicos</span></span></button>`).join('') : '') +
-      (me.length ? `<div class="gsh">Médicos</div>` + me.map(x => `<button data-gme="${x.id}">
+      (me.length ? `<div class="gsh">Médicos${m.length || c.length ? ' que pasan consulta allí o coinciden' : ''}</div>` + me.map(x => `<button data-gme="${x.id}">
         <span class="gic">${x.urgente ? '❗' : '👤'}</span><span><b>${esc(x.nombre)}</b>
         <span class="sm">${esc(x.especialidad || '')} · ${esc(x.centro_nombre || '')} ${esc(x.municipio || '')}</span></span></button>`).join('') : '');
     $('gsug').classList.remove('hide');
@@ -3448,7 +3456,7 @@ async function pintarTablaAnalitica() {
       ${meses.map(m => `<span class="tcell" style="width:110px;min-width:110px;text-align:right">${
         (f.meses || {})[m] ? fmt((f.meses || {})[m]) : '<span class="sm">·</span>'}</span>`).join('')}
       <span class="tcell" style="width:120px;min-width:120px;text-align:right"><b>${fmt(f.total)}</b></span></div>`).join('')}
-    <div class="trow" style="cursor:default;background:var(--bg)">
+    <div class="trow" data-fijo style="cursor:default;background:var(--bg)">
       <span class="tcell" style="width:220px;min-width:220px"><b>Total</b></span>
       ${meses.map(m => `<span class="tcell" style="width:110px;min-width:110px;text-align:right"><b>${fmt(totMes[m] || 0)}</b></span>`).join('')}
       <span class="tcell" style="width:120px;min-width:120px;text-align:right"><b>${fmt(filas.reduce((n, f) => n + (+f.total || 0), 0))}</b></span></div>
@@ -3470,8 +3478,11 @@ async function pintarTablaAnalitica() {
 
 /* ---------------- panel lateral de herramientas ---------------- */
 
+let HERR_CTX = null;
 function abrirHerramientas(contexto) {
   const d = $('tools');
+  if (d.classList.contains('abierto') && HERR_CTX === contexto) { d.classList.remove('abierto'); return; }
+  HERR_CTX = contexto;
   const filtrosDir = `
     <h3>Filtros</h3>
     <label>Provincia</label><select data-tf="prov">${optFiltro(OPF.provincias, F.prov, 'Todas las provincias')}</select>
@@ -4076,6 +4087,620 @@ async function restablecerPassword(u) {
   toast('Correo enviado a ' + u.email);
 }
 
+
+
+/* ============================================================
+   DLC OS 2.0 · v2.17.0 · Velocidad, ventanas, paginación,
+   duplicados, auditoría y ayudas
+   ============================================================ */
+
+/* ---------------- caché de peticiones ----------------
+   Lo ya recibido se reutiliza durante unos segundos o minutos según el dato.
+   Dos peticiones iguales a la vez se unifican en una sola.
+   Cualquier escritura vacía la caché para que lo siguiente que se lea sea actual. */
+
+const RPC_ORIG = db.rpc.bind(db);
+const FROM_ORIG = db.from.bind(db);
+const RPC_TTL = {                 // segundos
+  panel_inicio: 60, propuestas_rutas: 120, comision_periodo: 120, resumen_duplicados: 600,
+  agenda_rango: 60, agenda_mes: 60, pendientes_ruta: 60, rutas_visibles: 120,
+  buscar_medicos: 60, buscar_global: 60, opciones_filtros: 600, mapa_medicos: 120,
+  ficha_medico: 30, seguimiento_lista: 60, resumen_seguimiento: 120, resumen_semana: 120,
+  catalogo: 900, catalogos_todos: 900, productos_lista: 600, usuarios_lista: 300,
+  esquemas_lista: 300, liquidaciones_lista: 120, pedidos_lista: 60, contactos_lista: 60,
+  analitica_tabla: 120, analitica_unidades: 120, cartera_usuario: 60, duplicados_pendientes: 30
+};
+const RPC_ESCRITURA = /^(actualizar_|anular_|asignar_|atribuir_|borrar_|crear_|estado_cita|guardar_|liquidar|perfil_nuevo|quitar_|registrar_visita|resolver_accion|tocar|unificar_|descartar_)/;
+
+const RC = new Map(), RC_VUELO = new Map();
+let RC_EPOCA = 0;
+const rcLS = k => 'dlc-rc-' + (PERFIL ? PERFIL.id : '') + '-' + k;
+const rcCopia = r => ({ data: r.data == null ? r.data : JSON.parse(JSON.stringify(r.data)), error: r.error || null });
+
+function invalidarCache() {
+  RC.clear(); RC_VUELO.clear(); RC_EPOCA++;
+  try { Object.keys(localStorage).filter(k => k.startsWith('dlc-rc-')).forEach(k => localStorage.removeItem(k)); } catch (e) {}
+}
+
+db.rpc = function (fn, params, opts) {
+  if (RPC_ESCRITURA.test(fn)) { invalidarCache(); return RPC_ORIG(fn, params, opts); }
+  const ttl = RPC_TTL[fn];
+  if (!ttl || !navigator.onLine) return RPC_ORIG(fn, params, opts);
+
+  const k = fn + '|' + JSON.stringify(params || {});
+  let e = RC.get(k);
+  if (!e && ttl >= 300) {           // los datos que cambian poco se guardan también en el dispositivo
+    try { e = JSON.parse(localStorage.getItem(rcLS(k)) || 'null'); if (e) RC.set(k, e); } catch (err) { e = null; }
+  }
+  if (e && Date.now() - e.t < ttl * 1000) return Promise.resolve(rcCopia(e.r));
+  if (RC_VUELO.has(k)) return RC_VUELO.get(k).then(rcCopia);
+
+  const epoca = RC_EPOCA;
+  const p = Promise.resolve(RPC_ORIG(fn, params, opts)).then(r => {
+    RC_VUELO.delete(k);
+    if (!r.error && epoca === RC_EPOCA) {
+      const x = { t: Date.now(), r: { data: r.data, error: null } };
+      RC.set(k, x);
+      if (ttl >= 300) { try { localStorage.setItem(rcLS(k), JSON.stringify(x)); } catch (err) {} }
+    }
+    return r;
+  }, err => { RC_VUELO.delete(k); throw err; });
+  RC_VUELO.set(k, p);
+  return p.then(rcCopia);
+};
+
+db.from = function (tabla) {
+  const q = FROM_ORIG(tabla);
+  ['insert', 'update', 'upsert', 'delete'].forEach(m => {
+    const f = q[m];
+    if (typeof f === 'function') q[m] = (...a) => { invalidarCache(); return f.apply(q, a); };
+  });
+  return q;
+};
+
+/* ---------------- navegación: recordar de dónde venimos ---------------- */
+
+let TAB_ANTERIOR = 'inicio';
+const irV216 = ir;
+ir = function (t) {
+  if (t !== TAB) TAB_ANTERIOR = TAB;
+  $('tools').classList.remove('abierto');
+  irV216(t);
+};
+
+/* ---------------- inicio: un único cargador hasta tenerlo todo ---------------- */
+
+let INI_LISTO = false, INI_EN_CURSO = null, INI_OTRA = false, DUP_RES = null;
+
+function cargarInicio() {
+  if (TAB !== 'inicio') return Promise.resolve();       // se cargará al entrar en Inicio
+  if (INI_EN_CURSO) { INI_OTRA = true; return INI_EN_CURSO; }
+  INI_OTRA = false;
+  INI_EN_CURSO = pintarInicio().catch(err => console.error(err)).finally(() => {
+    INI_EN_CURSO = null;
+    if (INI_OTRA && TAB === 'inicio') cargarInicio();
+  });
+  return INI_EN_CURSO;
+}
+
+async function pintarInicio() {
+  const sec = $('v-inicio');
+  if (!$('iniload')) sec.insertAdjacentHTML('afterbegin',
+    '<div class="cargador ini-loader" id="iniload"><span class="spin"></span><span class="sm">Preparando tu inicio…</span></div>');
+  if (!$('inialerta')) sec.querySelector('.saludo').insertAdjacentHTML('afterend', '<div id="inialerta"></div>');
+  if (!INI_LISTO) sec.classList.add('ini-cargando');
+
+  const cfg = kpiConfig().filter(x => x.on);
+  const esAdmin = PERFIL.rol === 'Administrador';
+  const [res, cuentas] = await Promise.all([
+    rpcCache('panel_inicio', { lim: 6 }, 'inicio'),
+    Promise.all(cfg.map(x => x.filtro ? contarFiltro(x.filtro).catch(() => null) : null)),
+    tarjetaComision().catch(() => {}),
+    tarjetasRuta().catch(() => {})
+  ]);
+
+  const data = res.data;
+  if (!data) {
+    $('c-agenda').innerHTML = '<div class="vacio">Sin conexión y sin copia guardada todavía.</div>';
+    sec.classList.remove('ini-cargando'); INI_LISTO = true;
+    return;
+  }
+  const k = data.kpis;
+
+  /* aviso de posibles duplicados: se calcula aparte para no retrasar el Inicio */
+  const avisoDup = () => {
+    const nPend = (DUP_RES && DUP_RES.pendientes) || k.pendientes_unificar || 0;
+    const nPar = (DUP_RES && DUP_RES.parecidos) || 0;
+    $('inialerta').innerHTML = esAdmin && (nPend || nPar) ? `<div class="alerta">
+        <span>⚠ ${[nPend ? `${num(nPend)} ${nPend === 1 ? 'ficha pendiente' : 'fichas pendientes'} de unificar` : '',
+                  nPar ? `${num(nPar)}${nPar >= 200 ? '+' : ''} ${nPar === 1 ? 'posible duplicado' : 'posibles duplicados'} por nombre` : '']
+                  .filter(Boolean).join(' y ')}</span>
+        <button class="btn" data-k="dups">Revisar duplicados</button></div>` : '';
+  };
+  avisoDup();
+  if (esAdmin) db.rpc('resumen_duplicados').then(r => { DUP_RES = r.data || null; avisoDup(); }).catch(() => {});
+
+  /* indicadores */
+  const kpi = (n, t, cls, accion, ayuda) =>
+    `<div class="kpi ${cls || ''} ${accion ? 'click' : ''}" ${accion ? `data-k="${accion}"` : ''}>
+       ${ayuda ? `<button class="ai" data-ayuda-txt="${esc(ayuda)}" data-ayuda-tit="${esc(t)}" aria-label="Qué es">i</button>` : ''}
+       <b>${typeof n === 'string' ? n : num(n)}</b><span>${esc(t.charAt(0).toUpperCase() + t.slice(1))}</span></div>`;
+
+  $('kpis').innerHTML = cfg.map((x, i) => {
+    if (x.filtro) return `<div class="kpi click" data-kf="${esc(JSON.stringify(x.filtro))}">
+        <button class="ai" data-ayuda-txt="${esc(AYUDA_KPI.filtro + ' Filtro: ' + textoFiltro(x.filtro) + '.')}" data-ayuda-tit="${esc(x.t || 'Filtro guardado')}" aria-label="Qué es">i</button>
+        <b class="cont">${cuentas[i] == null ? '—' : num(cuentas[i])}</b><span>${esc(x.t || textoFiltro(x.filtro))}</span></div>`;
+    const c = KPI_CAT.find(y => y.id === x.id);
+    if (!c || (c.admin && !esAdmin)) return '';
+    return kpi(c.v(k), x.t || c.t, c.cls ? c.cls(k) : '', c.h, AYUDA_KPI[c.id]);
+  }).join('') + `<div class="kpi" style="display:grid;place-items:center;border-style:dashed">
+      <button class="kcfg" data-k="cfgkpis">⚙ Personalizar indicadores</button></div>`;
+  if (res.cache) avisoCache($('kpis'), res.fecha);
+
+  tarjeta($('c-agenda'), 'Tu agenda de hoy', data.agenda_hoy.length,
+    data.agenda_hoy.map(a => itemHTML(a.medico_id, a.hora ? esc(a.hora).slice(0, 5) : '·',
+      a.estado === 'Visitada' ? 'o' : '', a.nombre,
+      `${esc(a.centro_nombre || '')} · <b style="color:${a.estado === 'Visitada' ? 'var(--ok)' : 'var(--navy)'}">${esc(a.estado)}</b>`)),
+    '', 'No tienes citas para hoy. Planifica una ruta desde Rutas.');
+
+  tarjeta($('c-acciones'), 'Próximas acciones', data.acciones.length,
+    data.acciones.map(a => itemHTML(a.medico_id, '↻', a.proxima_fecha < hoyISO() ? 'w' : '', a.nombre,
+      `<b style="color:${a.proxima_fecha < hoyISO() ? 'var(--warn)' : 'var(--navy)'}">${fechaCorta(a.proxima_fecha)}</b> · ${esc(a.proxima_accion || 'Seguimiento')}`)),
+    '', 'Sin acciones pendientes en los próximos 7 días.');
+
+  tarjeta($('c-urgentes'), 'Urgentes sin visitar', k.urgentes,
+    data.urgentes.map(u => itemHTML(u.medico_id, '!', 'w', u.nombre,
+      `${esc(u.especialidad || '')} · ${esc(u.centro_nombre || u.municipio || '')}`)),
+    k.urgentes > 6 ? `<button class="verlo" data-k="urgentes">Ver los ${num(k.urgentes)} urgentes</button>` : '',
+    'Todos los urgentes están visitados.');
+
+  tarjeta($('c-ultimas'), 'Últimas visitas', null,
+    data.ultimas_visitas.map(v => itemHTML(v.medico_id, '✓', 'o', v.nombre,
+      `${fechaCorta(v.fecha)} · ${esc((v.resultados || []).join(' + ') || 'Sin resultado')}`)),
+    '', 'Todavía no hay visitas registradas.');
+
+  ponerAyudas();
+  sec.classList.remove('ini-cargando');
+  INI_LISTO = true;
+}
+
+/* ---------------- ventanas y paneles: se cierran al pulsar fuera ---------------- */
+
+let PTR_ABAJO = null, TRAGAR_CLIC = false;
+document.addEventListener('click', e => {
+  if (!TRAGAR_CLIC) return;
+  TRAGAR_CLIC = false; e.preventDefault(); e.stopPropagation();
+}, true);
+document.addEventListener('pointerdown', e => {
+  PTR_ABAJO = e.target;
+  const t = $('tools');
+  if (t.classList.contains('abierto') && !t.contains(e.target)
+      && !e.target.closest('#dirtools, #segtools, #antools') && !document.querySelector('dialog[open]')) {
+    t.classList.remove('abierto');
+    TRAGAR_CLIC = true;              // el clic que cierra el panel no activa lo que hay debajo
+  }
+  const pop = document.querySelector('.aipop');
+  if (pop && !pop.contains(e.target) && !e.target.closest('.ai')) pop.remove();
+}, true);
+
+// Solo cierra si el clic empieza y acaba fuera (así no se cierra al seleccionar texto y soltar fuera).
+['ficha', 'dlg', 'dlg2'].forEach(id => {
+  const d = $(id);
+  d.addEventListener('click', e => { if (e.target === d && PTR_ABAJO === d) d.close(); });
+});
+
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return;
+  $('tools').classList.remove('abierto');
+  const pop = document.querySelector('.aipop'); if (pop) pop.remove();
+});
+
+/* ---------------- paginación ---------------- */
+
+const TAMKEY = () => 'dlc-tam-' + (PERFIL ? PERFIL.id : '');
+const TAMANOS = [20, 50, 100];
+function tamPagina() { const n = +localStorage.getItem(TAMKEY()); return TAMANOS.includes(n) ? n : 20; }
+function fijarTam(n) { localStorage.setItem(TAMKEY(), String(n)); }
+
+function pagHTML(total, pagina, tam) {
+  const paginas = Math.max(1, Math.ceil(total / tam));
+  const nums = [];
+  for (let i = 0; i < paginas; i++) {
+    if (i === 0 || i === paginas - 1 || Math.abs(i - pagina) <= 1) nums.push(i);
+    else if (nums[nums.length - 1] !== '…') nums.push('…');
+  }
+  const desde = total ? pagina * tam + 1 : 0, hasta = Math.min(total, (pagina + 1) * tam);
+  return `<div class="pag">
+    <span>${num(desde)}–${num(hasta)} de ${num(total)}</span>
+    <span class="pbtns">
+      <button data-pg="${pagina - 1}" ${pagina <= 0 ? 'disabled' : ''} aria-label="Página anterior">‹</button>
+      ${nums.map(n => n === '…' ? '<span class="sm">…</span>'
+        : `<button data-pg="${n}" aria-current="${n === pagina}">${n + 1}</button>`).join('')}
+      <button data-pg="${pagina + 1}" ${pagina >= paginas - 1 ? 'disabled' : ''} aria-label="Página siguiente">›</button>
+    </span>
+    <span class="ptam">Mostrar <select data-pgtam>${TAMANOS.map(n =>
+      `<option value="${n}" ${n === tam ? 'selected' : ''}>${n}</option>`).join('')}</select></span></div>`;
+}
+
+/** Paginador para listas que se piden al servidor por páginas. */
+function paginador(el, total, pagina, alCambiar, alCambiarTam) {
+  if (!el) return;
+  const tam = tamPagina();
+  if (total <= TAMANOS[0]) { el.innerHTML = ''; return; }
+  el.innerHTML = pagHTML(total, pagina, tam);
+  el.querySelectorAll('[data-pg]').forEach(b => b.onclick = () => alCambiar(+b.dataset.pg));
+  el.querySelector('[data-pgtam]').onchange = e => { fijarTam(+e.target.value); alCambiarTam(); };
+}
+
+/* Paginación automática de cualquier otra lista o tabla con más de 20 filas. */
+const PAG_MEM = {};
+const PAG_EXCLUIR = '#lista, #slista, #kpis, .gsug, .umenu, .dl-menu, #tools, .opciones, .chips, .pag, #c-agenda, #c-acciones, #c-urgentes, #c-ultimas, #c-recom, #c-pend';
+
+function paginarListas() {
+  document.querySelectorAll('.pag[data-auto]').forEach(p => { if (!p.__lista || !p.__lista.isConnected) p.remove(); });
+  const grupos = new Map();
+  document.querySelectorAll('main .item, main .trow, dialog[open] .item, dialog[open] .trow').forEach(r => {
+    const p = r.parentElement;
+    if (!p || r.hasAttribute('data-fijo') || p.closest(PAG_EXCLUIR)) return;
+    if (!grupos.has(p)) grupos.set(p, []);
+    grupos.get(p).push(r);
+  });
+  grupos.forEach((filas, p) => {
+    const tam = tamPagina();
+    if (filas.length <= TAMANOS[0]) {
+      if (p.__pagEl) { p.__pagEl.remove(); p.__pagEl = null; filas.forEach(f => f.style.display = ''); }
+      return;
+    }
+    if (p.id && PAG_MEM[p.id] != null && p.__pagina == null) p.__pagina = PAG_MEM[p.id];   // listas que conservan la página
+    else if (p.__pagFilas !== filas.length || p.__pagPrimera !== filas[0]) {
+      if (!(p.id && PAG_MEM[p.id] != null)) p.__pagina = 0;
+    }
+    p.__pagFilas = filas.length; p.__pagPrimera = filas[0];
+    const paginas = Math.ceil(filas.length / tam);
+    if (p.__pagina >= paginas) p.__pagina = paginas - 1;
+    if (p.id) PAG_MEM[p.id] = p.__pagina;
+    const estado = [filas.length, p.__pagina, tam].join('|');
+    if (p.__pagEl && p.__pagEl.isConnected && p.__pagEstado === estado) return;   // nada que cambiar
+    p.__pagEstado = estado;
+    filas.forEach((f, i) => { f.style.display = Math.floor(i / tam) === p.__pagina ? '' : 'none'; });
+    if (!p.__pagEl || !p.__pagEl.isConnected) {
+      p.__pagEl = document.createElement('div');
+      p.__pagEl.setAttribute('data-auto', '');
+      p.__pagEl.className = 'pag';
+      p.__pagEl.__lista = p;
+      p.insertAdjacentElement('afterend', p.__pagEl);
+    }
+    const tmp = document.createElement('div');
+    tmp.innerHTML = pagHTML(filas.length, p.__pagina, tam);
+    p.__pagEl.innerHTML = tmp.firstElementChild.innerHTML;
+    p.__pagEl.querySelectorAll('[data-pg]').forEach(b => b.onclick = () => {
+      p.__pagina = +b.dataset.pg; p.__pagEstado = null; paginarListas();
+      const r = p.getBoundingClientRect();
+      if (r.top < 0) p.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    });
+    p.__pagEl.querySelector('[data-pgtam]').onchange = e => {
+      fijarTam(+e.target.value);
+      document.querySelectorAll('.pag[data-auto]').forEach(x => { if (x.__lista) x.__lista.__pagEstado = null; });
+      paginarListas();
+    };
+  });
+}
+
+let T_OBS = null;
+new MutationObserver(muts => {
+  if (muts.every(m => m.target.nodeType === 1 && m.target.closest('.pag, .aipop'))) return;
+  clearTimeout(T_OBS);
+  T_OBS = setTimeout(() => { paginarListas(); ponerAyudas(); }, 40);
+}).observe(document.body, { childList: true, subtree: true });
+
+/* ---------------- duplicados: pantalla propia ---------------- */
+
+let DUP_PEND = [], DUP_PARES = [], DUP_ACTUAL = null;
+
+async function cargarDuplicados() {
+  const v = $('v-duplicados');
+  const puede = PERFIL.rol === 'Administrador' || ((PERFIL.areas || {}).M || 0) >= 3;
+  v.innerHTML = `
+    <div class="saludo"><div><h1>Duplicados</h1>
+      <div class="fecha">Revisa fichas repetidas y unifícalas sin perder la lista</div></div>
+      <div class="acts" style="margin:0">
+        <button class="btn sec" id="dvolver">← Volver</button>
+        <button class="btn sec" id="dbuscar">Volver a buscar parecidos</button></div></div>
+    ${puede ? `<div class="dupgrid">
+      <div><div class="card" id="dpendc"></div><div class="card" id="dparc"></div></div>
+      <div class="card dupcmp" id="dcmp"><div class="vacio">Pulsa <b>Comparar</b> en una pareja para revisarla aquí.
+        La lista sigue a la izquierda: al terminar, pasas a la siguiente.</div></div>
+    </div>` : '<div class="card"><div class="vacio">Solo administración puede unificar fichas.</div></div>'}`;
+  $('dvolver').onclick = () => ir(TAB_ANTERIOR && TAB_ANTERIOR !== 'duplicados' ? TAB_ANTERIOR : 'directorio');
+  if (!puede) { $('dbuscar').classList.add('hide'); return; }
+  $('dbuscar').onclick = () => { invalidarCache(); listasDuplicados(); };
+  listasDuplicados();
+}
+
+async function listasDuplicados() {
+  cargando($('dpendc'), 'Buscando fichas pendientes…');
+  cargando($('dparc'), 'Buscando nombres parecidos…');
+  const [rp, rs] = await Promise.all([db.rpc('duplicados_pendientes'), db.rpc('escanear_duplicados', { p_umbral: 80, p_tope: 200 })]);
+  DUP_PEND = rp.data || [];
+  DUP_PARES = rs.data || [];
+  pintarListasDup();
+}
+
+function pintarListasDup() {
+  if (!$('dpendc')) return;
+  const sel = DUP_ACTUAL ? DUP_ACTUAL.join('|') : '';
+  $('dpendc').innerHTML = `<h2>Pendientes de unificar<span class="n">${DUP_PEND.length}</span></h2>
+    <p class="sm">Fichas marcadas como posible duplicado al darlas de alta.</p>
+    <div class="lista" id="dpendl">${DUP_PEND.map(x => `<div class="item ${x.par_id && sel === x.id + '|' + x.par_id ? 'sel' : ''}" style="cursor:default">
+      <span class="ic w">${x.pct ? x.pct + '%' : '?'}</span>
+      <span class="tx"><b>${esc(x.nombre)}</b>
+        <span class="sm">Código ${esc(x.codigo)} · ${esc(x.centro || '')} ${esc(x.municipio || '')}</span>
+        <span class="sm">${x.par_nombre ? 'Se parece a ' + esc(x.par_nombre) : 'Sin pareja identificada'}</span></span>
+      <span class="acts" style="margin:0">
+        ${x.par_id ? `<button class="btn" data-dcmp="${x.id}|${x.par_id}">Comparar</button>
+          <button class="btn sec" data-ddes="${x.id}|${x.par_id}">No es duplicado</button>` : ''}
+        <button class="btn sec" data-dver="${x.id}">Ficha</button></span></div>`).join('')
+      || '<div class="vacio">No hay fichas pendientes de unificar.</div>'}</div>`;
+
+  $('dparc').innerHTML = `<h2>Nombres parecidos<span class="n">${DUP_PARES.length}</span></h2>
+    <p class="sm">Parejas con un parecido del 80% o más. Si no son la misma persona, márcalas como distintas y no volverán a salir.</p>
+    <div class="lista" id="dparl">${DUP_PARES.map(p => `<div class="item ${sel === p.a_id + '|' + p.b_id ? 'sel' : ''}" style="cursor:default">
+      <span class="ic">${p.pct}%</span>
+      <span class="tx"><b>${esc(p.a_nombre)}</b><span class="sm">${esc(p.b_nombre)} · códigos ${esc(p.a_codigo)} y ${esc(p.b_codigo)}</span></span>
+      <span class="acts" style="margin:0">
+        <button class="btn" data-dcmp="${p.a_id}|${p.b_id}">Comparar</button>
+        <button class="btn sec" data-ddes="${p.a_id}|${p.b_id}">No son duplicados</button></span></div>`).join('')
+      || '<div class="vacio">Sin parejas parecidas pendientes de revisar.</div>'}</div>`;
+}
+
+document.addEventListener('click', async e => {
+  if (TAB !== 'duplicados') return;
+  const c = e.target.closest('[data-dcmp]'), f = e.target.closest('[data-dver]'), d = e.target.closest('[data-ddes]');
+  if (c) {
+    DUP_ACTUAL = c.dataset.dcmp.split('|');
+    $('v-duplicados').querySelectorAll('.item.sel').forEach(x => x.classList.remove('sel'));
+    if (c.closest('.item')) c.closest('.item').classList.add('sel');
+    compararEn($('dcmp'), DUP_ACTUAL[0], DUP_ACTUAL[1]);
+    if (window.innerWidth <= 900) $('dcmp').scrollIntoView({ block: 'start', behavior: 'smooth' });
+  }
+  if (f) abrirFicha(f.dataset.dver);
+  if (d) {
+    const [a, b] = d.dataset.ddes.split('|');
+    d.disabled = true;
+    const { data: r, error } = await db.rpc('descartar_duplicado', { p_a: a, p_b: b });
+    if (error || (r && r.ok === false)) { d.disabled = false; toast('No se ha podido guardar', true); return; }
+    const par = (p, x, y) => (p === x || p === y);
+    DUP_PARES = DUP_PARES.filter(p => !(par(p.a_id, a, b) && par(p.b_id, a, b)));
+    DUP_PEND = DUP_PEND.filter(p => !(par(p.id, a, b) && par(p.par_id, a, b)));
+    if (DUP_ACTUAL && DUP_ACTUAL.includes(a) && DUP_ACTUAL.includes(b)) { DUP_ACTUAL = null; panelDupVacio('Marcadas como personas distintas.'); }
+    pintarListasDup(); toast('Marcadas como distintas');
+  }
+});
+
+function panelDupVacio(msg) {
+  $('dcmp').innerHTML = `<div class="vacio">${esc(msg)} Elige la siguiente pareja de la lista.</div>`;
+}
+
+async function compararEn(el, idA, idB) {
+  cargando(el, 'Cargando las dos fichas…');
+  const [{ data: A }, { data: B }] = await Promise.all([
+    db.rpc('ficha_medico', { p_id: idA }), db.rpc('ficha_medico', { p_id: idB })
+  ]);
+  if (!A || !B || !A.medico || !B.medico) { el.innerHTML = '<div class="vacio">Alguna de las dos fichas ya no existe.</div>'; return; }
+  const a = A.medico, b = B.medico;
+  const ctx = { A, B };
+  let queda = b.id;
+  const eleccion = {};
+  CAMPOS_UNI.forEach(([k]) => eleccion[k] = b[k] ? 'queda' : (a[k] ? 'va' : 'queda'));
+  const resumen = (m, x) => `${num((x.consultas || []).length)} consultas · ${num((x.visitas || []).length)} visitas`;
+
+  const pinta = () => {
+    const va = queda === a.id ? b : a, qu = queda === a.id ? a : b;
+    const dif = CAMPOS_UNI.filter(([k]) => (a[k] || '') !== (b[k] || ''));
+    el.innerHTML = `<div class="fbox">
+      <div class="fh"><div><h2>Comparar fichas</h2>
+        <div class="sm">Elige cuál se conserva y con qué datos. Consultas, visitas, citas y cartera se juntan en la que quede.</div></div>
+        <button class="x" id="dcx" aria-label="Cerrar">✕</button></div>
+      <div class="opciones">
+        ${[[a, ctx.A], [b, ctx.B]].map(([m, x]) => `<button class="opt" data-queda="${m.id}" aria-pressed="${queda === m.id}">
+          <span class="mk"></span><span><b>${esc(m.nombre)}</b><br>
+          <span class="sm">Código ${esc(m.codigo)} · ${resumen(m, x)}</span><br>
+          <span class="sm">${queda === m.id ? 'Se conserva esta' : 'Desaparece'}</span></span></button>`).join('')}
+      </div>
+      <div class="acts"><button class="btn sec" data-dver="${a.id}">Ver ficha de ${esc(a.codigo)}</button>
+        <button class="btn sec" data-dver="${b.id}">Ver ficha de ${esc(b.codigo)}</button></div>
+      ${dif.length ? `<div>${dif.map(([k, t]) => `
+        <label>${t}</label>
+        <div class="opciones">
+          <button class="opt" data-campo="${k}|queda" aria-pressed="${eleccion[k] === 'queda'}"><span class="mk"></span>${esc(qu[k] || '(vacío)')}</button>
+          <button class="opt" data-campo="${k}|va" aria-pressed="${eleccion[k] === 'va'}"><span class="mk"></span>${esc(va[k] || '(vacío)')}</button>
+        </div>`).join('')}</div>` : '<p class="sm" style="margin-top:12px">Los datos principales coinciden.</p>'}
+      <div class="acts" style="justify-content:flex-end">
+        <button class="btn sec" data-ddes="${a.id < b.id ? a.id + '|' + b.id : b.id + '|' + a.id}">No son duplicados</button>
+        <button class="btn dang" id="duniok">Unificar</button></div></div>`;
+
+    $('dcx').onclick = () => { DUP_ACTUAL = null; $('v-duplicados').querySelectorAll('.item.sel').forEach(x => x.classList.remove('sel')); panelDupVacio(''); };
+    el.querySelectorAll('[data-queda]').forEach(x => x.onclick = () => { queda = x.dataset.queda; pinta(); });
+    el.querySelectorAll('[data-campo]').forEach(x => x.onclick = () => {
+      const [k, v] = x.dataset.campo.split('|'); eleccion[k] = v; pinta();
+    });
+    $('duniok').onclick = async ev => {
+      const desaparece = queda === a.id ? b.id : a.id;
+      if (!await preguntar(`Desaparece la ficha de ${queda === a.id ? b.nombre : a.nombre}.\nNo se puede deshacer desde la app.`,
+        { titulo: '¿Unificar fichas?', ok: 'Unificar', peligro: true })) return;
+      ev.target.disabled = true; ev.target.textContent = 'Unificando…';
+      const { data: r, error } = await db.rpc('unificar_medicos', { p: { queda, va: desaparece, campos: eleccion } });
+      if (error || (r && r.ok === false)) { ev.target.disabled = false; ev.target.textContent = 'Unificar'; toast('No se ha podido unificar', true); return; }
+      toast('Fichas unificadas');
+      DUP_PARES = DUP_PARES.filter(p => p.a_id !== desaparece && p.b_id !== desaparece);
+      DUP_PEND = DUP_PEND.filter(p => p.id !== desaparece && p.par_id !== desaparece);
+      DUP_ACTUAL = null; pintarListasDup(); panelDupVacio('Fichas unificadas.');
+      $('lista').innerHTML = '';                 // el directorio se recarga al volver
+    };
+  };
+  pinta();
+}
+
+/* ---------------- auditoría con filtro por usuario ---------------- */
+
+async function pintarAuditoria() {
+  cargando($('admcuerpo'), 'Cargando la auditoría…');
+  const nombreEnt = { medicos: 'Médico', consultas: 'Consulta', visitas: 'Visita', agenda: 'Cita',
+    rutas: 'Ruta', asignaciones: 'Cartera', pedidos: 'Pedido', perfiles: 'Usuario', productos: 'Producto' };
+  const { data: us } = await db.rpc('usuarios_lista');
+  const usuarios = (us || []).slice().sort((x, y) => String(x.nombre).localeCompare(String(y.nombre), 'es'));
+
+  $('admcuerpo').innerHTML = `<h2>Auditoría<span class="n" id="audn">…</span></h2>
+    <p class="sm">Quién ha cambiado qué y cuándo. Se guarda automáticamente.</p>
+    <div class="filtros" style="border:0;padding:10px 16px">
+      <div><label for="ausr">Usuario</label><select id="ausr"><option value="">Todos</option>
+        ${usuarios.map(u => `<option value="${u.id}">${esc(u.nombre)}</option>`).join('')}</select></div>
+      <div><label for="aent">Entidad</label><select id="aent"><option value="">Todas</option>
+        ${Object.entries(nombreEnt).map(([k, t]) => `<option value="${k}">${t}</option>`).join('')}</select></div>
+      <div><label for="adesde">Desde</label><input id="adesde" type="date"></div></div>
+    <div class="lista" id="audlista"></div>`;
+
+  const pinta = async () => {
+    cargando($('audlista'), 'Filtrando…');
+    const { data } = await RPC_ORIG('auditoria_lista', {
+      p_entidad: $('aent').value || null, p_usuario: $('ausr').value || null,
+      p_desde: $('adesde').value || null, lim: 500 });
+    const l = data || [];
+    $('audn').textContent = num(l.length) + (l.length === 500 ? '+' : '');
+    $('audlista').innerHTML = l.map(a => `<div class="item" style="cursor:default">
+      <span class="ic ${a.accion === 'Baja' ? 'w' : a.accion === 'Alta' ? 'o' : ''}">${a.accion === 'Alta' ? '+' : a.accion === 'Baja' ? '−' : '✎'}</span>
+      <span class="tx"><b>${esc(a.accion)} · ${esc(nombreEnt[a.entidad] || a.entidad)}</b>
+        <span class="sm">${esc(a.usuario)} ·
+          ${new Date(a.creado_en).toLocaleString('es', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+        <span class="sm">${esc(resumenDetalle(a.detalle))}</span></span></div>`).join('')
+      || '<div class="vacio">Sin movimientos con estos filtros.</div>';
+  };
+  ['ausr', 'aent', 'adesde'].forEach(id => $(id).onchange = pinta);
+  pinta();
+}
+
+/* ---------------- ayudas (i) en pantallas, tarjetas e indicadores ---------------- */
+
+const AYUDA_KPI = {
+  citas: 'Citas de hoy que ya están marcadas como visitadas, sobre el total de citas del día. Las descartadas no cuentan.',
+  urgentes: 'Médicos marcados como urgentes que todavía no tienen ninguna visita. Pulsa para verlos en el Directorio.',
+  visitas_sem: 'Visitas registradas desde el lunes de esta semana.',
+  visitas_mes: 'Visitas registradas desde el día 1 de este mes.',
+  interesados: 'Médicos en estado «Interesado». El siguiente paso es conseguir la primera pauta. Pulsa para verlos.',
+  sin_contactar: 'Médicos a los que todavía no se ha presentado el producto. Pulsa para verlos.',
+  cartera: 'Médicos que puedes ver: tu cartera asignada o, si eres de administración o televenta, toda la base.',
+  dups: 'Fichas marcadas como posible duplicado al darlas de alta. Pulsa para revisarlas y unificarlas.',
+  filtro: 'Indicador creado con «Guardar filtro» en el Directorio. Cuenta ahora mismo los médicos que cumplen ese filtro. Pulsa para ver la lista.'
+};
+
+const AYUDA = {
+  inicio: ['Tu inicio', 'El resumen de tu día.', ['Pulsa un indicador para ver la lista de médicos que cuenta.',
+    'Con «⚙ Personalizar indicadores» eliges cuáles ver y en qué orden, y añades filtros guardados.',
+    '«Compartir la semana» prepara un resumen para WhatsApp o email con tus plantillas.']],
+  ini_agenda: ['Tu agenda de hoy', 'Citas de hoy ordenadas por hora. En verde, las ya visitadas.',
+    ['Para añadir citas, ve a Agenda o planifica una ruta.', 'Pulsa un médico para abrir su ficha y registrar la visita.']],
+  ini_acciones: ['Próximas acciones', 'La próxima acción que quedó apuntada en la última visita de cada médico, para los próximos 7 días.',
+    ['En naranja, las que ya han pasado de fecha.', 'Márcalas como hechas o aplázalas desde Seguimiento.']],
+  ini_urgentes: ['Urgentes sin visitar', 'Médicos marcados como urgentes que aún no tienen ninguna visita.',
+    ['El motivo de urgencia se ve en su ficha.', 'Desde Rutas puedes planificar una ruta solo con urgentes.']],
+  ini_ultimas: ['Últimas visitas', 'Las visitas registradas más recientes, con su resultado.', []],
+  ini_recom: ['Recomendaciones de rutas', 'Listas calculadas cada día con tus datos. Al pulsar una, se planifica la ruta del día.',
+    ['«Pasan consulta hoy»: tienen consulta este día de la semana y no se visitan desde hace más de 14 días.',
+     '«Interesados»: en estado Interesado y sin visita en 20 días.',
+     'Solo entran médicos con ubicación: completar direcciones mejora las propuestas.']],
+  ini_pend: ['Pendientes de rutas anteriores', 'Citas que planificaste y quedaron sin visitar.',
+    ['Desde Agenda puedes moverlas a hoy, cambiarlas de fecha o descartarlas.']],
+  ini_comision: ['Tu actividad del mes', 'Unidades atribuidas a tus médicos en el periodo.',
+    ['El tramo alcanzado se aplica a todas las unidades del periodo, no solo a las que superan el tramo.',
+     'Lo que se ve (unidades o importe) lo decide administración.']],
+  agenda: ['Agenda', 'Tus citas por día, semana o mes.', ['«+ Nueva cita» crea una cita con un médico.',
+    'En cada cita puedes cambiar la hora, moverla o descartarla.',
+    'Al registrar la visita desde la ficha, la cita pasa a «Visitada».',
+    'Abajo verás los pendientes de rutas anteriores para recolocarlos.']],
+  rutas: ['Rutas', 'Crea rutas y conviértelas en el plan del día.', [
+    '<b>Lista fija</b>: tú eliges los médicos. <b>Por criterios</b>: se rellena sola con los filtros (municipio, estado, días de consulta…).',
+    '<b>Propuestas automáticas</b>: las mismas listas que ves en Inicio.',
+    'El plan ordena las paradas por cercanía y calcula horas con tu horario: salida, minutos por visita, hora tope y minutos entre paradas.',
+    'El navegador (Google Maps, Apple Maps o Waze) se elige en el plan o en Configuración.',
+    'Al empezar la ruta aparece la barra verde con el tiempo en curso.',
+    'Solo entran médicos con ubicación. Completar la dirección y los días de consulta mejora mucho las rutas.']],
+  directorio: ['Directorio', 'Todos los médicos que puedes ver.', [
+    'El buscador de arriba filtra por nombre, centro o municipio.',
+    'El municipio y la provincia cuentan todas las consultas del médico, no solo la principal.',
+    '«⋮» abre los filtros, las columnas y las descargas.',
+    '«★ Guardar filtro» convierte los filtros actuales en un indicador de Inicio.',
+    '«Cerca de mí» usa la ubicación del dispositivo.',
+    'Al crear un médico o centro, la app avisa si ya existe uno parecido.']],
+  seguimiento: ['Seguimiento', 'Cómo avanza cada médico.', [
+    'Los indicadores de arriba muestran el embudo por estado comercial y la calidad de los datos.',
+    '«Mostrar» filtra por visitados, sin visitar, con próxima acción o atrasados.',
+    '«Hecha» cierra la próxima acción; «Aplazar» le pone otra fecha.',
+    'Las descargas están en «⋮».']],
+  ventas: ['Ventas', 'Pedidos y unidades atribuidas.', [
+    'La venta a paciente se atribuye al médico indicado y al comercial que lo tenía asignado en ese momento.',
+    'La venta a centro con descuento no cuenta como prescripción de ningún médico.',
+    'Si un pedido no tiene médico reconocido, queda en la bandeja «sin atribuir» para asignarlo a mano.',
+    'Solo televenta y administración crean o cambian pedidos.']],
+  analitica: ['Analítica', 'Unidades o importe agrupados como elijas.', [
+    'Elige la dimensión: médico, comercial, producto, municipio, mes o canal.',
+    'La tabla por meses sirve para ver tendencias.',
+    'Las descargas están en «⋮».']],
+  config: ['Configuración', 'Ajustes de tu cuenta y de la plataforma.', [
+    'Preferencias de salida y llegada: se usan para calcular las rutas.',
+    'Navegador de mapas preferido.',
+    'Plantillas del resumen semanal.',
+    'Clasificadores: las opciones que aparecen al registrar visitas y en las fichas.']],
+  admin: ['Administración', 'Usuarios, permisos y control.', [
+    'Permisos por área: <b>Ver</b>, <b>Editar</b> o <b>Completo</b>. Se aplican en la base de datos, no solo en la pantalla.',
+    'La cartera decide qué médicos ve cada comercial.',
+    'Las comisiones se configuran por esquema y se asignan por persona.',
+    'Accesos y auditoría registran entradas y cambios.']],
+  duplicados: ['Duplicados', 'Fichas que pueden ser la misma persona.', [
+    '<b>Pendientes</b>: marcadas al darlas de alta. <b>Nombres parecidos</b>: coincidencia del 80% o más.',
+    'Al comparar eliges qué ficha queda y qué dato conservar de cada campo.',
+    'Consultas, visitas, citas y cartera se juntan en la ficha que queda. No se puede deshacer desde la app.',
+    '«No son duplicados» guarda la pareja como distinta y no vuelve a salir.']]
+};
+
+const ANCLAS_AYUDA = [
+  ['#v-inicio .saludo h1', 'inicio'], ['#c-agenda > h2', 'ini_agenda'], ['#c-acciones > h2', 'ini_acciones'],
+  ['#c-urgentes > h2', 'ini_urgentes'], ['#c-ultimas > h2', 'ini_ultimas'], ['#c-recom > h2', 'ini_recom'],
+  ['#c-pend > h2', 'ini_pend'], ['#c-comision > h2', 'ini_comision'],
+  ['#v-agenda .saludo h1', 'agenda'], ['#v-rutas .saludo h1', 'rutas'], ['#v-seguimiento .saludo h1', 'seguimiento'],
+  ['#v-ventas .saludo h1', 'ventas'], ['#v-analitica .saludo h1', 'analitica'], ['#v-config .saludo h1', 'config'],
+  ['#v-admin .saludo h1', 'admin'], ['#v-duplicados .saludo h1', 'duplicados']
+];
+
+function ponerAyudas() {
+  ANCLAS_AYUDA.forEach(([sel, k]) => {
+    const h = document.querySelector(sel);
+    if (h && !h.querySelector(':scope > .ai')) h.insertAdjacentHTML('beforeend', `<button class="ai" data-ayuda="${k}" aria-label="Ayuda">i</button>`);
+  });
+  const dt = $('dirtools');
+  if (dt && !(dt.previousElementSibling && dt.previousElementSibling.matches('.ai')))
+    dt.insertAdjacentHTML('beforebegin', '<button class="ai ai-dir" data-ayuda="directorio" aria-label="Ayuda">i</button>');
+}
+
+document.addEventListener('click', e => {
+  const b = e.target.closest('.ai');
+  if (!b) return;
+  e.preventDefault(); e.stopPropagation();
+  const prev = document.querySelector('.aipop');
+  if (prev) { const mismo = prev.__de === b; prev.remove(); if (mismo) return; }
+  let tit, cuerpo;
+  if (b.dataset.ayuda) {
+    const [t, x, l] = AYUDA[b.dataset.ayuda] || ['Ayuda', '', []];
+    tit = esc(t); cuerpo = esc(x) + (l.length ? `<ul>${l.map(i => `<li>${i}</li>`).join('')}</ul>` : '');
+  } else { tit = esc(b.dataset.ayudaTit || 'Qué es'); cuerpo = esc(b.dataset.ayudaTxt || ''); }
+  const pop = document.createElement('div');
+  pop.className = 'aipop'; pop.__de = b;
+  pop.innerHTML = `<b>${tit}</b>${cuerpo}`;
+  document.body.appendChild(pop);
+  const r = b.getBoundingClientRect(), w = pop.offsetWidth, h = pop.offsetHeight;
+  let x = Math.min(window.innerWidth - w - 10, Math.max(10, r.left + r.width / 2 - w / 2));
+  let y = r.bottom + 8; if (y + h > window.innerHeight - 10) y = Math.max(10, r.top - h - 8);
+  pop.style.left = x + 'px'; pop.style.top = y + 'px';
+}, true);
 
 pintarConexion();
 vaciarCola();
