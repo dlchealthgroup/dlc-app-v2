@@ -64,6 +64,14 @@ async function arrancar() {
 
   $('nuevoBtn').classList.toggle('hide', !puedeCrear());
   $('dupBtn').classList.toggle('hide', PERFIL.rol !== 'Administrador');
+  if ($('dlDir') && !$('dlDir').innerHTML) {
+    $('dlDir').innerHTML = menuDescarga('dir', [{ k: 'csv', ico: '📄', t: 'CSV para Excel' }, { k: 'xls', ico: '📊', t: 'Excel (.xls)' }]);
+    window.__dlDir = async fmt => {
+      const { data } = await db.rpc('exportar_medicos', { q: F.q || null, f_provincia: F.prov || null,
+        f_municipio: F.muni || null, f_estado: F.est || null, f_especialidad: F.esp || null, f_urgentes: !!F.urg });
+      descargar(data || [], 'DLC_medicos', fmt);
+    };
+  }
   document.querySelectorAll('#nav [data-t="ventas"]').forEach(b => b.classList.toggle('hide', !veVentas()));
   cargarCatalogos();
   pintarRutaBarra();
@@ -244,6 +252,7 @@ $('chips').addEventListener('click', e => {
 async function buscar(reiniciar) {
   if (typeof MODO_MAPA !== 'undefined' && MODO_MAPA && reiniciar) setTimeout(() => pintarMapa(), 10);
   if (reiniciar) { F.pagina = 0; $('lista').innerHTML = ''; }
+  if (reiniciar) cargando($('lista'), 'Buscando médicos…');
   $('cuenta').textContent = 'Buscando…';
   const t0 = performance.now();
 
@@ -825,7 +834,8 @@ async function cargarAgenda() {
             ${c.estado !== 'Visitada' ? `<button class="btn sec" data-cita="visita|${c.medico_id}">Registrar</button>
               <button class="btn sec" data-cita="hora|${c.id}|${esc(c.hora || '')}">Hora</button>
               <button class="btn sec" data-cita="repro|${c.id}">Mover</button>
-              <button class="btn sec" data-cita="desc|${c.id}">Descartar</button>` : ''}
+              <button class="btn sec" data-cita="desc|${c.id}">Descartar</button>
+              ${c.fecha >= hoyISO() ? `<button class="btn sec dang" data-cita="borrar|${c.id}">Borrar</button>` : ''}` : ''}
           </span></div>`).join('')}</div>`
       : '<div class="vacio">Sin citas este día.</div>'}`;
   }).join('');
@@ -862,8 +872,19 @@ document.addEventListener('click', async e => {
   if (acc === 'ficha') return abrirFicha(id);
   if (acc === 'visita') return abrirVisita(id);
   if (acc === 'desc') {
-    await escribir('estado_cita', { p_id: id, p_estado: 'Descartada' });
+    const r = await escribir('estado_cita', { p_id: id, p_estado: 'Descartada' });
+    if (r && r.error) { toast('No se ha podido descartar: ' + r.error.message, true); return; }
     toast('Cita descartada'); cargarAgenda(); cargarInicio(); return;
+  }
+  if (acc === 'borrar') {
+    if (!await preguntar('La cita desaparece de la agenda.', { titulo: '¿Borrar la cita?', ok: 'Borrar', peligro: true })) return;
+    const { data: r } = await db.rpc('borrar_cita', { p_id: id });
+    if (r && r.ok === false) {
+      toast(r.error === 'visitada' ? 'No se puede borrar una visita ya realizada'
+        : r.error === 'pasada' ? 'Solo se pueden borrar citas futuras' : 'No se ha podido borrar', true);
+      return;
+    }
+    toast('Cita borrada'); cargarAgenda(); cargarInicio(); return;
   }
   if (acc === 'hoy') {
     await escribir('estado_cita', { p_id: id, p_estado: 'Planificada', p_fecha: hoyISO() });
@@ -1340,7 +1361,7 @@ async function cargarSeguimiento() {
     <div class="saludo"><div><h1>Seguimiento</h1><div class="fecha">Cómo avanza cada médico</div></div>
       <div class="acts" style="margin:0">
         ${PERFIL.rol === 'Administrador' ? '<button class="btn sec" id="segdup">Duplicados</button>' : ''}
-        <button class="btn sec" id="segcsv">Descargar CSV</button></div></div>
+        ${menuDescarga('seg', [{ k: 'csv', ico: '📄', t: 'CSV para Excel' }, { k: 'xls', ico: '📊', t: 'Excel (.xls)' }])}</div></div>
     <div class="kpis" id="segkpis"><div class="skel"></div></div>
     <div class="panel">
       <div class="filtros">
@@ -1370,17 +1391,10 @@ async function cargarSeguimiento() {
     SEG = { estado: $('sest').value, prov: $('sprov').value, muni: $('smuni').value, modo: $('smodo').value, pagina: 0 };
     listaSeguimiento(true);
   });
-  $('segcsv').onclick = async ev => {
-    ev.target.disabled = true; ev.target.textContent = 'Preparando…';
+  window.__dlSeg = async fmt => {
     const { data } = await db.rpc('exportar_seguimiento', {
       f_estado: SEG.estado || null, f_provincia: SEG.prov || null, f_municipio: SEG.muni || null, f_modo: SEG.modo });
-    ev.target.disabled = false; ev.target.textContent = 'Descargar CSV';
-    const csv = aCSV(data || []);
-    if (!csv) { toast('No hay nada que exportar', true); return; }
-    const a2 = document.createElement('a');
-    a2.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
-    a2.download = 'DLC_seguimiento_' + hoyISO() + '.csv'; a2.click();
-    {const n=(data||[]).length;toast(`${num(n)} ${n===1?'fila exportada':'filas exportadas'}`);}
+    descargar(data || [], 'DLC_seguimiento', fmt);
   };
   if ($('segdup')) $('segdup').onclick = () => { DUPS = null; abrirDuplicados(); };
 
@@ -1399,7 +1413,7 @@ async function cargarSeguimiento() {
 }
 
 async function listaSeguimiento(reinicia) {
-  if (reinicia) { SEG.pagina = 0; $('slista').innerHTML = ''; }
+  if (reinicia) { SEG.pagina = 0; cargando($('slista'), 'Cargando el seguimiento…'); }
   $('scuenta').textContent = 'Buscando…';
   const { data, error } = await db.rpc('seguimiento_lista', {
     f_estado: SEG.estado || null, f_provincia: SEG.prov || null, f_municipio: SEG.muni || null,
@@ -1649,7 +1663,7 @@ $('mapaBtn').addEventListener('click', () => {
   if (MODO_MAPA) pintarMapa();
 });
 
-$('csvBtn').addEventListener('click', ev => descargarCSV(ev.target));
+
 
 async function pintarMapa() {
   if (!window.L) { $('mapleg').textContent = 'El mapa necesita conexión.'; return; }
@@ -2094,6 +2108,7 @@ async function cargarVentas() {
         <div><label for="pcanal">Canal</label><select id="pcanal">
           <option value="">Todos</option><option value="paciente">Recomendación a paciente</option>
           <option value="centro">Venta a centro</option></select></div>
+        <div><label for="pq">Buscar</label><input id="pq" placeholder="Médico, contacto o nº de pedido"></div>
       </div>
       <div class="cuenta" id="pcuenta">Cargando…</div>
       <div id="pedlista"></div>
@@ -2102,29 +2117,32 @@ async function cargarVentas() {
   if ($('pednuevo')) $('pednuevo').onclick = () => editorPedido();
   if ($('prodbtn')) $('prodbtn').onclick = editorProductos;
   ['pdesde', 'phasta', 'pcanal'].forEach(id => $(id).onchange = listaPedidos);
+  let tq; $('pq').oninput = () => { clearTimeout(tq); tq = setTimeout(listaPedidos, 350); };
   await cargarProductos();
   listaPedidos();
   pintarSinAtribuir();
 }
 
 async function listaPedidos() {
+  cargando($('pedlista'), 'Cargando pedidos…');
   const { data, error } = await db.rpc('pedidos_lista', {
     p_desde: $('pdesde').value || null, p_hasta: $('phasta').value || null,
-    p_canal: $('pcanal').value || null, lim: 200
+    p_canal: $('pcanal').value || null, q: ($('pq') && $('pq').value.trim()) || null, lim: 200
   });
   if (error) { $('pcuenta').textContent = 'No se ha podido cargar: ' + error.message; return; }
   PEDIDOS = data || [];
   const unidades = PEDIDOS.reduce((n, p) => n + (p.unidades || 0), 0);
   $('pcuenta').innerHTML = `<b>${num(PEDIDOS.length)}</b> pedidos · <b>${num(unidades)}</b> unidades`;
   $('pedlista').innerHTML = PEDIDOS.length ? PEDIDOS.map(p => `
-    <div class="fila" style="cursor:default;grid-template-columns:minmax(0,1.4fr) minmax(0,1.4fr) auto auto">
+    <button class="fila" data-ped="${p.id}" style="grid-template-columns:minmax(0,1.4fr) minmax(0,1.4fr) auto auto;${p.estado === 'Anulado' ? 'opacity:.55' : ''}">
       <span><span class="nm">${esc(p.medico || p.centro || p.contacto || 'Sin atribuir')}</span>
         <span class="sm">${fechaCorta(p.fecha)} · ${p.canal === 'centro' ? 'Venta a centro' : 'Recomendación'}${p.comercial ? ' · ' + esc(p.comercial) : ''}</span></span>
       <span class="c2"><span class="sm">${esc(p.productos || '')}</span>
         <span class="sm">${p.numero ? 'Nº ' + esc(p.numero) : ''} ${esc(p.contacto || '')}</span></span>
       <span class="c3"><span class="pill p-est">${esc(p.estado)}</span></span>
       <span><b style="font-size:17px;color:var(--navy)">${num(p.unidades)}</b> <span class="sm">uds.</span></span>
-    </div>`).join('') : '<div class="vacio">Todavía no hay pedidos registrados.</div>';
+    </button>`).join('') : '<div class="vacio">Todavía no hay pedidos registrados.</div>';
+  $('pedlista').querySelectorAll('[data-ped]').forEach(b => b.onclick = () => verPedido(b.dataset.ped));
 }
 
 async function pintarSinAtribuir() {
@@ -2205,12 +2223,14 @@ async function editorPedido() {
         </div>
       </div>
       <label>Líneas</label>
-      <div id="plineas">${lineas.map((l, i) => `<div class="g2" style="margin-bottom:8px">
+      <div id="plineas">${lineas.map((l, i) => {
+        const pr = PRODUCTOS.find(p => p.id === l.producto_id) || {};
+        return `<div class="g2" style="margin-bottom:8px;grid-template-columns:2fr 1fr 1fr auto">
         <select data-lp="${i}">${PRODUCTOS.map(p => `<option value="${p.id}" ${l.producto_id === p.id ? 'selected' : ''}>${esc(p.nombre)}</option>`).join('')
           || '<option value="">Sin productos: créalos primero</option>'}</select>
-        <div style="display:flex;gap:8px"><input data-lu="${i}" type="number" min="1" value="${l.unidades}" placeholder="Unidades">
-          ${lineas.length > 1 ? `<button type="button" class="btn sec" data-lx="${i}">✕</button>` : ''}</div>
-      </div>`).join('')}</div>
+        <input data-lu="${i}" type="number" min="1" value="${l.unidades}" placeholder="Unidades">
+        <input data-li="${i}" type="number" step="0.01" min="0" value="${l.importe != null ? l.importe : (pr.precio ? (pr.precio * l.unidades).toFixed(2) : '')}" placeholder="Importe €">
+        ${lineas.length > 1 ? `<button type="button" class="btn sec" data-lx="${i}">✕</button>` : ''}</div>`; }).join('')}</div>
       <div class="acts"><button type="button" class="btn sec" id="plmas">+ Añadir línea</button></div>
       <label for="pnota">Nota</label><input id="pnota">
       <div class="acts" style="justify-content:flex-end">
@@ -2219,7 +2239,9 @@ async function editorPedido() {
 
     const leer = () => lineas = [...$('plineas').children].map((d, i) => ({
       producto_id: d.querySelector(`[data-lp="${i}"]`).value,
-      unidades: +d.querySelector(`[data-lu="${i}"]`).value || 1
+      unidades: +d.querySelector(`[data-lu="${i}"]`).value || 1,
+      importe: d.querySelector(`[data-li="${i}"]`) && d.querySelector(`[data-li="${i}"]`).value !== ''
+        ? +d.querySelector(`[data-li="${i}"]`).value : null
     }));
 
     $('plmas').onclick = () => { leer(); lineas.push({ producto_id: (PRODUCTOS[0] || {}).id || '', unidades: 1 }); pinta(); };
@@ -2277,19 +2299,29 @@ async function editorProductos() {
       <button class="x" data-cerrar aria-label="Cerrar">✕</button></div>
     <div class="lista">${PRODUCTOS.map(p => `<div class="item" style="cursor:default">
       <span class="ic">◧</span><span class="tx"><b>${esc(p.nombre)}</b>
-        <span class="sm">${esc(p.presentacion || '')} ${p.referencia ? '· ref. ' + esc(p.referencia) : ''}</span></span>
+        <span class="sm">${esc(p.presentacion || '')}${p.precio ? ' · ' + eur(p.precio) + ' + ' + (p.iva || 0) + '% IVA' : ''}${p.referencia ? ' · ref. ' + esc(p.referencia) : ''}</span></span>
       <span class="acts" style="margin:0"><button class="btn sec" data-pdel="${p.id}">Desactivar</button></span></div>`).join('')
       || '<div class="vacio">Todavía no hay productos.</div>'}</div>
     <div class="g2" style="margin-top:12px">
       <div><label for="prn">Nombre</label><input id="prn" placeholder="Nombre del producto"></div>
-      <div><label for="prp">Presentación</label><input id="prp" placeholder="Caja de 30 cápsulas"></div>
+      <div><label for="prp">Presentación</label><input id="prp" placeholder="Caja de 60 cápsulas"></div>
+    </div>
+    <div class="g2">
+      <div><label for="prpr">Precio sin IVA</label><input id="prpr" type="number" step="0.01" min="0" placeholder="41,82"></div>
+      <div><label for="priva">IVA (%)</label><input id="priva" type="number" min="0" max="21" value="10"></div>
+    </div>
+    <div class="g2">
+      <div><label for="prref">Referencia</label><input id="prref"></div>
+      <div><label for="prcb">Código de barras</label><input id="prcb"></div>
     </div>
     <div class="acts" style="justify-content:flex-end"><button class="btn" id="pradd">Añadir producto</button></div>`;
 
   $('pradd').onclick = async ev => {
     if (!$('prn').value.trim()) { toast('Escribe el nombre', true); return; }
     ev.target.disabled = true;
-    const { data: r, error } = await db.rpc('guardar_producto', { p: { nombre: $('prn').value.trim(), presentacion: $('prp').value.trim() } });
+    const { data: r, error } = await db.rpc('guardar_producto', { p: { nombre: $('prn').value.trim(),
+      presentacion: $('prp').value.trim(), precio: $('prpr').value, iva: +$('priva').value || 10,
+      referencia: $('prref').value.trim(), codigo_barras: $('prcb').value.trim() } });
     ev.target.disabled = false;
     if (error || (r && r.ok === false)) { toast('No se ha podido crear', true); return; }
     toast('Producto añadido'); editorProductos();
@@ -2306,7 +2338,7 @@ async function editorProductos() {
 async function cargarAnalitica() {
   $('v-analitica').innerHTML = `
     <div class="saludo"><div><h1>Analítica</h1><div class="fecha">Unidades por médico, comercial, producto o zona</div></div>
-      <div class="acts" style="margin:0"><button class="btn sec" id="ancsv">Descargar CSV</button></div></div>
+      <div class="acts" style="margin:0">${menuDescarga('an', [{ k: 'csv', ico: '📄', t: 'CSV para Excel' }, { k: 'xls', ico: '📊', t: 'Excel (.xls)' }])}</div></div>
     <div class="panel">
       <div class="filtros">
         <div><label for="adim">Ver por</label><select id="adim">
@@ -2318,25 +2350,32 @@ async function cargarAnalitica() {
         <div><label for="acanal">Canal</label><select id="acanal">
           <option value="">Todos</option><option value="paciente">Recomendación</option>
           <option value="centro">Venta a centro</option></select></div>
+        <div><label for="amedida">Medida</label><select id="amedida">
+          <option value="unidades">Unidades</option><option value="importe">Importe</option></select></div>
       </div>
       <div class="cuenta" id="acuenta">Calculando…</div>
       <div id="aserie" style="padding:14px"></div>
       <div id="atabla"></div>
+      <div class="subnav" style="padding:10px 14px 0"><button data-avista="rank" aria-pressed="true">Ranking</button>
+        <button data-avista="tabla" aria-pressed="false">Tabla por meses</button></div>
+      <div id="atabla2"></div>
     </div>`;
-  ['adim', 'adesde', 'ahasta', 'acanal'].forEach(id => $(id).onchange = pintarAnalitica);
-  $('ancsv').onclick = () => {
-    const filas = (window.__AN || []).map(f => ({ concepto: f.nombre, unidades: f.unidades }));
-    if (!filas.length) { toast('Nada que exportar', true); return; }
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([aCSV(filas)], { type: 'text/csv;charset=utf-8' }));
-    a.download = 'DLC_unidades_' + hoyISO() + '.csv'; a.click();
-    toast('Descargado');
-  };
+  ['adim', 'adesde', 'ahasta', 'acanal', 'amedida'].forEach(id => $(id).onchange = () => { pintarAnalitica(); pintarTablaAnalitica(); });
+  $('v-analitica').querySelectorAll('[data-avista]').forEach(b => b.onclick = () => {
+    const tabla = b.dataset.avista === 'tabla';
+    $('v-analitica').querySelectorAll('[data-avista]').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+    $('atabla').classList.toggle('hide', tabla); $('aserie').classList.toggle('hide', tabla);
+    $('atabla2').classList.toggle('hide', !tabla);
+    if (tabla) pintarTablaAnalitica();
+  });
+  $('atabla2').classList.add('hide');
+  window.__dlAn = fmt => descargar(window.__ANTABLA || (window.__AN || []).map(f => ({ concepto: f.nombre, unidades: f.unidades })), 'DLC_unidades', fmt);
   pintarAnalitica();
 }
 
 async function pintarAnalitica() {
   $('acuenta').textContent = 'Calculando…';
+  cargando($('atabla'), 'Calculando…');
   const { data, error } = await db.rpc('analitica_unidades', {
     p_dim: $('adim').value, p_desde: $('adesde').value || null, p_hasta: $('ahasta').value || null,
     p_canal: $('acanal').value || null, lim: 50
@@ -2603,8 +2642,7 @@ const selectorNav = () => `<select id="navsel" title="Navegador de mapas" style=
 async function cargarRutas() {
   $('v-rutas').innerHTML = `
     <div class="saludo"><div><h1>Rutas</h1><div class="fecha">Crea, edita y planifica tus rutas</div></div>
-      <div class="acts" style="margin:0">${selectorNav()}
-        <button class="btn" id="rnueva">+ Nueva ruta</button></div></div>
+      <div class="acts" style="margin:0"><button class="btn" id="rnueva">+ Nueva ruta</button></div></div>
     <div class="subnav">
       <button data-rs="mis" aria-pressed="${RSEC === 'mis'}">Mis rutas</button>
       <button data-rs="prop" aria-pressed="${RSEC === 'prop'}">Propuestas automáticas</button>
@@ -2613,7 +2651,6 @@ async function cargarRutas() {
     <div id="rplan"></div>`;
 
   $('rnueva').onclick = () => editorRuta(null);
-  $('navsel').onchange = e => cambiarNavegador(e.target.value);
   $('v-rutas').querySelectorAll('[data-rs]').forEach(b => b.onclick = () => { RSEC = b.dataset.rs; cargarRutas(); });
 
   if (RSEC === 'mis') await listaRutas(); else await listaPropuestas();
@@ -2735,12 +2772,15 @@ async function editorRuta(id) {
   let busca = '';
   let cab = { nombre: r ? r.nombre : '', tipo: r ? r.tipo : 'Normal', desde: (r && r.desde) || hoyISO() };
   const leerCab = () => { if ($('rn')) cab = { nombre: $('rn').value, tipo: $('rt').value, desde: $('rd').value }; };
-  const { data: op } = await db.rpc('opciones_filtros', {});
+  let op = { provincias: [], municipios: [], centros: [], especialidades: [], estados: [] };
   const g = Object.assign({}, (r && r.reglas) || {});
 
+  cargando($('dbody'), 'Abriendo…');
+  $('dlg').showModal();
+
+  db.rpc('opciones_filtros', {}).then(({ data }) => { if (data) { op = data; if (modo === 'crit') pinta(); } });
   if (codigos.length) {
-    const { data } = await db.rpc('medicos_por_ids', { p_ids: codigos });
-    medicos = data || [];
+    db.rpc('medicos_por_ids', { p_ids: codigos }).then(({ data }) => { medicos = data || []; pinta(); });
   }
 
   const sel = (lista, v) => '<option value=""></option>' + (lista || []).map(o =>
@@ -2777,8 +2817,12 @@ async function editorRuta(id) {
           <div><label for="cmuni">Municipio</label><select id="cmuni">${sel(op.municipios, g.municipio)}</select></div>
         </div>
         <div class="g2">
+          <div><label for="ccen">Centro</label><select id="ccen">${sel(op.centros, g.centro)}</select></div>
           <div><label for="cesp">Especialidad</label><select id="cesp">${sel(op.especialidades, g.especialidad)}</select></div>
+        </div>
+        <div class="g2">
           <div><label for="cest">Estado comercial</label><select id="cest">${sel(op.estados, g.estado)}</select></div>
+          <div><label for="cnav">Navegación de esta ruta</label>${selectorNav()}</div>
         </div>
         <div class="g2">
           <div><label for="csv">Sin visitar hace más de (días)</label><input id="csv" type="number" min="1" max="365" value="${g.sinVisita || ''}"></div>
@@ -2825,6 +2869,7 @@ async function editorRuta(id) {
         if ($('cprov').value) o.provincia = $('cprov').value;
         if ($('cmuni').value) o.municipio = $('cmuni').value;
         if ($('cesp').value) o.especialidad = $('cesp').value;
+        if ($('ccen') && $('ccen').value) o.centro = $('ccen').value;
         if ($('cest').value) o.estado = $('cest').value;
         if ($('csv').value) o.sinVisita = +$('csv').value;
         if ($('cdia').value) o.dia = $('cdia').value;
@@ -2841,6 +2886,7 @@ async function editorRuta(id) {
         $('rprev').innerHTML = `<b>${num((data || []).length)}</b> médicos cumplen ahora estos criterios${rg.sinVisita ? ', antes de aplicar los días sin visitar' : ''}.`;
       };
       $('dbody').__reglas = reglas;
+      if ($('navsel')) $('navsel').onchange = e => cambiarNavegador(e.target.value);
     }
 
     $('rguardar').onclick = async ev => {
@@ -2859,7 +2905,6 @@ async function editorRuta(id) {
     };
   };
   pinta();
-  $('dlg').showModal();
 }
 
 /* ---------------- plan del día con horario configurable ---------------- */
@@ -3117,6 +3162,200 @@ async function pintarMesAgenda(mes) {
     AG_FECHA = b.dataset.mesdia; AG_MODO = 'dia'; cargarAgenda();
   });
   $('agpend').innerHTML = '';
+}
+
+
+
+/* ============================================================
+   DLC OS 2.0 · Entrega 14 · Bloque C
+   ============================================================ */
+
+/* ---------------- spinner y descargas ---------------- */
+
+const cargando = (el, texto) => { if (el) el.innerHTML =
+  `<div class="cargador"><span class="spin"></span><span class="sm">${esc(texto || 'Cargando…')}</span></div>`; };
+
+function menuDescarga(id, opciones) {
+  return `<div class="dl-wrap"><button class="btn sec dl-btn" data-dl="${id}" title="Descargar">⭳</button>
+    <div class="dl-menu hide" id="dlm-${id}">${opciones.map(o =>
+      `<button data-dlo="${id}|${o.k}"><span>${o.ico}</span>${esc(o.t)}</button>`).join('')}</div></div>`;
+}
+
+document.addEventListener('click', e => {
+  const o = e.target.closest('[data-dlo]');
+  if (o) {
+    const [id, fmt] = o.dataset.dlo.split('|');
+    document.querySelectorAll('.dl-menu').forEach(m => m.classList.add('hide'));
+    if (id === 'seg' && window.__dlSeg) window.__dlSeg(fmt);
+    if (id === 'an' && window.__dlAn) window.__dlAn(fmt);
+    if (id === 'dir' && window.__dlDir) window.__dlDir(fmt);
+    return;
+  }
+  const b = e.target.closest('[data-dl]');
+  document.querySelectorAll('.dl-menu').forEach(m => { if (!b || m.id !== 'dlm-' + b.dataset.dl) m.classList.add('hide'); });
+  if (b) $('dlm-' + b.dataset.dl).classList.toggle('hide');
+});
+
+function aXLS(filas, titulo) {
+  if (!filas.length) return '';
+  const cols = Object.keys(filas[0]);
+  const tr = f => '<tr>' + cols.map(c => `<td>${String(f[c] == null ? '' : f[c]).replace(/[<>&]/g, '')}</td>`).join('') + '</tr>';
+  return `<html xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="utf-8"></head><body>
+    <table border="1"><thead><tr>${cols.map(c => `<th>${c}</th>`).join('')}</tr></thead>
+    <tbody>${filas.map(tr).join('')}</tbody></table></body></html>`;
+}
+
+function descargar(filas, nombre, formato) {
+  if (!filas || !filas.length) { toast('No hay nada que descargar', true); return; }
+  const esXls = formato === 'xls';
+  const cont = esXls ? aXLS(filas, nombre) : aCSV(filas);
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([cont], { type: esXls ? 'application/vnd.ms-excel' : 'text/csv;charset=utf-8' }));
+  a.download = nombre + '_' + hoyISO() + (esXls ? '.xls' : '.csv');
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  toast(`${num(filas.length)} ${filas.length === 1 ? 'fila descargada' : 'filas descargadas'}`);
+}
+
+/* ---------------- buscador global agrupado ---------------- */
+
+let TGLOB;
+$('q').addEventListener('input', e => {
+  clearTimeout(TGLOB);
+  const q = e.target.value.trim();
+  if (q.length < 2) { $('gsug').classList.add('hide'); return; }
+  TGLOB = setTimeout(async () => {
+    const { data } = await db.rpc('buscar_global', { q, lim: 6 });
+    if (!data) return;
+    const m = data.municipios || [], c = data.centros || [], me = data.medicos || [];
+    if (!m.length && !c.length && !me.length) { $('gsug').classList.add('hide'); return; }
+    $('gsug').innerHTML =
+      (m.length ? `<div class="gsh">Municipios</div>` + m.map(x => `<button data-gm="${esc(x.valor)}">
+        <span class="gic">📍</span><span><b>${esc(x.valor)}</b><span class="sm">${num(x.n)} médicos</span></span></button>`).join('') : '') +
+      (c.length ? `<div class="gsh">Centros</div>` + c.map(x => `<button data-gc="${esc(x.valor)}">
+        <span class="gic">🏥</span><span><b>${esc(x.valor)}</b><span class="sm">${esc(x.municipio || '')} · ${num(x.n)} médicos</span></span></button>`).join('') : '') +
+      (me.length ? `<div class="gsh">Médicos</div>` + me.map(x => `<button data-gme="${x.id}">
+        <span class="gic">${x.urgente ? '❗' : '👤'}</span><span><b>${esc(x.nombre)}</b>
+        <span class="sm">${esc(x.especialidad || '')} · ${esc(x.centro_nombre || '')} ${esc(x.municipio || '')}</span></span></button>`).join('') : '');
+    $('gsug').classList.remove('hide');
+  }, 250);
+});
+
+document.addEventListener('click', e => {
+  if (!e.target.closest('.gsearch')) $('gsug').classList.add('hide');
+  const gm = e.target.closest('[data-gm]'), gc = e.target.closest('[data-gc]'), gme = e.target.closest('[data-gme]');
+  if (gm || gc) {
+    Object.assign(F, { q: '', prov: '', muni: '', esp: '', est: '', urg: false, pagina: 0 });
+    if (gm) { F.muni = gm.dataset.gm; if ($('fmuni')) $('fmuni').value = F.muni; }
+    if (gc) { F.q = gc.dataset.gc; }
+    $('q').value = ''; $('gsug').classList.add('hide');
+    ir('directorio'); buscar(true);
+  }
+  if (gme) { $('gsug').classList.add('hide'); $('q').value = ''; abrirFicha(gme.dataset.gme); }
+});
+
+/* ---------------- ventas: detalle, edición y anulación ---------------- */
+
+async function verPedido(id) {
+  cargando($('dbody'), 'Abriendo el pedido…');
+  $('dlg').showModal();
+  const { data, error } = await db.rpc('pedido_detalle', { p_id: id });
+  if (error) { $('dbody').innerHTML = `<div class="vacio">${esc(error.message)}</div>`; return; }
+  const p = data.pedido, l = data.lineas || [], c = data.contacto;
+  const uds = l.reduce((n, x) => n + x.unidades, 0);
+  const imp = l.reduce((n, x) => n + (+x.importe || 0), 0);
+
+  $('dbody').innerHTML = `
+    <div class="fh"><div><h2>Pedido ${esc(p.numero || '')}</h2>
+      <div class="sm">${fechaCorta(p.fecha)} · ${p.canal === 'centro' ? 'Venta a centro' : 'Recomendación'} · ${esc(p.estado)}</div></div>
+      <button class="x" data-cerrar aria-label="Cerrar">✕</button></div>
+    ${c ? `<div class="blk"><h3>Contacto</h3><div><b>${esc(c.nombre)}</b></div>
+      <div class="sm">${esc(c.telefono || '')} ${esc(c.email || '')}</div>
+      <div class="acts"><button class="btn sec" data-contacto="${c.id}">Ver historial del contacto</button></div></div>` : ''}
+    <div class="blk"><h3>Líneas</h3>
+      ${l.map(x => `<div style="display:flex;justify-content:space-between;gap:10px;padding:6px 0;border-top:1px solid var(--line)">
+        <span><b>${esc(x.producto || 'Sin producto')}</b>
+          <div class="sm">${x.medico ? 'Médico: ' + esc(x.medico) : 'Sin atribuir'}${x.comercial ? ' · ' + esc(x.comercial) : ''}</div></span>
+        <span style="text-align:right"><b>${num(x.unidades)}</b> uds.${x.importe ? `<div class="sm">${eur(x.importe)}</div>` : ''}</span>
+      </div>`).join('') || '<div class="sm">Sin líneas.</div>'}
+      <div style="display:flex;justify-content:space-between;padding-top:8px;border-top:2px solid var(--line);margin-top:6px">
+        <b>Total</b><b>${num(uds)} uds.${imp ? ' · ' + eur(imp) : ''}</b></div></div>
+    ${p.nota ? `<div class="blk"><h3>Nota</h3><div>${esc(p.nota)}</div></div>` : ''}
+    <div class="acts" style="justify-content:flex-end">
+      ${p.estado !== 'Anulado' && puedeVentas() ? `<button class="btn sec dang" id="pdanular">Anular pedido</button>
+        <button class="btn sec" id="pdeditar">Editar</button>` : ''}
+      <button class="btn sec" data-cerrar>Cerrar</button></div>`;
+
+  const ct = $('dbody').querySelector('[data-contacto]');
+  if (ct) ct.onclick = () => verContacto(ct.dataset.contacto);
+  if ($('pdanular')) $('pdanular').onclick = async () => {
+    const motivo = await pedirTexto('Motivo de la anulación (opcional)', '', { titulo: '¿Anular el pedido?', ok: 'Anular' });
+    if (motivo === null) return;
+    const { data: r } = await db.rpc('anular_pedido', { p_id: id, p_motivo: motivo || null });
+    if (r && r.ok === false) { toast('No se ha podido anular', true); return; }
+    $('dlg').close(); toast('Pedido anulado'); listaPedidos(); pintarSinAtribuir();
+  };
+  if ($('pdeditar')) $('pdeditar').onclick = () => editorPedido(data);
+}
+
+async function verContacto(id) {
+  cargando($('dbody'), 'Cargando el contacto…');
+  $('dlg').showModal();
+  const { data } = await db.rpc('contacto_detalle', { p_id: id });
+  if (!data || !data.contacto) { $('dbody').innerHTML = '<div class="vacio">No se ha encontrado.</div>'; return; }
+  const c = data.contacto, ped = data.pedidos || [];
+  $('dbody').innerHTML = `
+    <div class="fh"><div><h2>${esc(c.nombre)}</h2>
+      <div class="sm">${esc(c.telefono || '')} ${esc(c.email || '')} ${esc(c.municipio || '')}</div></div>
+      <button class="x" data-cerrar aria-label="Cerrar">✕</button></div>
+    <div class="kpis" style="margin:10px 0">
+      <div class="kpi"><b>${num(ped.length)}</b><span>pedidos</span></div>
+      <div class="kpi"><b>${num(data.total_unidades)}</b><span>unidades compradas</span></div></div>
+    <div class="blk"><h3>Historial</h3>
+      ${ped.map(p => `<div style="display:flex;justify-content:space-between;gap:10px;padding:6px 0;border-top:1px solid var(--line)">
+        <span><b>${fechaCorta(p.fecha)}</b> ${esc(p.productos || '')}
+          <div class="sm">${p.medico ? 'Recomendado por ' + esc(p.medico) : 'Sin médico'} · ${esc(p.estado)}</div></span>
+        <b>${num(p.unidades)} uds.</b></div>`).join('') || '<div class="sm">Sin pedidos.</div>'}</div>`;
+}
+
+/* ---------------- analítica en tabla ---------------- */
+
+async function pintarTablaAnalitica() {
+  const caja = $('atabla2');
+  cargando(caja, 'Calculando la tabla…');
+  const { data, error } = await db.rpc('analitica_tabla', {
+    p_dim: $('adim').value === 'mes' ? 'producto' : $('adim').value,
+    p_desde: $('adesde').value || null, p_hasta: $('ahasta').value || null,
+    p_canal: $('acanal').value || null, p_medida: $('amedida') ? $('amedida').value : 'unidades', lim: 30
+  });
+  if (error) { caja.innerHTML = `<div class="vacio">${esc(error.message)}</div>`; return; }
+  const meses = data.meses || [], filas = data.filas || [];
+  if (!filas.length) { caja.innerHTML = '<div class="vacio">Sin datos en este periodo.</div>'; return; }
+  const fmt = v => data.medida === 'importe' ? eur(v) : num(v);
+  const totMes = {};
+  filas.forEach(f => meses.forEach(m => totMes[m] = (totMes[m] || 0) + (+(f.meses || {})[m] || 0)));
+
+  caja.innerHTML = `<div class="tabla"><div style="min-width:${180 + meses.length * 110}px">
+    <div class="thead"><span class="tcell th" style="width:220px;min-width:220px">Concepto</span>
+      ${meses.map(m => `<span class="tcell th" style="width:110px;min-width:110px;text-align:right">${esc(m.slice(5))}/${esc(m.slice(2, 4))}</span>`).join('')}
+      <span class="tcell th" style="width:120px;min-width:120px;text-align:right">Total</span></div>
+    ${filas.map(f => `<div class="trow" style="cursor:default">
+      <span class="tcell" style="width:220px;min-width:220px"><b>${esc(f.nombre)}</b></span>
+      ${meses.map(m => `<span class="tcell" style="width:110px;min-width:110px;text-align:right">${
+        (f.meses || {})[m] ? fmt((f.meses || {})[m]) : '<span class="sm">·</span>'}</span>`).join('')}
+      <span class="tcell" style="width:120px;min-width:120px;text-align:right"><b>${fmt(f.total)}</b></span></div>`).join('')}
+    <div class="trow" style="cursor:default;background:var(--bg)">
+      <span class="tcell" style="width:220px;min-width:220px"><b>Total</b></span>
+      ${meses.map(m => `<span class="tcell" style="width:110px;min-width:110px;text-align:right"><b>${fmt(totMes[m] || 0)}</b></span>`).join('')}
+      <span class="tcell" style="width:120px;min-width:120px;text-align:right"><b>${fmt(filas.reduce((n, f) => n + (+f.total || 0), 0))}</b></span></div>
+  </div></div>`;
+
+  window.__ANTABLA = filas.map(f => {
+    const o = { concepto: f.nombre };
+    meses.forEach(m => o[m] = (f.meses || {})[m] || 0);
+    o.total = f.total;
+    return o;
+  });
 }
 
 

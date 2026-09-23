@@ -222,6 +222,20 @@ body.conruta{padding-top:46px}
 .mesdia b{font-size:13px;color:var(--ink)}
 .mespunto{font-size:11px;font-weight:700;background:var(--sky-soft);color:var(--navy);border-radius:999px;padding:1px 7px}
 .btn.sec.dang{color:var(--dang);border-color:var(--dang);background:var(--panel)}
+
+.gsug{position:absolute;top:46px;left:0;right:0;background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:0 14px 34px rgba(16,32,52,.16);max-height:60vh;overflow:auto;z-index:70}
+.gsug button{display:flex;gap:10px;align-items:center;width:100%;text-align:left;border:0;background:none;padding:9px 12px;cursor:pointer}
+.gsug button:hover{background:var(--bg)}
+.gsug b{display:block;font-size:14px}.gsug .gic{font-size:16px;width:22px;text-align:center}
+.gsh{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);padding:9px 12px 3px;background:var(--bg);border-bottom:1px solid var(--line)}
+.cargador{display:flex;flex-direction:column;gap:10px;align-items:center;justify-content:center;padding:44px 16px}
+.spin{width:28px;height:28px;border:3px solid var(--line);border-top-color:var(--navy);border-radius:50%;animation:gira .8s linear infinite;display:block}
+@keyframes gira{to{transform:rotate(360deg)}}
+.dl-wrap{position:relative;display:inline-block}
+.dl-btn{font-size:17px;min-width:44px}
+.dl-menu{position:absolute;right:0;top:46px;background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:0 12px 30px rgba(16,32,52,.16);min-width:200px;padding:6px;z-index:60}
+.dl-menu button{display:flex;gap:9px;align-items:center;width:100%;text-align:left;border:0;background:none;padding:9px 11px;border-radius:9px;cursor:pointer;font-size:14px}
+.dl-menu button:hover{background:var(--bg)}
 @media (max-width:900px){ .cols{grid-template-columns:1fr} }
 @media (max-width:760px){
   .fila{grid-template-columns:minmax(0,1fr) auto}
@@ -252,7 +266,7 @@ body.conruta{padding-top:46px}
   <header>
     <div class="top">
       <img class="logo" src="./logo.png" alt="DLC">
-      <div class="gsearch"><input id="q" type="search" placeholder="Buscar médico, centro o municipio" autocomplete="off"></div>
+      <div class="gsearch"><input id="q" type="search" placeholder="Buscar médico, centro o municipio" autocomplete="off"><div class="gsug hide" id="gsug"></div></div>
       <div class="uwrap">
         <button class="ubtn" id="ubtn"><span class="av" id="av"></span><span class="uname" id="uname"></span></button>
         <div class="umenu hide" id="umenu">
@@ -310,7 +324,7 @@ body.conruta{padding-top:46px}
             </select></div>
         </div>
         <div class="chips" id="chips"></div>
-        <div class="acts" style="padding:12px 14px 0;margin:0"><button class="btn sec" id="nuevoBtn">+ Crear nuevo</button><button class="btn sec" id="mapaBtn">Ver mapa</button><button class="btn sec" id="csvBtn">Descargar CSV</button><button class="btn sec" id="guardarFiltro">★ Guardar filtro</button><button class="btn sec" id="colsBtn">⚙ Columnas</button><button class="btn sec" id="cercaBtn">Cerca de mí</button><button class="btn sec hide" id="dupBtn">Duplicados</button></div>
+        <div class="acts" style="padding:12px 14px 0;margin:0"><button class="btn sec" id="nuevoBtn">+ Crear nuevo</button><button class="btn sec" id="mapaBtn">Ver mapa</button><button class="btn sec" id="guardarFiltro">★ Guardar filtro</button><button class="btn sec" id="colsBtn">⚙ Columnas</button><button class="btn sec" id="cercaBtn">Cerca de mí</button><button class="btn sec hide" id="dupBtn">Duplicados</button><span id="dlDir"></span></div>
         <div class="cuenta" id="cuenta">Cargando…</div>
         <div id="mapawrap" class="hide"><div id="mapa"></div><div class="mapleg" id="mapleg"></div></div>
         <div class="sm hide" id="scrollhint" style="padding:8px 14px 0">Desliza a los lados para ver todas las columnas</div>
@@ -347,6 +361,6 @@ body.conruta{padding-top:46px}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js" defer></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="./config.js"></script>
-<script src="./app.js?v=2.12.0"></script>
+<script src="./app.js?v=2.13.0"></script>
 </body>
 </html>
