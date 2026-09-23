@@ -271,7 +271,7 @@ body.conruta{padding-top:46px}
   .top{flex-wrap:wrap}
   main{padding:16px 12px 50px}
 }
-/* ---------- v2.18.0 ---------- */
+/* ---------- v2.19.0 ---------- */
 .kebab{margin-left:auto;font-size:18px;min-width:44px}
 .acts:has(> .kebab){align-items:center}
 .acts .ai-dir{margin:0 4px 0 auto}
@@ -303,6 +303,25 @@ body.conruta{padding-top:46px}
 .dupgrid .card{margin:0}
 .dupgrid > div > .card{margin:0 0 16px}
 .card:empty{display:none}
+/* v2.19.0 */
+.picker{position:relative}
+.picker .gsug{position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:30;max-height:340px;overflow:auto}
+.picker.buscando::after{content:"";position:absolute;right:12px;top:22px;width:16px;height:16px;margin-top:-8px;border:2px solid var(--line);border-top-color:var(--navy);border-radius:50%;animation:gira .8s linear infinite}
+.selcard{display:flex;gap:12px;align-items:flex-start;border:1px solid var(--sky);background:var(--sky-soft);border-radius:12px;padding:10px 12px}
+.selcard .tx{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.selcard .tx b{color:var(--navy)}
+.selcard .sx{border:0;background:transparent;font-size:18px;line-height:1;color:var(--muted);cursor:pointer;padding:2px 4px}
+.selcard .sx:hover{color:var(--danger)}
+.gsug .gback{color:var(--sky);font-weight:650}
+.comchips{display:flex;gap:4px;flex-wrap:wrap}
+.comchips span{font-size:11.5px;background:var(--sky-soft);color:var(--navy);border-radius:999px;padding:2px 8px;white-space:nowrap}
+.comchips .sin{background:transparent;color:var(--muted);padding-left:0}
+.renc .item .ic.o{background:#E4F4EC;color:var(--ok)}
+.renc .parada{padding:10px 16px 0;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);display:flex;justify-content:space-between;gap:8px;align-items:center}
+.carsel{max-height:46vh;overflow:auto;border:1px solid var(--line);border-radius:12px;margin-top:10px}
+.carsel .item{padding:8px 10px}
+.carsel input[type=checkbox]{width:18px;height:18px;min-height:0;flex:0 0 auto}
+input[type=date],input[type=time],input[type=month],input[type=datetime-local]{cursor:pointer}
 .ksk{min-height:78px}
 .skel{max-width:100%}
 .kpi .skel{margin:0}
@@ -366,6 +385,8 @@ body.conruta{padding-top:46px}
       <button data-t="agenda" aria-selected="false">Agenda</button>
       <button data-t="rutas" aria-selected="false">Rutas</button>
       <button data-t="directorio" aria-selected="false">Directorio</button>
+      <button data-t="pacientes" aria-selected="false">Pacientes</button>
+      <button data-t="productos" aria-selected="false">Productos</button>
       <button data-t="seguimiento" aria-selected="false">Seguimiento</button>
       <button data-t="ventas" aria-selected="false">Ventas</button>
       <button data-t="analitica" aria-selected="false">Analítica</button>
@@ -402,6 +423,7 @@ body.conruta{padding-top:46px}
           <div><label for="fmuni">Municipio</label><select id="fmuni"></select></div>
           <div><label for="fesp">Especialidad</label><select id="fesp"></select></div>
           <div><label for="fest">Estado comercial</label><select id="fest"></select></div>
+          <div id="fcomwrap" class="hide"><label for="fcom">Comercial</label><select id="fcom"></select></div>
           <div><label for="forden">Ordenar por</label>
             <select id="forden">
               <option value="nombre">Nombre</option>
@@ -410,7 +432,7 @@ body.conruta{padding-top:46px}
             </select></div>
         </div>
         <div class="chips" id="chips"></div>
-        <div class="acts" style="padding:12px 14px 0;margin:0"><button class="btn sec" id="nuevoBtn">+ Crear nuevo</button><button class="btn sec" id="mapaBtn">Ver mapa</button><button class="btn sec" id="guardarFiltro">★ Guardar filtro</button><button class="btn sec" id="cercaBtn">Cerca de mí</button><button class="btn sec hide" id="dupBtn">Duplicados</button><button class="btn sec kebab" id="dirtools" title="Filtros, columnas y descargas">⋮</button></div>
+        <div class="acts" style="padding:12px 14px 0;margin:0"><button class="btn sec" id="nuevoBtn">+ Crear nuevo</button><button class="btn sec" id="mapaBtn">Ver mapa</button><button class="btn sec" id="guardarFiltro">★ Guardar filtro</button><button class="btn sec" id="cercaBtn">Cerca de mí</button><button class="btn sec hide" id="dupBtn">Duplicados</button><button class="btn sec kebab" id="dirtools" title="Filtros y columnas">⋮</button></div>
         <div class="cuenta" id="cuenta">Cargando…</div>
         <div id="mapawrap" class="hide"><div id="mapa"></div><div class="mapleg" id="mapleg"></div></div>
         <div class="sm hide" id="scrollhint" style="padding:8px 14px 0">Desliza a los lados para ver todas las columnas</div>
@@ -421,6 +443,8 @@ body.conruta{padding-top:46px}
     </section>
 
     <section id="v-duplicados" class="hide"></section>
+    <section id="v-pacientes" class="hide"></section>
+    <section id="v-productos" class="hide"></section>
     <section id="v-agenda" class="hide"></section>
     <section id="v-rutas" class="hide"></section>
     <section id="v-seguimiento" class="hide"></section>
@@ -451,6 +475,6 @@ body.conruta{padding-top:46px}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js" defer></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="./config.js"></script>
-<script src="./app.js?v=2.18.0"></script>
+<script src="./app.js?v=2.19.0"></script>
 </body>
 </html>
