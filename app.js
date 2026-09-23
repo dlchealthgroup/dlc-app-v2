@@ -87,7 +87,7 @@ $('nav').addEventListener('click', e => {
   ir(b.dataset.t);
 });
 
-function ir(t) {
+var ir = function (t) {
   TAB = t;
   document.querySelectorAll('#nav button[data-t]').forEach(x => x.setAttribute('aria-selected', String(x.dataset.t === t)));
   ['inicio', 'agenda', 'rutas', 'directorio', 'seguimiento', 'config', 'admin'].forEach(k => $('v-' + k).classList.toggle('hide', k !== t));
@@ -98,7 +98,7 @@ function ir(t) {
   if (t === 'seguimiento') cargarSeguimiento();
   if (t === 'config') cargarConfig();
   if (t === 'admin') cargarAdmin();
-}
+};
 
 /* ---------------- inicio ---------------- */
 
@@ -229,6 +229,7 @@ $('chips').addEventListener('click', e => {
 /* ---------------- directorio ---------------- */
 
 async function buscar(reiniciar) {
+  if (typeof MODO_MAPA !== 'undefined' && MODO_MAPA && reiniciar) setTimeout(() => pintarMapa(), 10);
   if (reiniciar) { F.pagina = 0; $('lista').innerHTML = ''; }
   $('cuenta').textContent = 'Buscando…';
   const t0 = performance.now();
@@ -940,13 +941,16 @@ function pintarPlan() {
         <span class="sm">${hm(p.llegada)}–${hm(p.fin)} · ${esc([p.dir, p.municipio].filter(Boolean).join(', '))} · ${p.medicos.length} ${p.medicos.length === 1 ? 'médico' : 'médicos'}</span>
         <span class="sm">${p.medicos.map(m => esc(m.nombre)).join(' · ')}</span></span>
     </div>`).join('')}</div>
-    <div class="acts" style="padding:0 16px 16px">
+    <div id="planmapa" style="height:0;margin:0 16px;border-radius:12px;overflow:hidden"></div>
+    <div class="acts" style="padding:12px 16px 16px">
+      <button class="btn sec" id="planver">Ver la ruta en el mapa</button>
       <a class="btn" href="${enlace}" target="_blank" rel="noopener">Abrir en Google Maps</a>
       <button class="btn sec" id="planag">Guardar en mi agenda</button>
       <button class="btn sec" id="plancerrar">Cerrar</button>
     </div></div>`;
 
   $('plancerrar').onclick = () => { PLAN = null; pintarPlan(); };
+  $('planver').onclick = e => { mapaDelPlan(); e.target.classList.add('hide'); };
   $('planag').onclick = async ev => {
     ev.target.disabled = true; ev.target.textContent = 'Guardando…';
     let n = 0;
@@ -1684,6 +1688,120 @@ document.addEventListener('click', async e => {
   const { error } = await db.auth.updateUser({ password: p1 });
   toast(error ? 'No se ha podido: ' + error.message : 'Contraseña actualizada', !!error);
 });
+
+
+
+/* ============================================================
+   DLC OS 2.0 · Entrega 7: mapa, móvil y avisos de versión
+   ============================================================ */
+
+let MAPA = null, CAPA = null, MODO_MAPA = false, CAPA_RUTA = null;
+const COL_ESTADO = {
+  'Sin contactar': '#0E2F52', 'Presentado': '#2B6CB0', 'Interesado': '#B7791F',
+  'Prescribe': '#12805C', 'No interesado': '#9B2C2C'
+};
+
+/* ---------------- barra inferior en móvil ---------------- */
+
+$('bnav').addEventListener('click', e => {
+  const b = e.target.closest('[data-t]');
+  if (b) ir(b.dataset.t);
+});
+
+const irOriginal = ir;
+ir = function (t) {
+  irOriginal(t);
+  document.querySelectorAll('#bnav [data-t]').forEach(x => x.setAttribute('aria-selected', String(x.dataset.t === t)));
+};
+
+/* ---------------- mapa ---------------- */
+
+$('mapaBtn').addEventListener('click', () => {
+  MODO_MAPA = !MODO_MAPA;
+  $('mapaBtn').textContent = MODO_MAPA ? 'Ver lista' : 'Ver mapa';
+  $('mapawrap').classList.toggle('hide', !MODO_MAPA);
+  $('lista').classList.toggle('hide', MODO_MAPA);
+  $('mas').classList.toggle('hide', MODO_MAPA || F.total <= 50);
+  if (MODO_MAPA) pintarMapa();
+});
+
+$('csvBtn').addEventListener('click', ev => descargarCSV(ev.target));
+
+async function pintarMapa() {
+  if (!window.L) { $('mapleg').textContent = 'El mapa necesita conexión.'; return; }
+  $('mapleg').textContent = 'Cargando puntos…';
+
+  const { data, error } = await db.rpc('mapa_medicos', {
+    q: F.q || null, f_provincia: F.prov || null, f_municipio: F.muni || null,
+    f_estado: F.est || null, f_especialidad: F.esp || null, f_urgentes: !!F.urg
+  });
+  if (error) { $('mapleg').textContent = 'No se ha podido cargar el mapa: ' + error.message; return; }
+
+  if (!MAPA) {
+    MAPA = L.map('mapa', { preferCanvas: true }).setView([41.6, 1.9], 9);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+      { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(MAPA);
+  }
+  if (CAPA) CAPA.remove();
+  CAPA = L.layerGroup().addTo(MAPA);
+
+  const puntos = data || [];
+  puntos.forEach(m => {
+    const col = m.urgente && !m.ultima_visita ? '#D97706' : (COL_ESTADO[m.estado] || '#0E2F52');
+    L.circleMarker([m.lat, m.lon], {
+      radius: m.urgente ? 7 : 5, color: '#fff', weight: 1.5, fillColor: col, fillOpacity: .92
+    }).addTo(CAPA).bindPopup(
+      `<b>${esc(m.nombre)}</b><br>${esc(m.especialidad || '')}<br>${esc(m.centro || '')} ${esc(m.municipio || '')}<br>
+       <span style="color:${col};font-weight:700">${esc(m.estado)}</span><br>
+       <a href="#" onclick="abrirFicha('${m.id}');return false">Abrir ficha</a>`);
+  });
+
+  if (puntos.length) MAPA.fitBounds(puntos.map(m => [m.lat, m.lon]), { padding: [30, 30] });
+  setTimeout(() => MAPA.invalidateSize(), 60);
+
+  $('mapleg').innerHTML =
+    `<span><i style="background:#D97706"></i>Urgente sin visitar</span>` +
+    Object.entries(COL_ESTADO).map(([k, c]) => `<span><i style="background:${c}"></i>${k}</span>`).join('') +
+    `<span style="margin-left:auto"><b>${num(puntos.length)}</b> con ubicación de ${num(F.total)} encontrados</span>`;
+}
+
+/* ---------------- el plan del día, dibujado ---------------- */
+
+function mapaDelPlan() {
+  if (!PLAN || !window.L) return;
+  const caja = $('planmapa');
+  if (!caja) return;
+  if (!caja.dataset.on) {
+    caja.dataset.on = '1'; caja.style.height = 'min(55vh,460px)';
+    const m = L.map('planmapa').setView([PLAN.salida.lat, PLAN.salida.lon], 10);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(m);
+    const pin = (xy, txt, col) => L.marker(xy, { icon: L.divIcon({ className: 'mpin', html: `<span style="background:${col}">${txt}</span>`, iconSize: [24, 24], iconAnchor: [12, 12] }) }).addTo(m);
+    pin([PLAN.salida.lat, PLAN.salida.lon], 'S', '#12805C').bindPopup('Salida · ' + esc(PLAN.salida.nombre));
+    PLAN.paradas.forEach((p, i) => pin(p.xy, String(i + 1), '#0E2F52')
+      .bindPopup(`<b>${i + 1}. ${esc(p.centro)}</b><br>${hm(p.llegada)}–${hm(p.fin)}<br>${p.medicos.map(x => esc(x.nombre)).join('<br>')}`));
+    const linea = [[PLAN.salida.lat, PLAN.salida.lon]].concat(PLAN.paradas.map(p => p.xy), [[PLAN.salida.lat, PLAN.salida.lon]]);
+    L.polyline(linea, { color: '#2B6CB0', weight: 3, dashArray: '6 6' }).addTo(m);
+    m.fitBounds(linea, { padding: [30, 30] });
+    setTimeout(() => m.invalidateSize(), 60);
+  }
+}
+
+/* ---------------- aviso de versión nueva ---------------- */
+
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.getRegistration().then(reg => {
+    if (!reg) return;
+    reg.addEventListener('updatefound', () => {
+      const nuevo = reg.installing;
+      if (!nuevo) return;
+      nuevo.addEventListener('statechange', () => {
+        if (nuevo.state === 'installed' && navigator.serviceWorker.controller) $('nuevaver').classList.remove('hide');
+      });
+    });
+    setInterval(() => reg.update().catch(() => {}), 15 * 60 * 1000);
+  });
+  $('actualizar').onclick = () => location.reload(true);
+}
 
 
 pintarConexion();
