@@ -1,6 +1,6 @@
 /* DLC OS 2.0 · Service worker: cachea la app, nunca los datos. */
-const CACHE = 'dlc-os-2.8.0';
-const FILES = ['./', './index.html', './app.js?v=2.8.0', './config.js', './manifest.webmanifest',
+const CACHE = 'dlc-os-2.9.0';
+const FILES = ['./', './index.html', './app.js?v=2.9.0', './config.js', './manifest.webmanifest',
                './logo.png', './dlc-icon-192.png', './dlc-icon-512.png', './dlc-apple-touch-180.png'];
 
 self.addEventListener('install', e => {

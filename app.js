@@ -63,6 +63,7 @@ async function arrancar() {
   $('hoyfecha').textContent = fechaLarga(new Date()).replace(/^./, c => c.toUpperCase());
 
   $('nuevoBtn').classList.toggle('hide', !puedeCrear());
+  document.querySelectorAll('#nav [data-t="ventas"]').forEach(b => b.classList.toggle('hide', !veVentas()));
   cargarCatalogos();
   pintarRutaBarra();
   cargarInicio();
@@ -91,12 +92,14 @@ $('nav').addEventListener('click', e => {
 var ir = function (t) {
   TAB = t;
   document.querySelectorAll('#nav button[data-t]').forEach(x => x.setAttribute('aria-selected', String(x.dataset.t === t)));
-  ['inicio', 'agenda', 'rutas', 'directorio', 'seguimiento', 'config', 'admin'].forEach(k => $('v-' + k).classList.toggle('hide', k !== t));
+  ['inicio', 'agenda', 'rutas', 'directorio', 'seguimiento', 'ventas', 'analitica', 'config', 'admin'].forEach(k => $('v-' + k).classList.toggle('hide', k !== t));
   window.scrollTo({ top: 0 });
   if (t === 'directorio' && !$('lista').children.length) buscar(true);
   if (t === 'agenda') cargarAgenda();
   if (t === 'rutas') cargarRutas();
   if (t === 'seguimiento') cargarSeguimiento();
+  if (t === 'ventas') cargarVentas();
+  if (t === 'analitica') cargarAnalitica();
   if (t === 'config') cargarConfig();
   if (t === 'admin') cargarAdmin();
 };
@@ -1004,7 +1007,7 @@ document.addEventListener('click', async e => {
    ============================================================ */
 
 let CFG_SEC = 'prefs', ADM_SEC = 'usuarios', USUARIOS = [], CATS = [];
-const AREAS = [['H', 'Inicio'], ['G', 'Agenda'], ['R', 'Rutas'], ['M', 'Directorio'], ['S', 'Visitas'], ['K', 'Configuración']];
+const AREAS = [['H', 'Inicio'], ['G', 'Agenda'], ['R', 'Rutas'], ['M', 'Directorio'], ['S', 'Visitas'], ['V', 'Ventas'], ['K', 'Configuración']];
 const NIVELES = ['Sin acceso', 'Ver', 'Editar', 'Completo'];
 const ROLES = ['Administrador', 'Comercial', 'Televenta', 'Solo consulta', 'Medico'];
 const puedeCatalogos = () => PERFIL && (PERFIL.rol === 'Administrador' || ((PERFIL.areas || {}).K || 0) >= 2);
@@ -1328,11 +1331,11 @@ function editarUsuario(id) {
 
   $('ur').onchange = () => {
     const preset = {
-      'Administrador': { H: 3, G: 3, R: 3, M: 3, S: 3, K: 3 },
-      'Comercial': { H: 2, G: 2, R: 2, M: 2, S: 2, K: 0 },
-      'Televenta': { H: 2, G: 1, R: 1, M: 2, S: 1, K: 0 },
-      'Solo consulta': { H: 1, G: 1, R: 1, M: 1, S: 1, K: 0 },
-      'Medico': { H: 1, G: 0, R: 0, M: 0, S: 0, K: 0 }
+      'Administrador': { H: 3, G: 3, R: 3, M: 3, S: 3, V: 3, K: 3 },
+      'Comercial': { H: 2, G: 2, R: 2, M: 2, S: 2, V: 1, K: 0 },
+      'Televenta': { H: 2, G: 1, R: 1, M: 2, S: 1, V: 3, K: 0 },
+      'Solo consulta': { H: 1, G: 1, R: 1, M: 1, S: 1, V: 1, K: 0 },
+      'Medico': { H: 1, G: 0, R: 0, M: 0, S: 0, V: 0, K: 0 }
     }[$('ur').value] || {};
     AREAS.forEach(([k]) => { const s = $('dbody').querySelector(`[data-area="${k}"]`); if (s) s.value = String(preset[k] || 0); });
   };
@@ -2146,6 +2149,314 @@ function abrirColumnas() {
 }
 
 $('colsBtn').addEventListener('click', abrirColumnas);
+
+
+
+/* ============================================================
+   DLC OS 2.0 · Entrega 10: pedidos, unidades y analítica
+   ============================================================ */
+
+let PRODUCTOS = [], PEDIDOS = [], SIN_ATRIB = [];
+const AN = { dim: 'medico', desde: '', hasta: '', canal: '', producto: '' };
+const puedeVentas = () => PERFIL && (PERFIL.rol === 'Administrador' || ((PERFIL.areas || {}).V || 0) >= 2);
+const veVentas = () => PERFIL && (PERFIL.rol === 'Administrador' || ((PERFIL.areas || {}).V || 0) >= 1 || PERFIL.rol === 'Comercial');
+
+async function cargarProductos() {
+  const { data } = await db.rpc('productos_lista');
+  PRODUCTOS = data || [];
+}
+
+/* ---------------- pedidos ---------------- */
+
+async function cargarVentas() {
+  $('v-ventas').innerHTML = `
+    <div class="saludo"><div><h1>Ventas</h1><div class="fecha">Pedidos y unidades atribuidas</div></div>
+      <div class="acts" style="margin:0">
+        ${puedeVentas() ? '<button class="btn" id="pednuevo">+ Nuevo pedido</button>' : ''}
+        ${PERFIL.rol === 'Administrador' ? '<button class="btn sec" id="prodbtn">Productos</button>' : ''}
+      </div></div>
+    <div class="card" id="cardsinatr"></div>
+    <div class="panel">
+      <div class="filtros">
+        <div><label for="pdesde">Desde</label><input id="pdesde" type="date"></div>
+        <div><label for="phasta">Hasta</label><input id="phasta" type="date"></div>
+        <div><label for="pcanal">Canal</label><select id="pcanal">
+          <option value="">Todos</option><option value="paciente">Recomendación a paciente</option>
+          <option value="centro">Venta a centro</option></select></div>
+      </div>
+      <div class="cuenta" id="pcuenta">Cargando…</div>
+      <div id="pedlista"></div>
+    </div>`;
+
+  if ($('pednuevo')) $('pednuevo').onclick = () => editorPedido();
+  if ($('prodbtn')) $('prodbtn').onclick = editorProductos;
+  ['pdesde', 'phasta', 'pcanal'].forEach(id => $(id).onchange = listaPedidos);
+  await cargarProductos();
+  listaPedidos();
+  pintarSinAtribuir();
+}
+
+async function listaPedidos() {
+  const { data, error } = await db.rpc('pedidos_lista', {
+    p_desde: $('pdesde').value || null, p_hasta: $('phasta').value || null,
+    p_canal: $('pcanal').value || null, lim: 200
+  });
+  if (error) { $('pcuenta').textContent = 'No se ha podido cargar: ' + error.message; return; }
+  PEDIDOS = data || [];
+  const unidades = PEDIDOS.reduce((n, p) => n + (p.unidades || 0), 0);
+  $('pcuenta').innerHTML = `<b>${num(PEDIDOS.length)}</b> pedidos · <b>${num(unidades)}</b> unidades`;
+  $('pedlista').innerHTML = PEDIDOS.length ? PEDIDOS.map(p => `
+    <div class="fila" style="cursor:default;grid-template-columns:minmax(0,1.4fr) minmax(0,1.4fr) auto auto">
+      <span><span class="nm">${esc(p.medico || p.centro || p.contacto || 'Sin atribuir')}</span>
+        <span class="sm">${fechaCorta(p.fecha)} · ${p.canal === 'centro' ? 'Venta a centro' : 'Recomendación'}${p.comercial ? ' · ' + esc(p.comercial) : ''}</span></span>
+      <span class="c2"><span class="sm">${esc(p.productos || '')}</span>
+        <span class="sm">${p.numero ? 'Nº ' + esc(p.numero) : ''} ${esc(p.contacto || '')}</span></span>
+      <span class="c3"><span class="pill p-est">${esc(p.estado)}</span></span>
+      <span><b style="font-size:17px;color:var(--navy)">${num(p.unidades)}</b> <span class="sm">uds.</span></span>
+    </div>`).join('') : '<div class="vacio">Todavía no hay pedidos registrados.</div>';
+}
+
+async function pintarSinAtribuir() {
+  const { data } = await db.rpc('lineas_sin_atribuir');
+  SIN_ATRIB = data || [];
+  if (!SIN_ATRIB.length) { $('cardsinatr').innerHTML = ''; return; }
+  $('cardsinatr').innerHTML = `<h2><span style="color:var(--warn)">Pedidos sin atribuir</span><span class="n">${SIN_ATRIB.length}</span></h2>
+    <p class="sm">No hemos podido identificar al médico. Asígnalo y las métricas se corrigen solas.</p>
+    <div class="lista">${SIN_ATRIB.map(l => `<div class="item" style="cursor:default">
+      <span class="ic w">?</span>
+      <span class="tx"><b>${esc(l.medico_texto || 'Sin indicar')}</b>
+        <span class="sm">${fechaCorta(l.fecha)} · ${num(l.unidades)} uds. · ${esc(l.producto || '')} · ${esc(l.contacto || '')}</span></span>
+      <span class="acts" style="margin:0"><button class="btn sec" data-atr="${l.id}|${esc(l.medico_texto || '')}">Atribuir</button></span>
+    </div>`).join('')}</div>`;
+  $('cardsinatr').querySelectorAll('[data-atr]').forEach(b => b.onclick = () => {
+    const [id, texto] = b.dataset.atr.split('|'); atribuir(id, texto);
+  });
+}
+
+async function atribuir(lineaId, texto) {
+  const { data } = await db.rpc('resolver_medico', { p_texto: texto || '' });
+  const cand = data || [];
+  $('dbody').innerHTML = `
+    <div class="fh"><div><h2>Atribuir a un médico</h2><div class="sm">Texto del pedido: ${esc(texto || '(vacío)')}</div></div>
+      <button class="x" data-cerrar aria-label="Cerrar">✕</button></div>
+    <label for="abusca">Buscar médico</label><input id="abusca" value="${esc(texto || '')}" placeholder="Código o nombre">
+    <div id="acand" class="lista">${cand.map(c => `<button class="item" data-am="${c.id}">
+      <span class="ic">${c.pct}%</span><span class="tx"><b>${esc(c.nombre)}</b><span class="sm">Código ${esc(c.codigo)}</span></span></button>`).join('')
+      || '<div class="vacio">Sin coincidencias. Escribe otro nombre o código.</div>'}</div>`;
+
+  const pintar = lista => {
+    $('acand').innerHTML = lista.length ? lista.map(c => `<button class="item" data-am="${c.id}">
+      <span class="ic">${c.pct}%</span><span class="tx"><b>${esc(c.nombre)}</b><span class="sm">Código ${esc(c.codigo)}</span></span></button>`).join('')
+      : '<div class="vacio">Sin coincidencias.</div>';
+    $('acand').querySelectorAll('[data-am]').forEach(b => b.onclick = async () => {
+      const { data: r, error } = await db.rpc('atribuir_linea', { p_linea: lineaId, p_medico: b.dataset.am });
+      if (error || (r && r.ok === false)) { toast('No se ha podido atribuir', true); return; }
+      $('dlg').close(); toast('Atribuido'); pintarSinAtribuir(); listaPedidos();
+    });
+  };
+  pintar(cand);
+  let t;
+  $('abusca').oninput = e => {
+    clearTimeout(t);
+    t = setTimeout(async () => {
+      const { data: d2 } = await db.rpc('resolver_medico', { p_texto: e.target.value });
+      pintar(d2 || []);
+    }, 300);
+  };
+  $('dlg').showModal();
+}
+
+/* ---------------- alta de pedido ---------------- */
+
+async function editorPedido() {
+  let lineas = [{ producto_id: (PRODUCTOS[0] || {}).id || '', unidades: 1 }];
+  let medico = null;
+
+  const pinta = () => {
+    $('dbody').innerHTML = `
+      <div class="fh"><div><h2>Nuevo pedido</h2><div class="sm">Las unidades se atribuyen al médico y a su comercial</div></div>
+        <button class="x" data-cerrar aria-label="Cerrar">✕</button></div>
+      <div class="g2">
+        <div><label for="pfecha">Fecha</label><input id="pfecha" type="date" value="${hoyISO()}"></div>
+        <div><label for="pcan">Canal</label><select id="pcan">
+          <option value="paciente">Recomendación a paciente</option>
+          <option value="centro">Venta a centro (con descuento)</option></select></div>
+      </div>
+      <div id="zonapac">
+        <label for="pmed">Médico que lo recomienda</label>
+        <input id="pmed" placeholder="Código o nombre" value="${esc(medico ? medico.nombre : '')}">
+        <div id="pmedcand" class="sm" style="margin-top:6px">${medico
+          ? `<b style="color:var(--ok)">✓ ${esc(medico.nombre)}</b> · código ${esc(medico.codigo)}`
+          : 'Escribe y elige de la lista. Si no aparece, el pedido queda pendiente de atribuir.'}</div>
+        <div class="g2" style="margin-top:10px">
+          <div><label for="pcnom">Paciente (nombre)</label><input id="pcnom"></div>
+          <div><label for="pctel">Teléfono</label><input id="pctel" inputmode="tel"></div>
+        </div>
+      </div>
+      <label>Líneas</label>
+      <div id="plineas">${lineas.map((l, i) => `<div class="g2" style="margin-bottom:8px">
+        <select data-lp="${i}">${PRODUCTOS.map(p => `<option value="${p.id}" ${l.producto_id === p.id ? 'selected' : ''}>${esc(p.nombre)}</option>`).join('')
+          || '<option value="">Sin productos: créalos primero</option>'}</select>
+        <div style="display:flex;gap:8px"><input data-lu="${i}" type="number" min="1" value="${l.unidades}" placeholder="Unidades">
+          ${lineas.length > 1 ? `<button type="button" class="btn sec" data-lx="${i}">✕</button>` : ''}</div>
+      </div>`).join('')}</div>
+      <div class="acts"><button type="button" class="btn sec" id="plmas">+ Añadir línea</button></div>
+      <label for="pnota">Nota</label><input id="pnota">
+      <div class="acts" style="justify-content:flex-end">
+        <button class="btn sec" data-cerrar>Cancelar</button>
+        <button class="btn" id="pguardar">Guardar pedido</button></div>`;
+
+    const leer = () => lineas = [...$('plineas').children].map((d, i) => ({
+      producto_id: d.querySelector(`[data-lp="${i}"]`).value,
+      unidades: +d.querySelector(`[data-lu="${i}"]`).value || 1
+    }));
+
+    $('plmas').onclick = () => { leer(); lineas.push({ producto_id: (PRODUCTOS[0] || {}).id || '', unidades: 1 }); pinta(); };
+    $('plineas').querySelectorAll('[data-lx]').forEach(b => b.onclick = () => { leer(); lineas.splice(+b.dataset.lx, 1); pinta(); });
+    $('pcan').onchange = () => $('zonapac').classList.toggle('hide', $('pcan').value === 'centro');
+
+    let t;
+    $('pmed').oninput = e => {
+      clearTimeout(t);
+      t = setTimeout(async () => {
+        const { data } = await db.rpc('resolver_medico', { p_texto: e.target.value });
+        const c = data || [];
+        $('pmedcand').innerHTML = c.length
+          ? c.map(x => `<button type="button" class="chip" data-pm='${esc(JSON.stringify(x))}'>${esc(x.nombre)} · ${x.pct}%</button>`).join(' ')
+          : 'Sin coincidencias: quedará pendiente de atribuir.';
+        $('pmedcand').querySelectorAll('[data-pm]').forEach(b => b.onclick = () => {
+          medico = JSON.parse(b.dataset.pm); leer(); pinta();
+        });
+      }, 300);
+    };
+
+    $('pguardar').onclick = async ev => {
+      leer();
+      ev.target.disabled = true; ev.target.textContent = 'Guardando…';
+      let contacto_id = null;
+      if ($('pcan').value === 'paciente' && $('pcnom').value.trim()) {
+        const { data: c } = await db.from('contactos')
+          .insert({ nombre: $('pcnom').value.trim().toUpperCase(), telefono: $('pctel').value.trim() })
+          .select('id').single();
+        contacto_id = c ? c.id : null;
+      }
+      const { data: r, error } = await db.rpc('guardar_pedido', { p: {
+        fecha: $('pfecha').value, canal: $('pcan').value,
+        medico_id: medico ? medico.id : null, medico_texto: $('pmed') ? $('pmed').value.trim() : '',
+        contacto_id, nota: $('pnota').value.trim(),
+        lineas: lineas.filter(l => l.producto_id), op_id: 'p-' + Date.now()
+      }});
+      ev.target.disabled = false; ev.target.textContent = 'Guardar pedido';
+      if (error || (r && r.ok === false)) { toast('No se ha podido guardar: ' + ((error && error.message) || 'sin permiso'), true); return; }
+      $('dlg').close();
+      toast(medico ? 'Pedido guardado y atribuido' : 'Pedido guardado · pendiente de atribuir');
+      listaPedidos(); pintarSinAtribuir();
+    };
+  };
+  pinta();
+  $('dlg').showModal();
+}
+
+/* ---------------- productos ---------------- */
+
+async function editorProductos() {
+  await cargarProductos();
+  $('dbody').innerHTML = `
+    <div class="fh"><div><h2>Productos</h2><div class="sm">Catálogo usado en pedidos, muestras y analítica</div></div>
+      <button class="x" data-cerrar aria-label="Cerrar">✕</button></div>
+    <div class="lista">${PRODUCTOS.map(p => `<div class="item" style="cursor:default">
+      <span class="ic">◧</span><span class="tx"><b>${esc(p.nombre)}</b>
+        <span class="sm">${esc(p.presentacion || '')} ${p.referencia ? '· ref. ' + esc(p.referencia) : ''}</span></span>
+      <span class="acts" style="margin:0"><button class="btn sec" data-pdel="${p.id}">Desactivar</button></span></div>`).join('')
+      || '<div class="vacio">Todavía no hay productos.</div>'}</div>
+    <div class="g2" style="margin-top:12px">
+      <div><label for="prn">Nombre</label><input id="prn" placeholder="Nombre del producto"></div>
+      <div><label for="prp">Presentación</label><input id="prp" placeholder="Caja de 30 cápsulas"></div>
+    </div>
+    <div class="acts" style="justify-content:flex-end"><button class="btn" id="pradd">Añadir producto</button></div>`;
+
+  $('pradd').onclick = async ev => {
+    if (!$('prn').value.trim()) { toast('Escribe el nombre', true); return; }
+    ev.target.disabled = true;
+    const { data: r, error } = await db.rpc('guardar_producto', { p: { nombre: $('prn').value.trim(), presentacion: $('prp').value.trim() } });
+    ev.target.disabled = false;
+    if (error || (r && r.ok === false)) { toast('No se ha podido crear', true); return; }
+    toast('Producto añadido'); editorProductos();
+  };
+  $('dbody').querySelectorAll('[data-pdel]').forEach(b => b.onclick = async () => {
+    await db.rpc('guardar_producto', { p: { id: b.dataset.pdel, activo: false } });
+    toast('Producto desactivado'); editorProductos();
+  });
+  $('dlg').showModal();
+}
+
+/* ---------------- analítica ---------------- */
+
+async function cargarAnalitica() {
+  $('v-analitica').innerHTML = `
+    <div class="saludo"><div><h1>Analítica</h1><div class="fecha">Unidades por médico, comercial, producto o zona</div></div>
+      <div class="acts" style="margin:0"><button class="btn sec" id="ancsv">Descargar CSV</button></div></div>
+    <div class="panel">
+      <div class="filtros">
+        <div><label for="adim">Ver por</label><select id="adim">
+          <option value="medico">Médico</option><option value="comercial">Comercial</option>
+          <option value="producto">Producto</option><option value="municipio">Municipio</option>
+          <option value="mes">Mes</option><option value="canal">Canal</option></select></div>
+        <div><label for="adesde">Desde</label><input id="adesde" type="date"></div>
+        <div><label for="ahasta">Hasta</label><input id="ahasta" type="date"></div>
+        <div><label for="acanal">Canal</label><select id="acanal">
+          <option value="">Todos</option><option value="paciente">Recomendación</option>
+          <option value="centro">Venta a centro</option></select></div>
+      </div>
+      <div class="cuenta" id="acuenta">Calculando…</div>
+      <div id="aserie" style="padding:14px"></div>
+      <div id="atabla"></div>
+    </div>`;
+  ['adim', 'adesde', 'ahasta', 'acanal'].forEach(id => $(id).onchange = pintarAnalitica);
+  $('ancsv').onclick = () => {
+    const filas = (window.__AN || []).map(f => ({ concepto: f.nombre, unidades: f.unidades }));
+    if (!filas.length) { toast('Nada que exportar', true); return; }
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([aCSV(filas)], { type: 'text/csv;charset=utf-8' }));
+    a.download = 'DLC_unidades_' + hoyISO() + '.csv'; a.click();
+    toast('Descargado');
+  };
+  pintarAnalitica();
+}
+
+async function pintarAnalitica() {
+  $('acuenta').textContent = 'Calculando…';
+  const { data, error } = await db.rpc('analitica_unidades', {
+    p_dim: $('adim').value, p_desde: $('adesde').value || null, p_hasta: $('ahasta').value || null,
+    p_canal: $('acanal').value || null, lim: 50
+  });
+  if (error) { $('acuenta').textContent = 'No se ha podido calcular: ' + error.message; return; }
+
+  const filas = data.filas || [];
+  window.__AN = filas;
+  $('acuenta').innerHTML = `<b>${num(data.total)}</b> unidades · ${filas.length} ${$('adim').value === 'medico' ? 'médicos' : 'conceptos'}`;
+
+  const serie = data.serie || [];
+  if (serie.length > 1) {
+    const max = Math.max(...serie.map(s => s.unidades));
+    $('aserie').innerHTML = `<div style="display:flex;gap:6px;align-items:flex-end;height:120px">${
+      serie.map(s => `<div style="flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:4px">
+        <span class="sm">${num(s.unidades)}</span>
+        <div style="width:100%;background:var(--sky);border-radius:6px 6px 0 0;height:${Math.round(s.unidades / max * 84)}px"></div>
+        <span class="sm">${esc(s.mes.slice(5))}/${esc(s.mes.slice(2, 4))}</span></div>`).join('')}</div>`;
+  } else $('aserie').innerHTML = '';
+
+  const max = filas.length ? filas[0].unidades : 1;
+  $('atabla').innerHTML = filas.length ? filas.map((f, i) => `
+    <div class="fila" style="cursor:default;grid-template-columns:36px minmax(0,1fr) 120px auto">
+      <span class="sm">${i + 1}</span>
+      <span><span class="nm">${esc(f.nombre)}</span>
+        <span style="display:block;height:5px;border-radius:3px;background:var(--sky-soft);margin-top:5px">
+          <span style="display:block;height:5px;border-radius:3px;background:var(--sky);width:${Math.round(f.unidades / max * 100)}%"></span></span></span>
+      <span class="sm">${Math.round(f.unidades / (data.total || 1) * 100)}% del total</span>
+      <span><b style="font-size:17px;color:var(--navy)">${num(f.unidades)}</b> <span class="sm">uds.</span></span>
+    </div>`).join('') : '<div class="vacio">Sin unidades en este periodo.</div>';
+}
 
 
 pintarConexion();
