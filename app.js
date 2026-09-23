@@ -64,6 +64,7 @@ async function arrancar() {
 
   $('nuevoBtn').classList.toggle('hide', !puedeCrear());
   cargarCatalogos();
+  pintarRutaBarra();
   cargarInicio();
   cargarFiltros();
 }
@@ -120,20 +121,24 @@ async function cargarInicio() {
   if (error) { $('c-agenda').innerHTML = `<div class="vacio">No se ha podido cargar: ${esc(error.message)}</div>`; return; }
   const k = data.kpis;
 
-  const kpi = (n, t, cls, accion) =>
+  const kpi = (n, t, cls, accion, extra) =>
     `<div class="kpi ${cls || ''} ${accion ? 'click' : ''}" ${accion ? `data-k="${accion}"` : ''}>
-       <b>${typeof n === 'string' ? n : num(n)}</b><span>${t}</span></div>`;
+       <b>${typeof n === 'string' ? n : num(n)}</b><span>${esc(t.charAt(0).toUpperCase() + t.slice(1))}</span>${extra || ''}</div>`;
 
-  $('kpis').innerHTML =
-    kpi(`${k.citas_hechas}/${k.citas_hoy}`, 'citas de hoy visitadas') +
-    kpi(k.urgentes, 'urgentes sin visitar', k.urgentes ? 'warn' : 'ok', 'urgentes') +
-    kpi(k.visitas_semana, 'visitas esta semana') +
-    kpi(k.visitas_mes, 'visitas este mes') +
-    kpi(k.interesados, 'médicos interesados', 'ok', 'interesados') +
-    kpi(k.sin_contactar, 'sin contactar', '', 'sin_contactar') +
-    kpi(k.medicos, 'médicos en tu cartera', '', 'todos') +
-    (PERFIL.rol === 'Administrador' && k.pendientes_unificar
-      ? kpi(k.pendientes_unificar, 'pendientes de unificar', 'warn') : '');
+  const cfg = kpiConfig().filter(x => x.on);
+  $('kpis').innerHTML = cfg.map(x => {
+    if (x.filtro) return `<div class="kpi click" data-kf="${esc(JSON.stringify(x.filtro))}"><b class="cont">…</b>
+      <span>${esc(x.t || textoFiltro(x.filtro))}</span></div>`;
+    const c = KPI_CAT.find(y => y.id === x.id);
+    if (!c || (c.admin && PERFIL.rol !== 'Administrador')) return '';
+    return kpi(c.v(k), x.t || c.t, c.cls ? c.cls(k) : '', c.h);
+  }).join('') + `<div class="kpi" style="display:grid;place-items:center;border-style:dashed">
+      <button class="kcfg" data-k="cfgkpis">⚙ Personalizar indicadores</button></div>`;
+
+  document.querySelectorAll('#kpis [data-kf]').forEach(async el => {
+    const n = await contarFiltro(JSON.parse(el.dataset.kf));
+    const b = el.querySelector('.cont'); if (b) b.textContent = num(n);
+  });
 
   tarjeta($('c-agenda'), 'Tu agenda de hoy', data.agenda_hoy.length,
     data.agenda_hoy.map(a => itemHTML(a.medico_id, a.hora ? esc(a.hora).slice(0, 5) : '·',
@@ -159,8 +164,11 @@ async function cargarInicio() {
 }
 
 $('v-inicio').addEventListener('click', e => {
+  const kf = e.target.closest('[data-kf]');
+  if (kf) { aplicarFiltroGuardado(JSON.parse(kf.dataset.kf)); return; }
   const k = e.target.closest('[data-k]');
   if (k) {
+    if (k.dataset.k === 'cfgkpis') { abrirKpis(); return; }
     Object.assign(F, { q: '', prov: '', muni: '', esp: '', est: '', urg: false, orden: 'nombre' });
     if (k.dataset.k === 'urgentes') { F.urg = true; F.orden = 'urgentes'; }
     if (k.dataset.k === 'interesados') F.est = 'Interesado';
@@ -946,11 +954,13 @@ function pintarPlan() {
       <button class="btn sec" id="planver">Ver la ruta en el mapa</button>
       <a class="btn" href="${enlace}" target="_blank" rel="noopener">Abrir en Google Maps</a>
       <button class="btn sec" id="planag">Guardar en mi agenda</button>
+      <button class="btn" id="planempezar">▶ Empezar ruta</button>
       <button class="btn sec" id="plancerrar">Cerrar</button>
     </div></div>`;
 
   $('plancerrar').onclick = () => { PLAN = null; pintarPlan(); };
   $('planver').onclick = e => { mapaDelPlan(); e.target.classList.add('hide'); };
+  $('planempezar').onclick = () => empezarRuta();
   $('planag').onclick = async ev => {
     ev.target.disabled = true; ev.target.textContent = 'Guardando…';
     let n = 0;
@@ -1244,7 +1254,8 @@ async function pintarCatalogos() {
   $('cfgcuerpo').querySelectorAll('[data-vtog]').forEach(b => b.onclick = async () => {
     const [id, activo] = b.dataset.vtog.split('|');
     await db.rpc('guardar_valor', { p: { id, activo: activo === '1' } });
-    cargarCatalogos(); pintarCatalogos();
+    cargarCatalogos();
+  pintarRutaBarra(); pintarCatalogos();
   });
   $('cfgcuerpo').querySelectorAll('[data-vdel]').forEach(b => b.onclick = async () => {
     if (!confirm('¿Eliminar este valor? Las fichas y visitas que ya lo usan lo conservan, pero dejará de aparecer.')) return;
@@ -1802,6 +1813,185 @@ if ('serviceWorker' in navigator) {
   });
   $('actualizar').onclick = () => location.reload(true);
 }
+
+
+
+/* ============================================================
+   DLC OS 2.0 · Entrega 8: ruta en curso, indicadores e filtros guardados
+   ============================================================ */
+
+/* ---------------- indicadores personalizables ---------------- */
+
+const KPI_CAT = [
+  { id: 'citas',        t: 'citas de hoy visitadas',   v: k => `${k.citas_hechas}/${k.citas_hoy}` },
+  { id: 'urgentes',     t: 'urgentes sin visitar',     v: k => k.urgentes, cls: k => k.urgentes ? 'warn' : 'ok', h: 'urgentes' },
+  { id: 'visitas_sem',  t: 'visitas esta semana',      v: k => k.visitas_semana },
+  { id: 'visitas_mes',  t: 'visitas este mes',         v: k => k.visitas_mes },
+  { id: 'interesados',  t: 'médicos interesados',      v: k => k.interesados, cls: () => 'ok', h: 'interesados' },
+  { id: 'sin_contactar', t: 'sin contactar',           v: k => k.sin_contactar, h: 'sin_contactar' },
+  { id: 'cartera',      t: 'médicos en tu cartera',    v: k => k.medicos, h: 'todos' },
+  { id: 'dups',         t: 'pendientes de unificar',   v: k => k.pendientes_unificar, cls: () => 'warn', admin: true }
+];
+const KPI_DEF = ['citas', 'urgentes', 'visitas_sem', 'visitas_mes', 'interesados', 'sin_contactar', 'cartera', 'dups'];
+
+const kpiConfig = () => {
+  const p = (PERFIL.preferencias || {}).kpis;
+  if (Array.isArray(p) && p.length) return p;
+  return KPI_CAT.map(k => ({ id: k.id, on: KPI_DEF.includes(k.id), t: '' }));
+};
+
+async function guardarKpis(lista) {
+  const prefs = Object.assign({}, PERFIL.preferencias || {}, { kpis: lista });
+  const { data, error } = await db.rpc('guardar_preferencias', { p: prefs });
+  if (error) { toast('No se ha podido guardar: ' + error.message, true); return false; }
+  PERFIL.preferencias = data || prefs;
+  return true;
+}
+
+/** Cuenta los médicos de un filtro guardado. */
+async function contarFiltro(f) {
+  const { data } = await db.rpc('buscar_medicos', {
+    q: f.q || null, f_provincia: f.prov || null, f_municipio: f.muni || null,
+    f_estado: f.est || null, f_especialidad: f.esp || null, f_area: null,
+    f_urgentes: !!f.urg, f_mios: false, f_sin_visitar: !!f.sin, orden: 'nombre', lim: 1, desplaz: 0
+  });
+  return data ? data.total : 0;
+}
+
+function textoFiltro(f) {
+  const p = [];
+  if (f.urg) p.push('urgentes');
+  if (f.sin) p.push('sin visitar');
+  if (f.est) p.push(f.est);
+  if (f.esp) p.push(f.esp);
+  if (f.muni) p.push(f.muni); else if (f.prov) p.push(f.prov);
+  if (f.q) p.push('“' + f.q + '”');
+  return p.join(' · ') || 'todos los médicos';
+}
+
+function abrirKpis() {
+  let D = kpiConfig().slice();
+  KPI_CAT.forEach(k => { if (!D.some(x => x.id === k.id)) D.push({ id: k.id, on: false, t: '' }); });
+
+  const pinta = () => {
+    $('dbody').innerHTML = `
+      <div class="fh"><div><h2>Personalizar indicadores</h2>
+        <div class="sm">Elige cuáles ver en Inicio, ordénalos y cambia su texto si quieres</div></div>
+        <button class="x" data-cerrar aria-label="Cerrar">✕</button></div>
+      <div class="lista">${D.map((x, i) => {
+        const k = KPI_CAT.find(y => y.id === x.id);
+        if (k && k.admin && PERFIL.rol !== 'Administrador') return '';
+        return `<div class="item" style="cursor:default;${x.on ? '' : 'opacity:.55'}">
+          <input type="checkbox" data-kon="${i}" ${x.on ? 'checked' : ''} style="width:18px;height:18px;min-height:0">
+          <span class="tx"><input data-kt="${i}" value="${esc(x.t)}" placeholder="${esc(k ? k.t : (x.filtro ? textoFiltro(x.filtro) : ''))}">
+            ${x.filtro ? `<span class="sm">Filtro guardado · ${esc(textoFiltro(x.filtro))}</span>` : ''}</span>
+          <span class="acts" style="margin:0">
+            <button class="btn sec" data-kmv="${i}|-1">↑</button>
+            <button class="btn sec" data-kmv="${i}|1">↓</button>
+            ${x.filtro ? `<button class="btn sec" data-kdel="${i}">Eliminar</button>` : ''}</span></div>`;
+      }).join('')}</div>
+      <div class="acts" style="justify-content:flex-end">
+        <button class="btn sec" id="kres">Restaurar</button>
+        <button class="btn" id="kok">Guardar</button></div>`;
+
+    const leer = () => {
+      $('dbody').querySelectorAll('[data-kt]').forEach(i => D[+i.dataset.kt].t = i.value.trim());
+      $('dbody').querySelectorAll('[data-kon]').forEach(i => D[+i.dataset.kon].on = i.checked);
+    };
+    $('dbody').querySelectorAll('[data-kmv]').forEach(b => b.onclick = () => {
+      leer();
+      const [i, dir] = b.dataset.kmv.split('|').map(Number);
+      const j = i + dir; if (j < 0 || j >= D.length) return;
+      [D[i], D[j]] = [D[j], D[i]]; pinta();
+    });
+    $('dbody').querySelectorAll('[data-kdel]').forEach(b => b.onclick = () => { leer(); D.splice(+b.dataset.kdel, 1); pinta(); });
+    $('dbody').querySelectorAll('[data-kon]').forEach(c => c.onchange = () => { leer(); pinta(); });
+    $('kres').onclick = () => { D = KPI_CAT.map(k => ({ id: k.id, on: KPI_DEF.includes(k.id), t: '' })); pinta(); };
+    $('kok').onclick = async ev => {
+      leer(); ev.target.disabled = true; ev.target.textContent = 'Guardando…';
+      const ok = await guardarKpis(D.map(x => ({ id: x.id, on: x.on, t: x.t, ...(x.filtro ? { filtro: x.filtro } : {}) })));
+      ev.target.disabled = false; ev.target.textContent = 'Guardar';
+      if (!ok) return;
+      $('dlg').close(); toast('Indicadores guardados'); cargarInicio();
+    };
+  };
+  pinta();
+  $('dlg').showModal();
+}
+
+/* ---------------- guardar el filtro actual como indicador ---------------- */
+
+function filtroActual() {
+  const f = {};
+  if (F.q) f.q = F.q;
+  if (F.prov) f.prov = F.prov;
+  if (F.muni) f.muni = F.muni;
+  if (F.esp) f.esp = F.esp;
+  if (F.est) f.est = F.est;
+  if (F.urg) f.urg = true;
+  return f;
+}
+
+$('guardarFiltro').addEventListener('click', async ev => {
+  const f = filtroActual();
+  if (!Object.keys(f).length) { toast('Aplica algún filtro antes de guardarlo', true); return; }
+  const nombre = prompt('Nombre del indicador:', textoFiltro(f).slice(0, 40));
+  if (nombre === null) return;
+  ev.target.disabled = true;
+  const lista = kpiConfig().concat([{ id: 'f:' + Date.now().toString(36), on: true, t: nombre.trim() || textoFiltro(f), filtro: f }]);
+  const ok = await guardarKpis(lista);
+  ev.target.disabled = false;
+  if (ok) { toast('Guardado como indicador en Inicio'); cargarInicio(); }
+});
+
+function aplicarFiltroGuardado(f) {
+  Object.assign(F, { q: '', prov: '', muni: '', esp: '', est: '', urg: false, orden: 'nombre', pagina: 0 });
+  if (f.q) { F.q = f.q; $('q').value = f.q; }
+  ['prov', 'muni', 'esp', 'est'].forEach(k => { if (f[k]) { F[k] = f[k]; const s = $('f' + k); if (s) s.value = f[k]; } });
+  if (f.urg) F.urg = true;
+  ir('directorio'); buscar(true);
+}
+
+/* ---------------- ruta en curso ---------------- */
+
+const RKEY = () => 'dlc-ruta-' + (PERFIL ? PERFIL.id : '');
+const rutaActiva = () => { try { return JSON.parse(localStorage.getItem(RKEY()) || 'null'); } catch (e) { return null; } };
+const durTxt = ms => { const m = Math.floor(ms / 60000); return (m >= 60 ? Math.floor(m / 60) + ' h ' : '') + (m % 60) + ' min'; };
+
+async function pintarRutaBarra() {
+  const a = rutaActiva(), el = $('rutabar');
+  if (!a) { el.classList.add('hide'); document.body.classList.remove('conruta'); return; }
+  el.classList.remove('hide'); document.body.classList.add('conruta');
+
+  let hechas = a.hechas || 0;
+  if (navigator.onLine) {
+    const { data } = await db.from('visitas').select('medico_id').eq('fecha', a.fecha);
+    if (data) hechas = new Set(data.filter(v => a.codes.includes(v.medico_id)).map(v => v.medico_id)).size;
+  }
+  el.innerHTML = `<span>● <b>En ruta: ${esc(a.nombre)}</b> · <span class="rt">${durTxt(Date.now() - a.inicio)}</span> · ${hechas} de ${a.codes.length} visitados</span>
+    <span class="acts" style="margin:0"><button class="btn sec" id="rbver">Ver ruta</button><button class="btn dang" id="rbfin">Finalizar</button></span>`;
+  $('rbver').onclick = () => { ir('rutas'); if (PLAN) pintarPlan(); };
+  $('rbfin').onclick = async () => {
+    if (!confirm(`¿Finalizar la ruta "${a.nombre}"?\n\nTiempo: ${durTxt(Date.now() - a.inicio)}\nVisitados: ${hechas} de ${a.codes.length}\n\nNo se puede reanudar.`)) return;
+    localStorage.removeItem(RKEY());
+    pintarRutaBarra();
+    toast(`Ruta finalizada · ${durTxt(Date.now() - a.inicio)} · ${hechas} de ${a.codes.length}`);
+  };
+}
+
+function empezarRuta() {
+  if (rutaActiva()) { toast('Ya tienes una ruta en curso. Finalízala antes de empezar otra.', true); return; }
+  if (!PLAN) return;
+  const codes = PLAN.paradas.flatMap(p => p.medicos.map(m => m.id));
+  const nombre = (RUTAS.find(r => r.id === PLAN.rutaId) || {}).nombre || 'Ruta del día';
+  localStorage.setItem(RKEY(), JSON.stringify({ nombre, inicio: Date.now(), fecha: hoyISO(), codes }));
+  pintarRutaBarra();
+  toast('Ruta iniciada. ¡Buena ruta!');
+  const p = PLAN.paradas[0];
+  if (p) window.open('https://www.google.com/maps/dir/?api=1&destination=' + p.xy.join(','), '_blank', 'noopener');
+}
+
+setInterval(() => { if (rutaActiva()) pintarRutaBarra(); }, 60000);
 
 
 pintarConexion();
