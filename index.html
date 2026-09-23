@@ -271,7 +271,7 @@ body.conruta{padding-top:46px}
   .top{flex-wrap:wrap}
   main{padding:16px 12px 50px}
 }
-/* ---------- v2.19.0 ---------- */
+/* ---------- v2.20.0 ---------- */
 .kebab{margin-left:auto;font-size:18px;min-width:44px}
 .acts:has(> .kebab){align-items:center}
 .acts .ai-dir{margin:0 4px 0 auto}
@@ -303,7 +303,23 @@ body.conruta{padding-top:46px}
 .dupgrid .card{margin:0}
 .dupgrid > div > .card{margin:0 0 16px}
 .card:empty{display:none}
-/* v2.19.0 */
+/* v2.20.0 */
+.dgrid-wrap{overflow-x:auto}
+.dgrid{display:grid;min-width:100%}
+.dgrid .dh,.dgrid .dr{display:grid;grid-template-columns:var(--cols);gap:14px;align-items:center;padding:10px 16px;border-bottom:1px solid var(--line);text-align:left}
+.dgrid .dh{font-size:11.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);background:var(--bg);padding-top:9px;padding-bottom:9px}
+.dgrid .dr{background:var(--panel);border-left:0;border-right:0;border-top:0;width:100%;font:inherit;color:var(--ink);cursor:pointer;font-size:13.5px}
+.dgrid .dr:hover{background:var(--sky-soft)}
+.dgrid .dr > span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dgrid .dr > span > .sm{display:block;overflow:hidden;text-overflow:ellipsis}
+.dgrid .num{text-align:right;font-variant-numeric:tabular-nums}
+.dgrid .vac{color:var(--muted)}
+.dgrid.prods{--cols:52px minmax(200px,2fr) minmax(90px,1fr) 100px 60px 110px 90px;min-width:760px}
+.dgrid.pacs{--cols:minmax(140px,1.5fr) 96px 100px minmax(120px,1.2fr) 100px minmax(120px,1.2fr) 96px 60px 50px 90px;min-width:1080px}
+.dgrid.pacs .dh,.dgrid.pacs .dr{gap:10px}
+.envbox{border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin-top:12px;background:var(--panel)}
+.envbox .g2{margin-top:6px}
+/* v2.20.0 */
 .picker{position:relative}
 .picker .gsug{position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:30;max-height:340px;overflow:auto}
 .picker.buscando::after{content:"";position:absolute;right:12px;top:22px;width:16px;height:16px;margin-top:-8px;border:2px solid var(--line);border-top-color:var(--navy);border-radius:50%;animation:gira .8s linear infinite}
@@ -475,6 +491,6 @@ input[type=date],input[type=time],input[type=month],input[type=datetime-local]{c
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js" defer></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="./config.js"></script>
-<script src="./app.js?v=2.19.0"></script>
+<script src="./app.js?v=2.20.0"></script>
 </body>
 </html>

@@ -963,7 +963,7 @@ function pintarPlan() {
     navActual() === 'google' ? PLAN.paradas.map(p => p.xy) : null);
 
   $('rplan').innerHTML = `<div class="card">
-    <h2>Plan de hoy<span class="n">${total} ${total === 1 ? 'médico' : 'médicos'}</span></h2>
+    <h2>${PLAN.fecha && PLAN.fecha !== hoyISO() ? 'Plan para el ' + fechaLarga(new Date(PLAN.fecha + 'T00:00:00')) : 'Plan de hoy'}<span class="n">${total} ${total === 1 ? 'médico' : 'médicos'}</span></h2>
     <p class="sm">Salida de ${esc(PLAN.salida.nombre)} a las ${PLAN.inicio != null ? hm(PLAN.inicio) : PLANCFG().salida} · ${PLAN.paradas.length} ${PLAN.paradas.length === 1 ? 'parada' : 'paradas'} ·
       vuelta sobre las ${hm(PLAN.fin)} · <button class="kcfg" id="planhora">⚙ Cambiar horario</button></p>
     <div class="lista">${PLAN.paradas.map((p, i) => `<div class="item" style="cursor:default">
@@ -978,23 +978,23 @@ function pintarPlan() {
       <button class="btn sec" id="planver">Ver la ruta en el mapa</button>
       <a class="btn" href="${enlace}" target="_blank" rel="noopener">Abrir en ${esc((NAVEGADORES.find(n => n[0] === navActual()) || [])[1] || 'el mapa')}</a>
       <button class="btn sec" id="planag">Guardar en mi agenda</button>
-      <button class="btn" id="planempezar">▶ Empezar ruta</button>
+      ${!PLAN.fecha || PLAN.fecha === hoyISO() ? '<button class="btn" id="planempezar">▶ Empezar ruta</button>' : ''}
       <button class="btn sec" id="plancerrar">Cerrar</button>
     </div></div>`;
 
   $('plancerrar').onclick = () => { PLAN = null; pintarPlan(); };
   $('planver').onclick = e => { mapaDelPlan(); e.target.classList.add('hide'); };
   if ($('planhora')) $('planhora').onclick = abrirHorarioPlan;
-  $('planempezar').onclick = () => empezarRuta();
+  if ($('planempezar')) $('planempezar').onclick = () => empezarRuta();
   $('planag').onclick = async ev => {
     ev.target.disabled = true; ev.target.textContent = 'Guardando…';
     let n = 0;
     for (const p of PLAN.paradas) {
       for (const m of p.medicos) {
         await escribir('guardar_cita', { p: {
-          medico_id: m.id, fecha: hoyISO(), hora: hm(p.llegada), centro_nombre: p.centro,
+          medico_id: m.id, fecha: PLAN.fecha || hoyISO(), hora: hm(p.llegada), centro_nombre: p.centro,
           estado: 'Planificada', origen: 'Plan del día',
-          op_id: 'c-' + m.id + '-' + hoyISO()
+          op_id: 'c-' + m.id + '-' + (PLAN.fecha || hoyISO())
         }});
         n++;
       }
@@ -3078,7 +3078,8 @@ function abrirHorarioPlan() {
     const { data } = await db.rpc('guardar_preferencias', { p: prefs });
     PERFIL.preferencias = data || prefs;
     $('dlg').close(); toast('Horario guardado');
-    if (PLAN && PLAN.rutaId) {
+    if (ULTIMO_PLAN) construirPlan(ULTIMO_PLAN.conXY, ULTIMO_PLAN.rutaId, null, ULTIMO_PLAN.opts);
+    else if (PLAN && PLAN.rutaId) {
       if (typeof PLAN.rutaId === 'string' && PROPUESTAS && PROPUESTAS[PLAN.rutaId]) planDesdeLista(PROPUESTAS[PLAN.rutaId], PLAN.rutaId);
       else planificar(PLAN.rutaId, $('rnueva') || document.createElement('button'));
     }
@@ -4991,11 +4992,15 @@ async function editorPedido(pedido) {
   // Datos del formulario que se conservan al repintar
   const form = { fecha: ped ? ped.fecha : hoyISO(), canal: ped ? ped.canal : 'paciente', forma_pago: ped ? ped.forma_pago : '',
     descuento: ped ? (ped.descuento || 0) : 0, descuento_tipo: ped ? ped.descuento_tipo : 'porcentaje', nota: ped ? ped.nota || '' : '',
-    medico_texto: ped ? ped.medico_texto || '' : '' };
+    medico_texto: ped ? ped.medico_texto || '' : '',
+    envio: ped ? !!ped.envio : !!envioCfg().por_defecto,
+    envio_iva: ped && ped.envio ? +ped.envio_iva : +envioCfg().iva,
+    envio_con: ped && ped.envio ? r2(+ped.envio_base * (1 + (+ped.envio_iva || 0) / 100)) : +envioCfg().precio_con_iva };
   const leerForm = () => {
     if (!$('pfecha')) return;
     Object.assign(form, { fecha: $('pfecha').value, canal: $('pcan').value, forma_pago: $('ppago').value,
       descuento: $('pdto').value, descuento_tipo: $('pdtot').value, nota: $('pnota').value,
+      envio: $('penv').checked, envio_con: +$('penvi').value || 0, envio_iva: +$('penvv').value || 0,
       medico_texto: $('pselmed') ? ($('pselmed').__texto || '') : form.medico_texto });
   };
 
@@ -5037,6 +5042,12 @@ async function editorPedido(pedido) {
             <select id="pdtot" style="max-width:110px"><option value="porcentaje">%</option>
               <option value="importe" ${form.descuento_tipo === 'importe' ? 'selected' : ''}>€</option></select></div></div>
       </div>
+      <div class="envbox">
+        <label class="opt" style="margin:0"><input type="checkbox" id="penv" ${form.envio ? 'checked' : ''}> Incluir envío</label>
+        <div class="g2 ${form.envio ? '' : 'hide'}" id="penvd">
+          <div><label for="penvi">Importe del envío con IVA (€)</label><input id="penvi" type="number" step="0.01" min="0" value="${esc(form.envio_con)}"></div>
+          <div><label for="penvv">IVA del envío (%)</label><input id="penvv" type="number" step="1" min="0" max="21" value="${esc(form.envio_iva)}"></div></div>
+      </div>
       <div class="totbox" id="ptot"></div>
       <label for="pnota">Nota</label><input id="pnota" value="${esc(form.nota)}">
       <div class="acts" style="justify-content:flex-end">
@@ -5050,7 +5061,9 @@ async function editorPedido(pedido) {
         if (el) el.innerHTML = `<span>Base <b>${eurI(d.base)}</b></span><span>IVA ${num(l.iva || 0)}% <b>${eurI(d.iva)}</b></span><span>Total <b>${eurI(d.total)}</b></span>
           ${prod(l.producto_id).precio != null ? `<span>Precio unidad ${eurI(prod(l.producto_id).precio)} + IVA</span>` : ''}`;
       });
-      $('ptot').innerHTML = bloqueTotales(totalesPedido(lineas, +$('pdto').value || 0, $('pdtot').value));
+      $('penvd').classList.toggle('hide', !$('penv').checked);
+      $('ptot').innerHTML = bloqueTotales(totalesPedido(lineas, +$('pdto').value || 0, $('pdtot').value,
+        { on: $('penv').checked, con: +$('penvi').value || 0, iva: +$('penvv').value || 0 }));
     };
 
     $('plineas').oninput = $('plineas').onchange = e => {
@@ -5069,7 +5082,7 @@ async function editorPedido(pedido) {
     $('plmas').onclick = () => { lineas.push({ producto_id: (PRODUCTOS[0] || {}).id || '', unidades: 1, descuento: 0 }); autoImporte(lineas[lineas.length - 1]); pinta(); };
     $('plineas').querySelectorAll('[data-lx]').forEach(b => b.onclick = () => { lineas.splice(+b.dataset.lx, 1); pinta(); });
     $('pcan').onchange = () => $('zonapac').classList.toggle('hide', $('pcan').value === 'centro');
-    ['pdto', 'pdtot'].forEach(id => $(id).oninput = $(id).onchange = desglose);
+    ['pdto', 'pdtot', 'penv', 'penvi', 'penvv'].forEach(id => $(id).oninput = $(id).onchange = desglose);
     desglose();
 
     const montarMed = () => {
@@ -5094,6 +5107,7 @@ async function editorPedido(pedido) {
         contacto_id: contacto ? contacto.id : null, nota: $('pnota').value.trim(),
         forma_pago: $('ppago').value || null,
         descuento: +$('pdto').value || 0, descuento_tipo: $('pdtot').value,
+        envio: $('penv').checked, envio_con_iva: +$('penvi').value || 0, envio_iva: +$('penvv').value || 0,
         lineas: lineas.filter(l => l.producto_id).map(l => ({ producto_id: l.producto_id, unidades: l.unidades || 1,
           importe: l.importe, descuento: l.descuento || 0, iva: l.iva })),
         op_id: 'p-' + Date.now()
@@ -5125,7 +5139,8 @@ async function verPedido(id) {
   const { data, error } = await RPC_ORIG('pedido_detalle', { p_id: id });
   if (error || !data || !data.pedido) { $('dbody').innerHTML = `<div class="vacio">${esc(error ? error.message : 'No se ha encontrado el pedido.')}</div>`; return; }
   const p = data.pedido, l = data.lineas || [], c = data.contacto;
-  const t = totalesPedido(l, +p.descuento || 0, p.descuento_tipo);
+  const t = totalesPedido(l, +p.descuento || 0, p.descuento_tipo,
+    { on: !!p.envio, con: r2(+p.envio_base * (1 + (+p.envio_iva || 0) / 100)), iva: +p.envio_iva || 0 });
   const bor = p.estado === 'Borrador', anulado = p.estado === 'Anulado';
 
   $('dbody').innerHTML = `
@@ -5169,6 +5184,7 @@ async function verPedido(id) {
       id, estado: 'Confirmado', fecha: p.fecha, canal: p.canal, contacto_id: p.contacto_id, centro_id: p.centro_id,
       medico_id: data.medico ? data.medico.id : null, medico_texto: p.medico_texto, nota: p.nota, forma_pago: p.forma_pago,
       descuento: p.descuento || 0, descuento_tipo: p.descuento_tipo,
+      envio: !!p.envio, envio_con_iva: p.envio ? r2(+p.envio_base * (1 + (+p.envio_iva || 0) / 100)) : 0, envio_iva: p.envio_iva,
       lineas: l.map(x => ({ producto_id: x.producto_id, unidades: x.unidades, importe: x.importe, descuento: x.descuento, iva: x.iva })) } });
     e.target.disabled = false;
     if (er || (r && r.ok === false)) { toast('No se ha podido validar: ' + ((er && er.message) || (r && r.error) || ''), true); return; }
@@ -6189,6 +6205,228 @@ Object.assign(AYUDA, {
     'La venta a centro con descuento no cuenta como prescripción de ningún médico.']]
 });
 ANCLAS_AYUDA.push(['#v-pacientes .saludo h1', 'pacientes'], ['#v-productos .saludo h1', 'productos'], ['#renc .card > h2', 'rutas']);
+
+
+/* ============================================================
+   DLC OS 2.0 · v2.20.0 · Horario de rutas visible, tablas de
+   pacientes y productos, envío en los pedidos
+   ============================================================ */
+
+/* ---------------- ajustes generales (envío) ---------------- */
+
+let AJUSTES = {};
+const envioCfg = () => Object.assign({ precio_con_iva: 0, iva: 21, por_defecto: false }, AJUSTES.envio || {});
+async function cargarAjustes() {
+  const { data } = await db.rpc('ajustes_lista');
+  AJUSTES = data || {};
+}
+const mostrarAppV219 = mostrarApp;
+mostrarApp = function (perfil) { mostrarAppV219(perfil); cargarAjustes(); };
+
+/* ---------------- totales con envío ---------------- */
+
+function totalesPedido(lineas, d, dt, env) {
+  const ls = lineas.map(l => ({ b: (+l.importe || 0) * (1 - (+l.descuento || 0) / 100), iva: +l.iva || 0, u: +l.unidades || 0 }));
+  const sb = ls.reduce((n, l) => n + l.b, 0);
+  const k = !+d || !sb ? 1 : dt === 'importe' ? Math.max(0, 1 - d / sb) : Math.max(0, 1 - d / 100);
+  const porIva = {};
+  ls.forEach(l => { porIva[l.iva] = (porIva[l.iva] || 0) + l.b * k * l.iva / 100; });
+  const t = { unidades: ls.reduce((n, l) => n + l.u, 0), bruto: sb, descuento: sb * (1 - k), baseProd: sb * k, porIva };
+  // El envío se escribe con IVA; aquí se separa su base y su IVA
+  t.envio = env && env.on ? { con: r2(env.con), iva: +env.iva || 0, base: (+env.con || 0) / (1 + (+env.iva || 0) / 100) } : null;
+  if (t.envio) { t.envio.ivaImp = t.envio.con - t.envio.base; porIva[t.envio.iva] = (porIva[t.envio.iva] || 0) + t.envio.ivaImp; }
+  t.base = t.baseProd + (t.envio ? t.envio.base : 0);
+  t.iva = Object.values(porIva).reduce((n, x) => n + x, 0);
+  t.total = t.base + t.iva;
+  return t;
+}
+
+function bloqueTotales(t) {
+  const tipos = Object.keys(t.porIva).sort((a, b) => a - b);
+  return `<div><span>Unidades</span><b>${num(t.unidades)}</b></div>
+    ${t.descuento > 0.004 ? `<div><span>Suma de líneas</span><b>${eurI(t.bruto)}</b></div>
+      <div><span>Descuento general</span><b>−${eurI(t.descuento)}</b></div>` : ''}
+    ${t.envio ? `<div><span>Productos sin IVA</span><b>${eurI(t.baseProd)}</b></div>
+      <div><span>Envío sin IVA</span><b>${eurI(t.envio.base)}</b></div>` : ''}
+    <div><span>Base imponible</span><b>${eurI(t.base)}</b></div>
+    ${tipos.filter(k => t.porIva[k] > 0.004 || tipos.length === 1).map(k => `<div><span>IVA ${k}%</span><b>${eurI(t.porIva[k])}</b></div>`).join('')}
+    ${t.envio ? `<div class="sm" style="justify-content:flex-end"><span>Incluye envío de ${eurI(t.envio.con)} con IVA</span></div>` : ''}
+    <div class="tot"><span>Total con IVA</span><b>${eurI(t.total)}</b></div>`;
+}
+
+/* ---------------- configuración del envío ---------------- */
+
+function editorEnvio() {
+  const c = envioCfg();
+  $('dbody').innerHTML = `
+    <div class="fh"><div><h2>Envío</h2><div class="sm">Importe que se propone al marcar «Incluir envío» en un pedido</div></div>
+      <button class="x" data-cerrar aria-label="Cerrar">✕</button></div>
+    <div class="pvp">
+      <div><label for="evsin">Sin IVA (€)</label><input id="evsin" type="number" step="0.01" min="0" value="${r2(c.precio_con_iva / (1 + c.iva / 100))}"></div>
+      <div><label for="eviva">IVA (%)</label><input id="eviva" type="number" step="1" min="0" max="21" value="${c.iva}"></div>
+      <div><label for="evcon">Con IVA (€)</label><input id="evcon" type="number" step="0.01" min="0" value="${r2(c.precio_con_iva)}"></div></div>
+    <p class="sm">El envío es un servicio: normalmente lleva el 21% de IVA. En cada pedido se puede cambiar el importe.</p>
+    <label class="opt" style="margin-top:10px"><input type="checkbox" id="evdef" ${c.por_defecto ? 'checked' : ''}> Marcar «Incluir envío» por defecto en los pedidos nuevos</label>
+    <div class="acts" style="justify-content:flex-end"><button class="btn sec" data-cerrar>Cancelar</button>
+      <button class="btn" id="evok">Guardar</button></div>`;
+  const iva = () => (+$('eviva').value || 0) / 100;
+  $('evsin').oninput = () => { $('evcon').value = $('evsin').value === '' ? '' : r2(+$('evsin').value * (1 + iva())); };
+  $('evcon').oninput = () => { $('evsin').value = $('evcon').value === '' ? '' : r2(+$('evcon').value / (1 + iva())); };
+  $('eviva').oninput = () => { if ($('evsin').value !== '') $('evcon').value = r2(+$('evsin').value * (1 + iva())); };
+  $('evok').onclick = async ev => {
+    ev.target.disabled = true;
+    const valor = { precio_con_iva: +$('evcon').value || 0, iva: +$('eviva').value || 0, por_defecto: $('evdef').checked };
+    const { data: r, error } = await db.rpc('guardar_ajuste', { p_clave: 'envio', p_valor: valor });
+    ev.target.disabled = false;
+    if (error || (r && r.ok === false)) { toast('No se ha podido guardar', true); return; }
+    AJUSTES.envio = valor; $('dlg').close(); toast('Envío guardado');
+    if (TAB === 'productos') pintarProductos();
+  };
+  $('dlg').showModal();
+}
+
+/* ---------------- productos: tabla alineada ---------------- */
+
+async function cargarProductosModulo() {
+  const esAdmin = PERFIL.rol === 'Administrador';
+  vaciarModulos('v-productos');
+  $('v-productos').innerHTML = `
+    <div class="saludo"><div><h1>Productos</h1><div class="fecha">Catálogo con precios sin IVA y con IVA</div></div>
+      <div class="acts" style="margin:0">${esAdmin ? '<button class="btn sec" id="prodenvio">⚙ Envío</button><button class="btn" id="prodnuevo">+ Nuevo producto</button>' : ''}</div></div>
+    <div id="vcuerpo"></div>`;
+  if ($('prodnuevo')) $('prodnuevo').onclick = () => editorProducto(null);
+  if ($('prodenvio')) $('prodenvio').onclick = editorEnvio;
+  pintarProductos();
+}
+
+async function pintarProductos() {
+  const esAdmin = PERFIL.rol === 'Administrador';
+  cargando($('vcuerpo'), 'Cargando productos…');
+  const [{ data }] = await Promise.all([RPC_ORIG('productos_lista', { p_todos: esAdmin }), cargarAjustes()]);
+  const l = data || [], ev = envioCfg();
+  $('vcuerpo').innerHTML = `<div class="panel">
+    <div class="cuenta"><b>${num(l.filter(p => p.activo).length)}</b> ${l.filter(p => p.activo).length === 1 ? 'producto activo' : 'productos activos'}${l.some(p => !p.activo) ? ` · ${num(l.filter(p => !p.activo).length)} inactivos` : ''}
+      · Envío: <b>${eurI(ev.precio_con_iva)}</b> con IVA${ev.por_defecto ? ' (se marca por defecto)' : ''}</div>
+    <div class="dgrid-wrap"><div class="dgrid prods">
+      <div class="dh"><span></span><span>Producto</span><span>Referencia</span><span class="num">Sin IVA</span><span class="num">IVA</span><span class="num">Con IVA</span><span>Estado</span></div>
+      ${l.map(p => `<button class="dr" data-prod="${p.id}" style="${p.activo ? '' : 'opacity:.55'}">
+        <span><span class="pfoto" style="${p.foto_url ? `background-image:url('${esc(p.foto_url)}')` : ''}">${p.foto_url ? '' : '◧'}</span></span>
+        <span><b>${esc(p.nombre)}</b><span class="sm">${esc(p.presentacion || 'Sin presentación')}</span></span>
+        <span class="sm">${esc(p.referencia || '—')}</span>
+        <span class="num">${p.precio != null ? eurI(p.precio) : '—'}</span>
+        <span class="num">${num(p.iva || 0)}%</span>
+        <span class="num"><b>${p.pvp != null ? eurI(p.pvp) : '—'}</b></span>
+        <span><span class="pill ${p.activo ? 'p-est' : 'p-anu'}">${p.activo ? 'Activo' : 'Inactivo'}</span></span>
+      </button>`).join('') || '<div class="vacio">Todavía no hay productos.</div>'}
+    </div></div></div>`;
+  $('vcuerpo').querySelectorAll('[data-prod]').forEach(b => b.onclick = () => editorProducto(l.find(p => p.id === b.dataset.prod)));
+}
+
+/* ---------------- pacientes: tabla con todos los datos ---------------- */
+
+async function listaPacientes() {
+  cargando($('paclista'), 'Buscando pacientes…');
+  const { data, error } = await db.rpc('pacientes_lista', { q: PAC.q || null, p_medico: PAC.medico,
+    lim: tamPagina(), desplaz: PAC.pagina * tamPagina() });
+  if (error) { $('paccuenta').textContent = 'No se ha podido cargar: ' + error.message; $('paclista').innerHTML = ''; return; }
+  $('paccuenta').innerHTML = `<b>${num(data.total)}</b> ${data.total === 1 ? 'paciente' : 'pacientes'}`;
+  const f = data.filas || [];
+  const v = x => x ? esc(x) : '<span class="vac">—</span>';
+  $('paclista').innerHTML = f.length ? `<div class="dgrid-wrap"><div class="dgrid pacs">
+    <div class="dh"><span>Paciente</span><span>DNI / CIF</span><span>Teléfono</span><span>Email</span><span>Población</span>
+      <span>Médico</span><span>Comercial</span><span class="num">Pedidos</span><span class="num">Uds.</span><span>Último pedido</span></div>
+    ${f.map(x => `<button class="dr" data-pac="${x.id}">
+      <span><b>${esc(x.nombre)}</b></span>
+      <span>${v(x.nif)}</span>
+      <span>${v(x.telefono || x.movil)}</span>
+      <span class="corta">${v(x.email)}</span>
+      <span>${v(x.municipio)}</span>
+      <span class="corta">${x.medico ? esc(x.medico) : '<span class="vac">Sin asignar</span>'}</span>
+      <span>${v(x.comercial)}</span>
+      <span class="num">${num(x.pedidos)}</span>
+      <span class="num"><b>${num(x.unidades)}</b></span>
+      <span>${x.ultimo_pedido ? fechaCorta(x.ultimo_pedido) : '<span class="vac">—</span>'}</span>
+    </button>`).join('')}</div></div>` : '<div class="vacio">Ningún paciente con estos filtros.</div>';
+  $('paclista').querySelectorAll('[data-pac]').forEach(b => b.onclick = () => fichaPaciente(b.dataset.pac));
+  paginador($('pacpag'), data.total, PAC.pagina, p => { PAC.pagina = p; listaPacientes(); }, () => { PAC.pagina = 0; listaPacientes(); });
+}
+
+/* ---------------- rutas: horario siempre a mano ---------------- */
+
+let ULTIMO_PLAN = null;
+const siguienteLaborable = () => {
+  const d = new Date(); do { d.setDate(d.getDate() + 1); } while (d.getDay() === 0 || d.getDay() === 6);
+  return d.toISOString().slice(0, 10);
+};
+
+function construirPlan(conXY, rutaId, btn, opts) {
+  opts = opts || {};
+  ULTIMO_PLAN = { conXY, rutaId, opts };
+  const cfg = PLANCFG();
+  const salida = (PERFIL.preferencias || {}).salida || { nombre: 'Santpedor', lat: 41.7833, lon: 1.8414 };
+  const paradas = {};
+  conXY.forEach(m => {
+    const k = (m.centro_nombre || 'Consulta') + '|' + (m.municipio || '');
+    (paradas[k] = paradas[k] || { centro: m.centro_nombre || 'Consulta privada', municipio: m.municipio,
+      dir: m.direccion, xy: [m.lat, m.lon], medicos: [] }).medicos.push(m);
+  });
+  const ahora = new Date(), minAhora = ahora.getHours() * 60 + ahora.getMinutes();
+  const salidaCfg = +cfg.salida.slice(0, 2) * 60 + +cfg.salida.slice(3), tope = +cfg.tope.slice(0, 2) * 60 + +cfg.tope.slice(3);
+  const fecha = opts.manana ? siguienteLaborable() : hoyISO();
+  // Hoy: si ya ha pasado la hora de salida, se empieza ahora. Otro día: desde la hora de salida.
+  const t0 = opts.manana ? salidaCfg : Math.max(salidaCfg, Math.ceil(minAhora / 5) * 5);
+
+  if (t0 >= tope) {
+    elegirOpcion('Ya ha pasado tu horario de ruta de hoy',
+      `Tu horario es de ${cfg.salida} a ${cfg.tope} y ahora son las ${hm(minAhora)}.\n\nPuedes planificar la ruta para el ${fechaLarga(new Date(siguienteLaborable() + 'T00:00:00'))} o cambiar tu horario.`,
+      [{ k: 'no', t: 'Cancelar', cls: 'sec' }, { k: 'horario', t: '⚙ Cambiar horario', cls: 'sec' }, { k: 'manana', t: 'Planificar para mañana' }])
+      .then(op => {
+        if (op === 'horario') abrirHorarioPlan();
+        if (op === 'manana') construirPlan(conXY, rutaId, btn, { manana: true });
+      });
+    return;
+  }
+
+  let pos = [salida.lat, salida.lon], t = t0, libres = Object.values(paradas), orden = [];
+  while (libres.length && t < tope && orden.length < 14) {
+    libres.sort((a, b) => km(pos, a.xy) - km(pos, b.xy));
+    const p = libres.shift();
+    const viaje = minutosEntre(pos, p.xy);
+    const dura = cfg.parada + cfg.visita * Math.min(p.medicos.length, 8);
+    if (t + viaje + dura > tope) break;
+    orden.push({ ...p, llegada: t + viaje, fin: t + viaje + dura, viaje });
+    t += viaje + dura; pos = p.xy;
+  }
+  if (!orden.length) {
+    elegirOpcion('No cabe ninguna parada', `Con tu horario (${cfg.salida}–${cfg.tope}, ${cfg.visita} min por médico) no da tiempo a la primera parada desde ${salida.nombre}.`,
+      [{ k: 'no', t: 'Cancelar', cls: 'sec' }, { k: 'horario', t: '⚙ Cambiar horario' }]).then(op => { if (op === 'horario') abrirHorarioPlan(); });
+    return;
+  }
+  PLAN = { rutaId, salida, paradas: orden, fin: t + minutosEntre(pos, [salida.lat, salida.lon]), fecha, inicio: t0 };
+  if (TAB !== 'rutas') ir('rutas');
+  pintarPlan();
+  setTimeout(() => $('rplan') && $('rplan').scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
+}
+
+cargarRutas = (orig => async function () {
+  await orig();
+  const acts = $('v-rutas').querySelector('.saludo .acts');
+  if (acts && !$('rhorario')) {
+    acts.insertAdjacentHTML('afterbegin', '<button class="btn sec" id="rhorario" title="Hora de salida, hora tope y minutos por visita">⚙ Horario de rutas</button>');
+    $('rhorario').onclick = abrirHorarioPlan;
+  }
+  const c = PLANCFG();
+  const sub = $('v-rutas').querySelector('.saludo .fecha');
+  if (sub) sub.textContent = `Crea, edita y planifica tus rutas · Horario ${c.salida}–${c.tope}, ${c.visita} min por médico`;
+})(cargarRutas);
+
+/* ---------------- ayudas ---------------- */
+
+AYUDA.rutas[2].splice(1, 1,
+  'El plan ordena las paradas por cercanía y calcula las horas con tu horario. Si ya ha pasado tu hora de salida, empieza a contar desde ahora; si ya ha pasado tu hora tope, te propone planificar para mañana.',
+  '<b>⚙ Horario de rutas</b> (arriba a la derecha) cambia la hora de salida, la hora tope y los minutos por médico y por parada.');
+AYUDA.productos[2].push('<b>⚙ Envío</b> fija el importe del envío que se propone en los pedidos y si se marca por defecto.');
+AYUDA.ventas[2].push('Si marcas <b>Incluir envío</b>, el importe (con IVA) se suma al total con su propio IVA. No lleva descuento ni cuenta como unidades.');
 
 pintarConexion();
 vaciarCola();
