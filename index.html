@@ -201,6 +201,19 @@ body.conruta header{top:46px}
 body.conruta{padding-top:46px}
 .kcfg{border:0;background:none;color:var(--navy);font-weight:600;cursor:pointer;font-size:13px;padding:0}
 @media (max-width:760px){.rutabar{font-size:13px;padding:8px 12px}}
+
+.mini{max-width:420px;width:calc(100% - 28px);border-radius:16px}
+.mini .fbox{padding:20px}
+.tabla{overflow-x:auto}
+.thead{display:flex;gap:0;border-top:1px solid var(--line);background:var(--bg);font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.tcell{padding:10px 12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:0 0 auto}
+.th{position:relative}
+.th .res{position:absolute;right:-4px;top:0;width:9px;height:100%;cursor:col-resize;touch-action:none}
+.th .res::after{content:"";position:absolute;right:4px;top:25%;height:50%;width:2px;background:var(--line);border-radius:2px}
+.th:hover .res::after{background:var(--navy)}
+.trow{display:flex;width:100%;text-align:left;border:0;border-top:1px solid var(--line);background:none;cursor:pointer;padding:0;align-items:center}
+.trow:hover{background:var(--bg)}
+.trow .nm{font-weight:600}
 @media (max-width:900px){ .cols{grid-template-columns:1fr} }
 @media (max-width:760px){
   .fila{grid-template-columns:minmax(0,1fr) auto}
@@ -287,10 +300,11 @@ body.conruta{padding-top:46px}
             </select></div>
         </div>
         <div class="chips" id="chips"></div>
-        <div class="acts" style="padding:12px 14px 0;margin:0"><button class="btn sec" id="nuevoBtn">+ Crear nuevo</button><button class="btn sec" id="mapaBtn">Ver mapa</button><button class="btn sec" id="csvBtn">Descargar CSV</button><button class="btn sec" id="guardarFiltro">★ Guardar filtro</button></div>
+        <div class="acts" style="padding:12px 14px 0;margin:0"><button class="btn sec" id="nuevoBtn">+ Crear nuevo</button><button class="btn sec" id="mapaBtn">Ver mapa</button><button class="btn sec" id="csvBtn">Descargar CSV</button><button class="btn sec" id="guardarFiltro">★ Guardar filtro</button><button class="btn sec" id="colsBtn">⚙ Columnas</button></div>
         <div class="cuenta" id="cuenta">Cargando…</div>
         <div id="mapawrap" class="hide"><div id="mapa"></div><div class="mapleg" id="mapleg"></div></div>
-        <div id="lista"></div>
+        <div class="sm hide" id="scrollhint" style="padding:8px 14px 0">Desliza a los lados para ver todas las columnas</div>
+        <div class="tabla" id="tabla"><div class="thead" id="thead"></div><div id="lista"></div></div>
         <button class="mas hide" id="mas">Cargar más</button>
       </div>
     </section>
@@ -305,6 +319,7 @@ body.conruta{padding-top:46px}
 
 <dialog id="ficha"><div class="fbox" id="fbody"></div></dialog>
 <dialog id="dlg"><div class="fbox" id="dbody"></div></dialog>
+<dialog id="mini" class="mini"></dialog>
 <div id="toast" class="toast hide"></div>
 <div id="conex" class="conex hide"></div>
 <div id="rutabar" class="rutabar hide"></div>
@@ -320,6 +335,6 @@ body.conruta{padding-top:46px}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js" defer></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="./config.js"></script>
-<script src="./app.js?v=2.7.0"></script>
+<script src="./app.js?v=2.8.0"></script>
 </body>
 </html>
