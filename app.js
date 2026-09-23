@@ -74,6 +74,7 @@ async function arrancar() {
   document.querySelectorAll('#nav [data-t="ventas"]').forEach(b => b.classList.toggle('hide', !veVentas()));
   cargarCatalogos();
   pintarRutaBarra();
+  db.rpc('registrar_acceso', { p_evento: 'Entrada', p_agente: navigator.userAgent }).catch(() => {});
   cargarInicio();
   cargarFiltros();
 }
@@ -84,7 +85,10 @@ $('ubtn').addEventListener('click', e => { e.stopPropagation(); $('umenu').class
 document.addEventListener('click', () => $('umenu').classList.add('hide'));
 $('umenu').addEventListener('click', async e => {
   const b = e.target.closest('[data-u]'); if (!b) return;
-  if (b.dataset.u === 'salir') { await db.auth.signOut(); location.reload(); }
+  if (b.dataset.u === 'salir') {
+    await db.rpc('registrar_acceso', { p_evento: 'Salida', p_agente: navigator.userAgent }).catch(() => {});
+    await db.auth.signOut(); location.reload();
+  }
   else if (b.dataset.u === 'cfg') ir('config');
   else if (b.dataset.u === 'pass') { /* lo gestiona el módulo de contraseñas */ }
   else if (b.dataset.u === 'adm') ir('admin');
@@ -103,6 +107,7 @@ var ir = function (t) {
   ['inicio', 'agenda', 'rutas', 'directorio', 'seguimiento', 'ventas', 'analitica', 'config', 'admin'].forEach(k => $('v-' + k).classList.toggle('hide', k !== t));
   window.scrollTo({ top: 0 });
   if (t === 'directorio' && !$('lista').children.length) buscar(true);
+  if (t === 'inicio') cargarInicio();
   if (t === 'agenda') cargarAgenda();
   if (t === 'rutas') cargarRutas();
   if (t === 'seguimiento') cargarSeguimiento();
@@ -128,8 +133,9 @@ async function cargarInicio() {
   ['c-agenda', 'c-acciones', 'c-urgentes', 'c-ultimas'].forEach(id =>
     $(id).innerHTML = '<div class="skel" style="width:40%"></div><div class="skel"></div><div class="skel" style="width:70%"></div>');
 
-  const { data, error } = await db.rpc('panel_inicio', { lim: 6 });
-  if (error) { $('c-agenda').innerHTML = `<div class="vacio">No se ha podido cargar: ${esc(error.message)}</div>`; return; }
+  const res = await rpcCache('panel_inicio', { lim: 6 }, 'inicio');
+  const data = res.data;
+  if (!data) { $('c-agenda').innerHTML = '<div class="vacio">Sin conexión y sin copia guardada todavía.</div>'; return; }
   const k = data.kpis;
 
   const kpi = (n, t, cls, accion, extra) =>
@@ -145,6 +151,8 @@ async function cargarInicio() {
     return kpi(c.v(k), x.t || c.t, c.cls ? c.cls(k) : '', c.h);
   }).join('') + `<div class="kpi" style="display:grid;place-items:center;border-style:dashed">
       <button class="kcfg" data-k="cfgkpis">⚙ Personalizar indicadores</button></div>`;
+
+  if (res.cache) avisoCache($('kpis'), res.fecha);
 
   document.querySelectorAll('#kpis [data-kf]').forEach(async el => {
     const n = await contarFiltro(JSON.parse(el.dataset.kf));
@@ -306,13 +314,14 @@ async function abrirFicha(id) {
   FICHA_ID = id;
   $('fbody').innerHTML = '<div class="skel" style="width:50%"></div><div class="skel"></div><div class="skel" style="width:80%"></div>';
   $('ficha').showModal();
-  const { data, error } = await db.rpc('ficha_medico', { p_id: id });
-  if (error) { $('fbody').innerHTML = `<p class="sm">No se ha podido abrir: ${esc(error.message)}</p>`; return; }
+  const rf = await rpcCache('ficha_medico', { p_id: id }, 'ficha-' + id);
+  const data = rf.data;
+  if (!data || !data.medico) { $('fbody').innerHTML = '<p class="sm">Sin conexión y sin copia guardada de esta ficha.</p>'; return; }
 
   const m = data.medico, cons = data.consultas || [], vis = data.visitas || [], com = data.comerciales || [];
   const dias = ['L','M','X','J','V'];
 
-  $('fbody').innerHTML = `
+  $('fbody').innerHTML = `${rf.cache ? '<div class="cacheaviso">Sin conexión · ficha guardada en este dispositivo</div>' : ''}
     <div class="fh">
       <div><h2>${m.urgente ? '<span class="pill p-urg">Urgente</span> ' : ''}${esc(m.nombre)}</h2>
         <div class="sm">${esc(m.especialidad || '')}${m.area ? ' · ' + esc(m.area) : ''} · código ${esc(m.codigo)}</div></div>
@@ -815,12 +824,13 @@ async function cargarAgenda() {
 
   if (AG_MODO === 'mes') { $('agtit').textContent = periodoTxt(AG_FECHA.slice(0, 7)); pintarMesAgenda(AG_FECHA.slice(0, 7)); return; }
 
-  const [{ data: citas, error }, { data: pend }] = await Promise.all([
-    db.rpc('agenda_rango', { p_desde: desde, p_hasta: hasta, p_usuario: PERFIL.rol === 'Administrador' ? null : PERFIL.id }),
-    db.rpc('pendientes_ruta')
+  const [rc, rp] = await Promise.all([
+    rpcCache('agenda_rango', { p_desde: desde, p_hasta: hasta, p_usuario: PERFIL.rol === 'Administrador' ? null : PERFIL.id }, 'agenda-' + desde),
+    rpcCache('pendientes_ruta', {}, 'pendientes')
   ]);
-
-  if (error) { $('agcuerpo').innerHTML = `<div class="vacio">No se ha podido cargar: ${esc(error.message)}</div>`; return; }
+  const citas = rc.data, pend = rp.data;
+  if (!citas) { $('agcuerpo').innerHTML = '<div class="vacio">Sin conexión y sin copia guardada de estos días.</div>'; return; }
+  if (rc.cache) avisoCache($('agcuerpo'), rc.fecha);
 
   const porDia = {};
   (citas || []).forEach(c => { (porDia[c.fecha] = porDia[c.fecha] || []).push(c); });
@@ -1164,7 +1174,8 @@ async function pintarCatalogos() {
     const [id, activo] = b.dataset.vtog.split('|');
     await db.rpc('guardar_valor', { p: { id, activo: activo === '1' } });
     cargarCatalogos();
-  pintarRutaBarra(); pintarCatalogos();
+  pintarRutaBarra();
+  db.rpc('registrar_acceso', { p_evento: 'Entrada', p_agente: navigator.userAgent }).catch(() => {}); pintarCatalogos();
   });
   $('cfgcuerpo').querySelectorAll('[data-vdel]').forEach(b => b.onclick = async () => {
     if (!await preguntar('Las fichas y visitas que ya lo usan lo conservan, pero dejará de aparecer en los desplegables.', { titulo: '¿Eliminar este valor?', ok: 'Eliminar', peligro: true })) return;
@@ -1193,9 +1204,13 @@ async function cargarAdmin() {
       <div class="acts" style="margin:0">${ADM_SEC === 'usuarios' ? '<button class="btn" id="unuevo">+ Nuevo usuario</button>' : ''}</div></div>
     <div class="subnav">
       <button data-as="usuarios" aria-pressed="${ADM_SEC === 'usuarios'}">Usuarios</button>
-      <button data-as="comisiones" aria-pressed="${ADM_SEC === 'comisiones'}">Comisiones</button></div>
+      <button data-as="comisiones" aria-pressed="${ADM_SEC === 'comisiones'}">Comisiones</button>
+      <button data-as="accesos" aria-pressed="${ADM_SEC === 'accesos'}">Accesos</button>
+      <button data-as="auditoria" aria-pressed="${ADM_SEC === 'auditoria'}">Auditoría</button></div>
     <div class="card" id="admcuerpo"><div class="skel"></div><div class="skel" style="width:60%"></div></div>`;
   if (ADM_SEC === 'comisiones') { pintarComisiones(); return; }
+  if (ADM_SEC === 'accesos') { pintarAccesos(); return; }
+  if (ADM_SEC === 'auditoria') { pintarAuditoria(); return; }
   $('unuevo').onclick = nuevoUsuario;
 
   const { data, error } = await db.rpc('usuarios_lista');
@@ -1208,10 +1223,15 @@ async function cargarAdmin() {
         <span class="sm">${esc(u.rol)} · ${esc(u.email || '')} · ${num(u.medicos)} médicos · ${num(u.visitas)} visitas</span></span>
       <span class="acts" style="margin:0">
         <button class="btn sec" data-uedit="${u.id}">Editar</button>
-        <button class="btn sec" data-ucart="${u.id}">Cartera</button></span></div>`).join('')}</div>`;
+        <button class="btn sec" data-uver="${u.id}">Ver cartera</button>
+        <button class="btn sec" data-ucart="${u.id}">Asignar</button>
+        <button class="btn sec" data-upass="${u.id}">Contraseña</button></span></div>`).join('')}</div>`;
 
   $('admcuerpo').querySelectorAll('[data-uedit]').forEach(b => b.onclick = () => editarUsuario(b.dataset.uedit));
   $('admcuerpo').querySelectorAll('[data-ucart]').forEach(b => b.onclick = () => asignarCartera(b.dataset.ucart));
+  $('admcuerpo').querySelectorAll('[data-uver]').forEach(b => b.onclick = () => verCartera(b.dataset.uver));
+  $('admcuerpo').querySelectorAll('[data-upass]').forEach(b => b.onclick = () =>
+    restablecerPassword(USUARIOS.find(x => x.id === b.dataset.upass) || {}));
 }
 
 function editarUsuario(id) {
@@ -3920,6 +3940,140 @@ async function guardarPlantillas(ev) {
   if (error) { toast('No se ha podido guardar: ' + error.message, true); return; }
   PERFIL.preferencias = data || prefs;
   toast('Plantillas guardadas');
+}
+
+
+
+/* ============================================================
+   DLC OS 2.0 · Entrega 17 · Bloque E
+   ============================================================ */
+
+/* ---------------- copia local para consultar sin conexión ---------------- */
+
+const CKEY = k => 'dlc-cache-' + (PERFIL ? PERFIL.id : '') + '-' + k;
+const guardarCache = (k, d) => { try { localStorage.setItem(CKEY(k), JSON.stringify({ t: Date.now(), d })); } catch (e) {} };
+const leerCache = k => { try { const x = JSON.parse(localStorage.getItem(CKEY(k)) || 'null'); return x ? x : null; } catch (e) { return null; } };
+
+/** Llama a una función del servidor y guarda copia; sin conexión devuelve la última copia. */
+async function rpcCache(fn, params, clave) {
+  if (navigator.onLine) {
+    const { data, error } = await db.rpc(fn, params);
+    if (!error) { guardarCache(clave, data); return { data, cache: false }; }
+  }
+  const c = leerCache(clave);
+  if (c) return { data: c.d, cache: true, fecha: c.t };
+  return { data: null, cache: true };
+}
+
+function avisoCache(el, fecha) {
+  if (!el) return;
+  el.insertAdjacentHTML('afterbegin', `<div class="cacheaviso">Sin conexión · datos guardados
+    ${fecha ? 'el ' + new Date(fecha).toLocaleString('es', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : ''}</div>`);
+}
+
+/* ---------------- administración: secciones nuevas ---------------- */
+
+async function pintarAccesos() {
+  cargando($('admcuerpo'), 'Cargando los accesos…');
+  const { data } = await db.rpc('accesos_lista', { p_usuario: null, lim: 200 });
+  const l = data || [];
+  $('admcuerpo').innerHTML = `<h2>Accesos<span class="n">${l.length}</span></h2>
+    <p class="sm">Últimas entradas y salidas de la plataforma.</p>
+    <div class="lista">${l.map(a => `<div class="item" style="cursor:default">
+      <span class="ic ${a.evento === 'Entrada' ? 'o' : ''}">${a.evento === 'Entrada' ? '→' : '←'}</span>
+      <span class="tx"><b>${esc(a.usuario)}</b><span class="sm">${esc(a.evento)} ·
+        ${new Date(a.creado_en).toLocaleString('es', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
+        ${a.agente ? ' · ' + esc(String(a.agente).slice(0, 60)) : ''}</span></span></div>`).join('')
+      || '<div class="vacio">Todavía no hay accesos registrados.</div>'}</div>`;
+}
+
+async function pintarAuditoria() {
+  cargando($('admcuerpo'), 'Cargando la auditoría…');
+  const { data } = await db.rpc('auditoria_lista', { p_entidad: null, p_usuario: null, p_desde: null, lim: 200 });
+  const l = data || [];
+  const nombreEnt = { medicos: 'Médico', consultas: 'Consulta', visitas: 'Visita', agenda: 'Cita',
+    rutas: 'Ruta', asignaciones: 'Cartera', pedidos: 'Pedido', perfiles: 'Usuario', productos: 'Producto' };
+
+  $('admcuerpo').innerHTML = `<h2>Auditoría<span class="n">${l.length}</span></h2>
+    <p class="sm">Quién ha cambiado qué y cuándo. Se guarda automáticamente.</p>
+    <div class="filtros" style="border:0;padding:0 0 10px">
+      <div><label for="aent">Entidad</label><select id="aent"><option value="">Todas</option>
+        ${Object.entries(nombreEnt).map(([k, t]) => `<option value="${k}">${t}</option>`).join('')}</select></div></div>
+    <div class="lista" id="audlista">${l.map(a => `<div class="item" style="cursor:default">
+      <span class="ic ${a.accion === 'Baja' ? 'w' : a.accion === 'Alta' ? 'o' : ''}">${a.accion === 'Alta' ? '+' : a.accion === 'Baja' ? '−' : '✎'}</span>
+      <span class="tx"><b>${esc(a.accion)} · ${esc(nombreEnt[a.entidad] || a.entidad)}</b>
+        <span class="sm">${esc(a.usuario)} ·
+          ${new Date(a.creado_en).toLocaleString('es', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
+        <span class="sm">${esc(resumenDetalle(a.detalle))}</span></span></div>`).join('')
+      || '<div class="vacio">Sin movimientos registrados todavía.</div>'}</div>`;
+
+  $('aent').onchange = async e => {
+    cargando($('audlista'), 'Filtrando…');
+    const { data: d2 } = await db.rpc('auditoria_lista', { p_entidad: e.target.value || null, p_usuario: null, p_desde: null, lim: 200 });
+    const l2 = d2 || [];
+    $('audlista').innerHTML = l2.map(a => `<div class="item" style="cursor:default">
+      <span class="ic">${a.accion === 'Alta' ? '+' : a.accion === 'Baja' ? '−' : '✎'}</span>
+      <span class="tx"><b>${esc(a.accion)} · ${esc(nombreEnt[a.entidad] || a.entidad)}</b>
+        <span class="sm">${esc(a.usuario)} · ${new Date(a.creado_en).toLocaleString('es')}</span>
+        <span class="sm">${esc(resumenDetalle(a.detalle))}</span></span></div>`).join('')
+      || '<div class="vacio">Sin movimientos con ese filtro.</div>';
+  };
+}
+
+function resumenDetalle(d) {
+  if (!d) return '';
+  if (d.nombre) return d.nombre;
+  const campos = Object.keys(d).filter(k => Array.isArray(d[k])).slice(0, 4);
+  if (!campos.length) return '';
+  return campos.map(k => `${k}: ${String(d[k][0] ?? '—').slice(0, 20)} → ${String(d[k][1] ?? '—').slice(0, 20)}`).join(' · ');
+}
+
+/* ---------------- cartera y contraseña de un usuario ---------------- */
+
+async function verCartera(id) {
+  const u = USUARIOS.find(x => x.id === id) || {};
+  cargando($('dbody'), 'Cargando la cartera…');
+  $('dlg').showModal();
+  const pinta = async q => {
+    const { data } = await db.rpc('cartera_usuario', { p_usuario: id, q: q || null, lim: 500 });
+    const l = data || [];
+    $('dbody').innerHTML = `
+      <div class="fh"><div><h2>Cartera de ${esc(u.nombre || '')}</h2>
+        <div class="sm">${num(l.length)} médicos asignados</div></div>
+        <button class="x" data-cerrar aria-label="Cerrar">✕</button></div>
+      <input id="cbusca" value="${esc(q || '')}" placeholder="Buscar dentro de la cartera">
+      <div class="lista" style="max-height:52vh;overflow:auto">${l.map(m => `<div class="item" style="cursor:default">
+        <span class="ic ${m.urgente ? 'w' : ''}">${m.urgente ? '!' : '·'}</span>
+        <span class="tx"><b>${esc(m.nombre)}</b><span class="sm">${esc(m.especialidad || '')} · ${esc(m.centro || '')} ${esc(m.municipio || '')}
+          ${m.ultima_visita ? ' · última visita ' + fechaCorta(m.ultima_visita) : ' · sin visitar'}</span></span>
+        <span class="acts" style="margin:0">
+          <button class="btn sec" data-cficha="${m.id}">Ficha</button>
+          <button class="btn sec dang" data-cquita="${m.id}">Quitar</button></span></div>`).join('')
+        || '<div class="vacio">Sin médicos asignados.</div>'}</div>
+      <div class="acts" style="justify-content:flex-end"><button class="btn sec" id="cmas">Asignar más médicos</button></div>`;
+
+    let t;
+    $('cbusca').oninput = e => { clearTimeout(t); t = setTimeout(() => pinta(e.target.value.trim()), 300); };
+    $('dbody').querySelectorAll('[data-cficha]').forEach(b => b.onclick = () => { $('dlg').close(); abrirFicha(b.dataset.cficha); });
+    $('dbody').querySelectorAll('[data-cquita]').forEach(b => b.onclick = async () => {
+      if (!await preguntar('Dejará de verlo en su cartera. El histórico de visitas no cambia.',
+        { titulo: '¿Quitar de la cartera?', ok: 'Quitar', peligro: true })) return;
+      const { data: r } = await db.rpc('quitar_de_cartera', { p_usuario: id, p_medico: b.dataset.cquita });
+      if (r && r.ok === false) { toast('No tienes permiso', true); return; }
+      toast('Quitado de la cartera'); pinta(q); cargarAdmin();
+    });
+    $('cmas').onclick = () => { $('dlg').close(); asignarCartera(id); };
+  };
+  pinta('');
+}
+
+async function restablecerPassword(u) {
+  if (!u.email) { toast('Ese usuario no tiene correo', true); return; }
+  if (!await preguntar(`Se enviará a ${u.email} un correo para que cree una contraseña nueva.`,
+    { titulo: '¿Restablecer la contraseña?', ok: 'Enviar correo' })) return;
+  const { error } = await db.auth.resetPasswordForEmail(u.email, { redirectTo: location.origin + location.pathname });
+  if (error) { toast('No se ha podido enviar: ' + error.message, true); return; }
+  toast('Correo enviado a ' + u.email);
 }
 
 
