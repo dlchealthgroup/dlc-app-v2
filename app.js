@@ -64,8 +64,7 @@ async function arrancar() {
 
   $('nuevoBtn').classList.toggle('hide', !puedeCrear());
   $('dupBtn').classList.toggle('hide', PERFIL.rol !== 'Administrador');
-  if ($('dlDir') && !$('dlDir').innerHTML) {
-    $('dlDir').innerHTML = menuDescarga('dir', [{ k: 'csv', ico: '📄', t: 'CSV para Excel' }, { k: 'xls', ico: '📊', t: 'Excel (.xls)' }]);
+  {
     window.__dlDir = async fmt => {
       const { data } = await db.rpc('exportar_medicos', { q: F.q || null, f_provincia: F.prov || null,
         f_municipio: F.muni || null, f_estado: F.est || null, f_especialidad: F.esp || null, f_urgentes: !!F.urg });
@@ -182,6 +181,7 @@ $('v-inicio').addEventListener('click', e => {
   const k = e.target.closest('[data-k]');
   if (k) {
     if (k.dataset.k === 'cfgkpis') { abrirKpis(); return; }
+    if (k.dataset.k === 'dups') { revisarPendientes(); return; }
     Object.assign(F, { q: '', prov: '', muni: '', esp: '', est: '', urg: false, orden: 'nombre' });
     if (k.dataset.k === 'urgentes') { F.urg = true; F.orden = 'urgentes'; }
     if (k.dataset.k === 'interesados') F.est = 'Interesado';
@@ -199,6 +199,7 @@ $('v-inicio').addEventListener('click', e => {
 async function cargarFiltros(soloMunicipios) {
   const { data, error } = await db.rpc('opciones_filtros', { f_provincia: F.prov || null });
   if (error) return;
+  OPF = data;
   const pon = (sel, lista, etiqueta, valor) => {
     $(sel).innerHTML = `<option value="">${etiqueta}</option>` +
       lista.map(o => `<option value="${esc(o.v)}" ${valor === o.v ? 'selected' : ''}>${esc(o.v)} (${o.n})</option>`).join('');
@@ -215,8 +216,9 @@ let temporizador;
 $('q').addEventListener('input', e => {
   clearTimeout(temporizador);
   temporizador = setTimeout(() => {
+    // Solo filtra si ya estás en el directorio: desde otra pantalla espera a que elijas un resultado
+    if (TAB !== 'directorio') return;
     F.q = e.target.value.trim();
-    if (TAB !== 'directorio') ir('directorio');
     buscar(true);
   }, 300);
 });
@@ -272,7 +274,10 @@ async function buscar(reiniciar) {
 
   const filas = data.filas || [];
   if (!filas.length && F.pagina === 0) { $('lista').innerHTML = '<div class="vacio">Ningún médico cumple estos filtros.</div>'; $('thead').innerHTML = ''; }
-  else { if (F.pagina === 0) cabeceraTabla(); $('lista').insertAdjacentHTML('beforeend', filas.map(filaTabla).join('')); }
+  else {
+    if (F.pagina === 0) { $('lista').innerHTML = ''; cabeceraTabla(); }
+    $('lista').insertAdjacentHTML('beforeend', filas.map(filaTabla).join(''));
+  }
 
   const mostrados = F.pagina * PASO + filas.length;
   $('mas').classList.toggle('hide', mostrados >= data.total);
@@ -360,7 +365,7 @@ if ('serviceWorker' in navigator) {
    DLC OS 2.0 · Entrega 3: registrar visitas, editar fichas y altas
    ============================================================ */
 
-const CAT = { RESULTADO: [], ESPECIALIDAD: [], AREA: [], MOTIVO_URGENCIA: [] };
+const CAT = { RESULTADO: [], ESPECIALIDAD: [], AREA: [], MOTIVO_URGENCIA: [], FORMA_PAGO: [] };
 const ESTADOS = ['Sin contactar', 'Presentado', 'Interesado', 'Prescribe', 'No interesado'];
 const DIAS = ['L', 'M', 'X', 'J', 'V'];
 const DIAN = { L: 'Lunes', M: 'Martes', X: 'Miércoles', J: 'Jueves', V: 'Viernes' };
@@ -698,6 +703,7 @@ document.addEventListener('change', e => {
 });
 
 $('dlg').addEventListener('click', e => { if (e.target.id === 'dlg') $('dlg').close(); });
+$('dlg2').addEventListener('click', e => { if (e.target.id === 'dlg2' || e.target.closest('[data-cerrar2]')) $('dlg2').close(); });
 
 $('nuevoBtn').addEventListener('click', () => {
   if (!puedeCrear()) { toast('No tienes permiso para crear fichas', true); return; }
@@ -1361,7 +1367,7 @@ async function cargarSeguimiento() {
     <div class="saludo"><div><h1>Seguimiento</h1><div class="fecha">Cómo avanza cada médico</div></div>
       <div class="acts" style="margin:0">
         ${PERFIL.rol === 'Administrador' ? '<button class="btn sec" id="segdup">Duplicados</button>' : ''}
-        ${menuDescarga('seg', [{ k: 'csv', ico: '📄', t: 'CSV para Excel' }, { k: 'xls', ico: '📊', t: 'Excel (.xls)' }])}</div></div>
+        <button class="btn sec" id="segtools" title="Filtros y descargas">⋮</button></div></div>
     <div class="kpis" id="segkpis"><div class="skel"></div></div>
     <div class="panel">
       <div class="filtros">
@@ -1377,7 +1383,7 @@ async function cargarSeguimiento() {
         </select></div>
       </div>
       <div class="cuenta" id="scuenta">Cargando…</div>
-      <div id="slista"></div>
+      <div id="slista"><div class="cargador"><span class="spin"></span><span class="sm">Cargando el seguimiento…</span></div></div>
       <button class="mas hide" id="smas">Cargar más</button>
     </div>`;
 
@@ -1397,6 +1403,7 @@ async function cargarSeguimiento() {
     descargar(data || [], 'DLC_seguimiento', fmt);
   };
   if ($('segdup')) $('segdup').onclick = () => { DUPS = null; abrirDuplicados(); };
+  $('segtools').onclick = () => abrirHerramientas('seguimiento');
 
   const { data: r } = await db.rpc('resumen_seguimiento');
   if (r) {
@@ -1423,7 +1430,9 @@ async function listaSeguimiento(reinicia) {
   $('scuenta').innerHTML = `<b>${num(data.total)}</b> médicos`;
   const filas = data.filas || [];
   if (!filas.length && SEG.pagina === 0) { $('slista').innerHTML = '<div class="vacio">Nada que mostrar con estos filtros.</div>'; }
-  else $('slista').insertAdjacentHTML('beforeend', filas.map(m => `
+  else {
+    if (SEG.pagina === 0) $('slista').innerHTML = '';
+    $('slista').insertAdjacentHTML('beforeend', filas.map(m => `
     <button class="fila" data-id="${m.id}">
       <span><span class="nm">${m.urgente ? '<span class="pill p-urg">Urgente</span> ' : ''}${esc(m.nombre)}</span>
         <span class="sm">${esc(m.especialidad || '')} · ${esc(m.centro_nombre || '')} ${esc(m.municipio || '')}</span></span>
@@ -1436,6 +1445,7 @@ async function listaSeguimiento(reinicia) {
         : ''}</span></span>
       <span class="pill p-est">${esc(m.estado_comercial)}</span>
     </button>`).join(''));
+  }
   const most = SEG.pagina * 100 + filas.length;
   $('smas').classList.toggle('hide', most >= data.total);
   $('smas').onclick = () => { SEG.pagina++; listaSeguimiento(false); };
@@ -1489,7 +1499,8 @@ async function abrirDuplicados() {
   $('dbody').innerHTML = `<div class="fh"><div><h2>Duplicados</h2>
       <div class="sm">Fichas marcadas y búsqueda de parecidos en toda la base</div></div>
       <button class="x" data-cerrar aria-label="Cerrar">✕</button></div>
-    <div class="acts"><button class="btn sec" id="dscan">Buscar parecidos (≥80%)</button></div>
+    <div class="acts"><button class="btn sec" id="dscan">Buscar parecidos (≥80%)</button>
+      <button class="btn sec" id="dpend">Revisar pendientes</button></div>
     <div id="dcuerpo"><div class="skel"></div><div class="skel" style="width:60%"></div></div>`;
   $('dlg').showModal();
 
@@ -1501,6 +1512,7 @@ async function abrirDuplicados() {
     pintarDuplicados();
   };
 
+  $('dpend').onclick = () => revisarPendientes();
   const { data } = await db.rpc('duplicados_pendientes');
   DUPS = data || [];
   pintarDuplicados();
@@ -1757,7 +1769,7 @@ const KPI_CAT = [
   { id: 'interesados',  t: 'médicos interesados',      v: k => k.interesados, cls: () => 'ok', h: 'interesados' },
   { id: 'sin_contactar', t: 'sin contactar',           v: k => k.sin_contactar, h: 'sin_contactar' },
   { id: 'cartera',      t: 'médicos en tu cartera',    v: k => k.medicos, h: 'todos' },
-  { id: 'dups',         t: 'pendientes de unificar',   v: k => k.pendientes_unificar, cls: () => 'warn', admin: true }
+  { id: 'dups',         t: 'pendientes de unificar',   v: k => k.pendientes_unificar, cls: () => 'warn', admin: true, h: 'dups' }
 ];
 const KPI_DEF = ['citas', 'urgentes', 'visitas_sem', 'visitas_mes', 'interesados', 'sin_contactar', 'cartera', 'dups'];
 
@@ -2074,6 +2086,7 @@ function abrirColumnas() {
 $('colsBtn').addEventListener('click', abrirColumnas);
 $('cercaBtn').addEventListener('click', e => cercaDeMi(e.target));
 $('dupBtn').addEventListener('click', () => { DUPS = null; abrirDuplicados(); });
+$('dirtools').addEventListener('click', () => abrirHerramientas('directorio'));
 
 
 
@@ -2197,13 +2210,17 @@ async function atribuir(lineaId, texto) {
 
 /* ---------------- alta de pedido ---------------- */
 
-async function editorPedido() {
-  let lineas = [{ producto_id: (PRODUCTOS[0] || {}).id || '', unidades: 1 }];
-  let medico = null;
+async function editorPedido(pedido) {
+  let lineas = pedido && pedido.lineas && pedido.lineas.length
+    ? pedido.lineas.map(l => ({ producto_id: l.producto_id, unidades: l.unidades, importe: l.importe, descuento: l.descuento || 0 }))
+    : [{ producto_id: (PRODUCTOS[0] || {}).id || '', unidades: 1 }];
+  let medico = pedido && pedido.lineas && pedido.lineas[0] && pedido.lineas[0].medico_id
+    ? { id: pedido.lineas[0].medico_id, nombre: pedido.lineas[0].medico } : null;
+  let contacto = pedido && pedido.contacto ? pedido.contacto : null;
 
   const pinta = () => {
     $('dbody').innerHTML = `
-      <div class="fh"><div><h2>Nuevo pedido</h2><div class="sm">Las unidades se atribuyen al médico y a su comercial</div></div>
+      <div class="fh"><div><h2>${pedido ? 'Editar pedido' : 'Nuevo pedido'}</h2><div class="sm">Las unidades se atribuyen al médico y a su comercial</div></div>
         <button class="x" data-cerrar aria-label="Cerrar">✕</button></div>
       <div class="g2">
         <div><label for="pfecha">Fecha</label><input id="pfecha" type="date" value="${hoyISO()}"></div>
@@ -2212,26 +2229,35 @@ async function editorPedido() {
           <option value="centro">Venta a centro (con descuento)</option></select></div>
       </div>
       <div id="zonapac">
+        <label for="pcont">Paciente o contacto</label>
+        <div style="display:flex;gap:8px"><input id="pcont" placeholder="Busca por nombre o teléfono" value="${esc(contacto ? contacto.nombre : '')}" style="flex:1">
+          <button type="button" class="btn sec" id="pcontnuevo">+ Nuevo</button></div>
+        <div id="pcontcand" class="lista"></div>
         <label for="pmed">Médico que lo recomienda</label>
         <input id="pmed" placeholder="Código o nombre" value="${esc(medico ? medico.nombre : '')}">
         <div id="pmedcand" class="sm" style="margin-top:6px">${medico
           ? `<b style="color:var(--ok)">✓ ${esc(medico.nombre)}</b> · código ${esc(medico.codigo)}`
           : 'Escribe y elige de la lista. Si no aparece, el pedido queda pendiente de atribuir.'}</div>
-        <div class="g2" style="margin-top:10px">
-          <div><label for="pcnom">Paciente (nombre)</label><input id="pcnom"></div>
-          <div><label for="pctel">Teléfono</label><input id="pctel" inputmode="tel"></div>
-        </div>
       </div>
       <label>Líneas</label>
       <div id="plineas">${lineas.map((l, i) => {
         const pr = PRODUCTOS.find(p => p.id === l.producto_id) || {};
-        return `<div class="g2" style="margin-bottom:8px;grid-template-columns:2fr 1fr 1fr auto">
+        return `<div class="g2" style="margin-bottom:8px;grid-template-columns:2fr .8fr 1fr .7fr auto">
         <select data-lp="${i}">${PRODUCTOS.map(p => `<option value="${p.id}" ${l.producto_id === p.id ? 'selected' : ''}>${esc(p.nombre)}</option>`).join('')
           || '<option value="">Sin productos: créalos primero</option>'}</select>
         <input data-lu="${i}" type="number" min="1" value="${l.unidades}" placeholder="Unidades">
         <input data-li="${i}" type="number" step="0.01" min="0" value="${l.importe != null ? l.importe : (pr.precio ? (pr.precio * l.unidades).toFixed(2) : '')}" placeholder="Importe €">
+        <input data-ld="${i}" type="number" step="1" min="0" max="100" value="${l.descuento || 0}" placeholder="% dto" title="Descuento de esta línea">
         ${lineas.length > 1 ? `<button type="button" class="btn sec" data-lx="${i}">✕</button>` : ''}</div>`; }).join('')}</div>
       <div class="acts"><button type="button" class="btn sec" id="plmas">+ Añadir línea</button></div>
+      <div class="g2">
+        <div><label for="ppago">Forma de pago</label><select id="ppago"><option value=""></option>
+          ${(CAT.FORMA_PAGO || []).map(x => `<option ${pedido && pedido.pedido && pedido.pedido.forma_pago === x.valor ? 'selected' : ''}>${esc(x.valor)}</option>`).join('')}</select></div>
+        <div><label for="pdto">Descuento general</label>
+          <div style="display:flex;gap:6px"><input id="pdto" type="number" min="0" step="0.01" value="${pedido && pedido.pedido ? (pedido.pedido.descuento || 0) : 0}">
+            <select id="pdtot" style="max-width:110px"><option value="porcentaje">%</option><option value="importe">€</option></select></div></div>
+      </div>
+      <div class="totbox" id="ptot"></div>
       <label for="pnota">Nota</label><input id="pnota">
       <div class="acts" style="justify-content:flex-end">
         <button class="btn sec" data-cerrar>Cancelar</button>
@@ -2241,12 +2267,55 @@ async function editorPedido() {
       producto_id: d.querySelector(`[data-lp="${i}"]`).value,
       unidades: +d.querySelector(`[data-lu="${i}"]`).value || 1,
       importe: d.querySelector(`[data-li="${i}"]`) && d.querySelector(`[data-li="${i}"]`).value !== ''
-        ? +d.querySelector(`[data-li="${i}"]`).value : null
+        ? +d.querySelector(`[data-li="${i}"]`).value : null,
+      descuento: d.querySelector(`[data-ld="${i}"]`) ? +d.querySelector(`[data-ld="${i}"]`).value || 0 : 0
     }));
 
     $('plmas').onclick = () => { leer(); lineas.push({ producto_id: (PRODUCTOS[0] || {}).id || '', unidades: 1 }); pinta(); };
     $('plineas').querySelectorAll('[data-lx]').forEach(b => b.onclick = () => { leer(); lineas.splice(+b.dataset.lx, 1); pinta(); });
     $('pcan').onchange = () => $('zonapac').classList.toggle('hide', $('pcan').value === 'centro');
+
+    const totales = () => {
+      leer();
+      const base = lineas.reduce((n, l) => {
+        const pr = PRODUCTOS.find(p => p.id === l.producto_id) || {};
+        const imp = l.importe != null ? +l.importe : (pr.precio ? pr.precio * l.unidades : 0);
+        return n + imp * (1 - (+l.descuento || 0) / 100);
+      }, 0);
+      const dto = $('pdtot').value === 'porcentaje' ? base * (+$('pdto').value || 0) / 100 : (+$('pdto').value || 0);
+      const uds = lineas.reduce((n, l) => n + (+l.unidades || 0), 0);
+      $('ptot').innerHTML = `<div><span>Unidades</span><b>${num(uds)}</b></div>
+        <div><span>Base</span><b>${eur(base)}</b></div>
+        ${dto ? `<div><span>Descuento</span><b>−${eur(dto)}</b></div>` : ''}
+        <div class="tot"><span>Total</span><b>${eur(Math.max(0, base - dto))}</b></div>`;
+    };
+    ['pdto', 'pdtot'].forEach(id => { if ($(id)) $(id).oninput = totales; });
+    $('plineas').oninput = totales;
+    totales();
+
+    let tc;
+    if ($('pcont')) {
+      $('pcont').oninput = e => {
+        contacto = null;
+        clearTimeout(tc);
+        tc = setTimeout(async () => {
+          const q = e.target.value.trim();
+          if (q.length < 2) { $('pcontcand').innerHTML = ''; return; }
+          const { data } = await db.rpc('contactos_lista', { q, lim: 6 });
+          $('pcontcand').innerHTML = (data || []).map(x => `<button class="item" data-pc='${esc(JSON.stringify(x))}'>
+            <span class="ic">👤</span><span class="tx"><b>${esc(x.nombre)}</b>
+              <span class="sm">${esc(x.telefono || '')} · ${num(x.pedidos)} pedidos</span></span></button>`).join('')
+            || '<div class="vacio">Sin coincidencias. Créalo con + Nuevo.</div>';
+          $('pcontcand').querySelectorAll('[data-pc]').forEach(b => b.onclick = () => {
+            contacto = JSON.parse(b.dataset.pc);
+            $('pcont').value = contacto.nombre; $('pcontcand').innerHTML = '';
+          });
+        }, 300);
+      };
+      $('pcontnuevo').onclick = () => editorContacto({ nombre: $('pcont').value.trim() }, c => {
+        contacto = c; $('pcont').value = c.nombre; $('pcontcand').innerHTML = '';
+      });
+    }
 
     let t;
     $('pmed').oninput = e => {
@@ -2266,17 +2335,13 @@ async function editorPedido() {
     $('pguardar').onclick = async ev => {
       leer();
       ev.target.disabled = true; ev.target.textContent = 'Guardando…';
-      let contacto_id = null;
-      if ($('pcan').value === 'paciente' && $('pcnom').value.trim()) {
-        const { data: c } = await db.from('contactos')
-          .insert({ nombre: $('pcnom').value.trim().toUpperCase(), telefono: $('pctel').value.trim() })
-          .select('id').single();
-        contacto_id = c ? c.id : null;
-      }
       const { data: r, error } = await db.rpc('guardar_pedido', { p: {
+        id: pedido && pedido.pedido ? pedido.pedido.id : null,
         fecha: $('pfecha').value, canal: $('pcan').value,
         medico_id: medico ? medico.id : null, medico_texto: $('pmed') ? $('pmed').value.trim() : '',
-        contacto_id, nota: $('pnota').value.trim(),
+        contacto_id: contacto ? contacto.id : null, nota: $('pnota').value.trim(),
+        forma_pago: $('ppago').value || null,
+        descuento: +$('pdto').value || 0, descuento_tipo: $('pdtot').value,
         lineas: lineas.filter(l => l.producto_id), op_id: 'p-' + Date.now()
       }});
       ev.target.disabled = false; ev.target.textContent = 'Guardar pedido';
@@ -2298,7 +2363,7 @@ async function editorProductos() {
     <div class="fh"><div><h2>Productos</h2><div class="sm">Catálogo usado en pedidos, muestras y analítica</div></div>
       <button class="x" data-cerrar aria-label="Cerrar">✕</button></div>
     <div class="lista">${PRODUCTOS.map(p => `<div class="item" style="cursor:default">
-      <span class="ic">◧</span><span class="tx"><b>${esc(p.nombre)}</b>
+      <span class="ic" style="${p.foto_url ? `background:url('${esc(p.foto_url)}') center/cover` : ''}">${p.foto_url ? '' : '◧'}</span><span class="tx"><b>${esc(p.nombre)}</b>
         <span class="sm">${esc(p.presentacion || '')}${p.precio ? ' · ' + eur(p.precio) + ' + ' + (p.iva || 0) + '% IVA' : ''}${p.referencia ? ' · ref. ' + esc(p.referencia) : ''}</span></span>
       <span class="acts" style="margin:0"><button class="btn sec" data-pdel="${p.id}">Desactivar</button></span></div>`).join('')
       || '<div class="vacio">Todavía no hay productos.</div>'}</div>
@@ -2314,14 +2379,24 @@ async function editorProductos() {
       <div><label for="prref">Referencia</label><input id="prref"></div>
       <div><label for="prcb">Código de barras</label><input id="prcb"></div>
     </div>
+    <label for="prfoto">Foto del producto</label><input id="prfoto" type="file" accept="image/*">
     <div class="acts" style="justify-content:flex-end"><button class="btn" id="pradd">Añadir producto</button></div>`;
 
   $('pradd').onclick = async ev => {
     if (!$('prn').value.trim()) { toast('Escribe el nombre', true); return; }
     ev.target.disabled = true;
+    let foto_url = null;
+    const f = $('prfoto').files && $('prfoto').files[0];
+    if (f) {
+      const ruta = 'p-' + Date.now() + '-' + f.name.replace(/[^a-zA-Z0-9.]/g, '');
+      const { error: eu } = await db.storage.from('productos').upload(ruta, f, { upsert: true });
+      if (!eu) foto_url = db.storage.from('productos').getPublicUrl(ruta).data.publicUrl;
+      else toast('La foto no se ha podido subir: ' + eu.message, true);
+    }
     const { data: r, error } = await db.rpc('guardar_producto', { p: { nombre: $('prn').value.trim(),
       presentacion: $('prp').value.trim(), precio: $('prpr').value, iva: +$('priva').value || 10,
-      referencia: $('prref').value.trim(), codigo_barras: $('prcb').value.trim() } });
+      referencia: $('prref').value.trim(), codigo_barras: $('prcb').value.trim(),
+      ...(foto_url ? { foto_url } : {}) } });
     ev.target.disabled = false;
     if (error || (r && r.ok === false)) { toast('No se ha podido crear', true); return; }
     toast('Producto añadido'); editorProductos();
@@ -2338,7 +2413,7 @@ async function editorProductos() {
 async function cargarAnalitica() {
   $('v-analitica').innerHTML = `
     <div class="saludo"><div><h1>Analítica</h1><div class="fecha">Unidades por médico, comercial, producto o zona</div></div>
-      <div class="acts" style="margin:0">${menuDescarga('an', [{ k: 'csv', ico: '📄', t: 'CSV para Excel' }, { k: 'xls', ico: '📊', t: 'Excel (.xls)' }])}</div></div>
+      <div class="acts" style="margin:0"><button class="btn sec" id="antools" title="Descargas">⋮</button></div></div>
     <div class="panel">
       <div class="filtros">
         <div><label for="adim">Ver por</label><select id="adim">
@@ -2354,12 +2429,13 @@ async function cargarAnalitica() {
           <option value="unidades">Unidades</option><option value="importe">Importe</option></select></div>
       </div>
       <div class="cuenta" id="acuenta">Calculando…</div>
+      <div class="subnav" style="padding:12px 14px 0"><button data-avista="rank" aria-pressed="true">Ranking</button>
+        <button data-avista="tabla" aria-pressed="false">Tabla por meses</button></div>
       <div id="aserie" style="padding:14px"></div>
       <div id="atabla"></div>
-      <div class="subnav" style="padding:10px 14px 0"><button data-avista="rank" aria-pressed="true">Ranking</button>
-        <button data-avista="tabla" aria-pressed="false">Tabla por meses</button></div>
       <div id="atabla2"></div>
     </div>`;
+  $('antools').onclick = () => abrirHerramientas('analitica');
   ['adim', 'adesde', 'ahasta', 'acanal', 'amedida'].forEach(id => $(id).onchange = () => { pintarAnalitica(); pintarTablaAnalitica(); });
   $('v-analitica').querySelectorAll('[data-avista]').forEach(b => b.onclick = () => {
     const tabla = b.dataset.avista === 'tabla';
@@ -3356,6 +3432,316 @@ async function pintarTablaAnalitica() {
     o.total = f.total;
     return o;
   });
+}
+
+
+
+/* ============================================================
+   DLC OS 2.0 · Entrega 15 · Bloque F
+   ============================================================ */
+
+/* ---------------- panel lateral de herramientas ---------------- */
+
+function abrirHerramientas(contexto) {
+  const d = $('tools');
+  const filtrosDir = `
+    <h3>Filtros</h3>
+    <label>Provincia</label><select data-tf="prov">${optFiltro(OPF.provincias, F.prov, 'Todas las provincias')}</select>
+    <label>Municipio</label><select data-tf="muni">${optFiltro(OPF.municipios, F.muni, 'Todos los municipios')}</select>
+    <label>Especialidad</label><select data-tf="esp">${optFiltro(OPF.especialidades, F.esp, 'Todas las especialidades')}</select>
+    <label>Estado comercial</label><select data-tf="est">${optFiltro(OPF.estados, F.est, 'Todos los estados')}</select>
+    <label>Ordenar por</label><select data-tf="orden">
+      <option value="nombre" ${F.orden === 'nombre' ? 'selected' : ''}>Nombre</option>
+      <option value="urgentes" ${F.orden === 'urgentes' ? 'selected' : ''}>Urgentes primero</option>
+      <option value="reciente" ${F.orden === 'reciente' ? 'selected' : ''}>Visita más reciente</option></select>
+    <div class="acts"><button class="btn sec" id="tlimpiar">Limpiar filtros</button></div>
+    <h3 style="margin-top:18px">Columnas</h3>
+    <p class="sm">Arrastra el borde de cada cabecera para cambiar su ancho.</p>
+    <div class="acts"><button class="btn sec" id="tcols">Elegir columnas</button></div>`;
+
+  d.innerHTML = `<div class="tbox">
+    <div class="fh"><h2>Herramientas</h2><button class="x" id="tclose" aria-label="Cerrar">✕</button></div>
+    ${contexto === 'directorio' ? filtrosDir : ''}
+    <h3 style="margin-top:18px">Descargar</h3>
+    <div class="acts">
+      <button class="btn sec" data-tdl="csv">📄 CSV para Excel</button>
+      <button class="btn sec" data-tdl="xls">📊 Excel (.xls)</button></div>
+  </div>`;
+  d.classList.add('abierto');
+
+  $('tclose').onclick = () => d.classList.remove('abierto');
+  d.querySelectorAll('[data-tf]').forEach(s => s.onchange = () => {
+    const k = s.dataset.tf;
+    if (k === 'prov') { F.prov = s.value; F.muni = ''; cargarFiltros(); }
+    else F[k] = s.value;
+    buscar(true);
+  });
+  if ($('tlimpiar')) $('tlimpiar').onclick = () => {
+    Object.assign(F, { q: '', prov: '', muni: '', esp: '', est: '', urg: false, orden: 'nombre' });
+    $('q').value = ''; buscar(true); d.classList.remove('abierto');
+  };
+  if ($('tcols')) $('tcols').onclick = () => { d.classList.remove('abierto'); abrirColumnas(); };
+  d.querySelectorAll('[data-tdl]').forEach(b => b.onclick = () => {
+    const fmt = b.dataset.tdl;
+    d.classList.remove('abierto');
+    if (contexto === 'directorio' && window.__dlDir) window.__dlDir(fmt);
+    if (contexto === 'seguimiento' && window.__dlSeg) window.__dlSeg(fmt);
+    if (contexto === 'analitica' && window.__dlAn) window.__dlAn(fmt);
+  });
+}
+
+let OPF = { provincias: [], municipios: [], especialidades: [], estados: [], centros: [] };
+const optFiltro = (lista, v, todo) => `<option value="">${todo}</option>` +
+  (lista || []).map(o => `<option ${v === o.v ? 'selected' : ''}>${esc(o.v)} (${o.n})</option>`).join('');
+
+/* ---------------- contactos: alta completa y buscador ---------------- */
+
+function editorContacto(c, alGuardar) {
+  c = c || {};
+  $('dlg2body').innerHTML = `
+    <div class="fh"><div><h2>${c.id ? 'Editar contacto' : 'Nuevo contacto'}</h2>
+      <div class="sm">Datos de envío y facturación, como en un pedido normal</div></div>
+      <button class="x" data-cerrar2 aria-label="Cerrar">✕</button></div>
+    <div class="g2">
+      <div><label for="konom">Nombre</label><input id="konom" value="${esc(c.nombre || '')}"></div>
+      <div><label for="konif">NIF</label><input id="konif" value="${esc(c.nif || '')}"></div>
+    </div>
+    <label>Este contacto es…</label>
+    <div class="subnav" style="margin:6px 0 10px"><button type="button" data-ktipo="Persona" aria-pressed="${(c.tipo || 'Persona') === 'Persona'}">Persona</button>
+      <button type="button" data-ktipo="Empresa" aria-pressed="${c.tipo === 'Empresa'}">Empresa</button></div>
+    <div class="g2">
+      <div><label for="kodir">Dirección</label><input id="kodir" value="${esc(c.direccion || '')}"></div>
+      <div><label for="kocp">Código postal</label><input id="kocp" value="${esc(c.cp || '')}"></div>
+    </div>
+    <div class="g2">
+      <div><label for="komun">Población</label><input id="komun" value="${esc(c.municipio || '')}"></div>
+      <div><label for="kopro">Provincia</label><input id="kopro" value="${esc(c.provincia || '')}"></div>
+    </div>
+    <div class="g2">
+      <div><label for="kotel">Teléfono</label><input id="kotel" value="${esc(c.telefono || '')}" inputmode="tel"></div>
+      <div><label for="komov">Móvil</label><input id="komov" value="${esc(c.movil || '')}" inputmode="tel"></div>
+    </div>
+    <div class="g2">
+      <div><label for="komail">Email</label><input id="komail" type="email" value="${esc(c.email || '')}"></div>
+      <div><label for="koemp">Empresa</label><input id="koemp" value="${esc(c.empresa || '')}"></div>
+    </div>
+    <label for="konota">Nota</label><input id="konota" value="${esc(c.nota || '')}">
+    <div class="acts" style="justify-content:flex-end">
+      <button class="btn sec" data-cerrar2>Cancelar</button>
+      <button class="btn" id="kook">${c.id ? 'Guardar' : 'Crear contacto'}</button></div>`;
+
+  let tipo = c.tipo || 'Persona';
+  $('dlg2body').querySelectorAll('[data-ktipo]').forEach(b => b.onclick = () => {
+    tipo = b.dataset.ktipo;
+    $('dlg2body').querySelectorAll('[data-ktipo]').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+  });
+
+  $('kook').onclick = async ev => {
+    if (!$('konom').value.trim()) { toast('Escribe el nombre', true); return; }
+    ev.target.disabled = true; ev.target.textContent = 'Guardando…';
+    const { data: r, error } = await db.rpc('guardar_contacto', { p: {
+      id: c.id || null, nombre: $('konom').value.trim(), nif: $('konif').value.trim(), tipo,
+      direccion: $('kodir').value.trim(), cp: $('kocp').value.trim(), municipio: $('komun').value.trim(),
+      provincia: $('kopro').value.trim(), telefono: $('kotel').value.trim(), movil: $('komov').value.trim(),
+      email: $('komail').value.trim(), empresa: $('koemp').value.trim(), nota: $('konota').value.trim()
+    }});
+    ev.target.disabled = false; ev.target.textContent = c.id ? 'Guardar' : 'Crear contacto';
+    if (error || (r && r.ok === false)) { toast('No se ha podido guardar', true); return; }
+    $('dlg2').close(); toast('Contacto guardado');
+    if (alGuardar) alGuardar(r.contacto);
+  };
+  $('dlg2').showModal();
+}
+
+/* ---------------- clasificadores por grupos ---------------- */
+
+let CATS_ABIERTOS = {};
+
+async function pintarCatalogos() {
+  cargando($('cfgcuerpo'), 'Cargando los clasificadores…');
+  const { data } = await db.rpc('catalogos_todos');
+  CATS = data || [];
+  const puedeEditar = PERFIL.rol === 'Administrador' || ((PERFIL.areas || {}).K || 0) >= 2;
+  const completo = PERFIL.rol === 'Administrador' || ((PERFIL.areas || {}).K || 0) >= 3;
+
+  const grupos = {};
+  CATS.forEach(c => (grupos[c.grupo || 'General'] = grupos[c.grupo || 'General'] || []).push(c));
+
+  $('cfgcuerpo').innerHTML = `
+    <div class="dayhead2"><p class="sm">Listas que usan todos los usuarios en fichas, visitas, pedidos y filtros.
+      ${puedeEditar ? '' : '<b>Tienes permiso de solo lectura.</b>'}</p>
+      ${completo ? '<button class="btn" id="cnuevo">+ Nuevo clasificador</button>' : ''}</div>
+    ${Object.entries(grupos).map(([g, lista]) => `
+      <div class="grupo">
+        <button class="grupoh" data-grupo="${esc(g)}">
+          <span>${CATS_ABIERTOS[g] === false ? '▸' : '▾'} <b>${esc(g)}</b>
+            <span class="sm">${lista.length} ${lista.length === 1 ? 'clasificador' : 'clasificadores'}</span></span></button>
+        <div class="grupoc ${CATS_ABIERTOS[g] === false ? 'hide' : ''}">
+          ${lista.map(c => `<button class="cat-card" data-cat="${c.id}">
+            <span class="cat-h"><b>${esc(c.nombre)}</b>
+              ${c.sistema ? '<span class="tagsis">del sistema</span>' : ''}
+              ${puedeEditar ? '' : '<span class="tagro" title="Solo lectura">🔒</span>'}</span>
+            <span class="sm">${c.n_activos} ${c.n_activos === 1 ? 'valor activo' : 'valores activos'}${c.descripcion ? ' · ' + esc(c.descripcion) : ''}</span>
+            <span class="cat-v">${(c.valores || []).filter(v => v.activo).slice(0, 5).map(v => `<span class="chip">${esc(v.valor)}</span>`).join('')}
+              ${c.n_activos > 5 ? `<span class="sm">+${c.n_activos - 5}</span>` : ''}</span>
+          </button>`).join('')}
+        </div></div>`).join('')}`;
+
+  $('cfgcuerpo').querySelectorAll('[data-grupo]').forEach(b => b.onclick = () => {
+    const g = b.dataset.grupo;
+    CATS_ABIERTOS[g] = CATS_ABIERTOS[g] === false;
+    pintarCatalogos();
+  });
+  $('cfgcuerpo').querySelectorAll('[data-cat]').forEach(b => b.onclick = () => abrirClasificador(b.dataset.cat));
+  if ($('cnuevo')) $('cnuevo').onclick = () => nuevoClasificador();
+}
+
+function abrirClasificador(id) {
+  const c = CATS.find(x => x.id === id); if (!c) return;
+  const puedeEditar = PERFIL.rol === 'Administrador' || ((PERFIL.areas || {}).K || 0) >= 2;
+  const completo = PERFIL.rol === 'Administrador' || ((PERFIL.areas || {}).K || 0) >= 3;
+
+  const pinta = () => {
+    $('dbody').innerHTML = `
+      <div class="fh"><div><h2>${esc(c.nombre)}</h2>
+        <div class="sm">Grupo ${esc(c.grupo || 'General')} · se usa en ${esc(c.ambito === 'pedido' ? 'pedidos' : c.ambito === 'visita' ? 'visitas' : 'fichas de médico')}
+        ${puedeEditar ? '' : ' · <b>solo lectura</b>'}</div></div>
+        <button class="x" data-cerrar aria-label="Cerrar">✕</button></div>
+      <div class="lista">${(c.valores || []).map(v => `<div class="item" style="cursor:default">
+        <span class="ic">${v.activo ? '●' : '○'}</span>
+        <span class="tx"><b style="${v.activo ? '' : 'opacity:.5;text-decoration:line-through'}">${esc(v.valor)}</b>
+          ${v.extra ? `<span class="sm">${v.extra === 'neg' ? 'sin visita' : 'visita realizada'}</span>` : ''}</span>
+        ${puedeEditar ? `<span class="acts" style="margin:0">
+          <button class="btn sec" data-vren="${v.id}|${esc(v.valor)}">Renombrar</button>
+          <button class="btn sec" data-vtog="${v.id}|${v.activo ? 0 : 1}">${v.activo ? 'Desactivar' : 'Activar'}</button>
+          ${completo ? `<button class="btn sec dang" data-vdel="${v.id}">Eliminar</button>` : ''}</span>` : ''}
+      </div>`).join('') || '<div class="vacio">Sin valores todavía.</div>'}</div>
+      ${puedeEditar ? `<div class="acts"><input id="cvnew" placeholder="Nuevo valor" style="flex:1;min-width:160px">
+        ${c.clave === 'RESULTADO' ? `<select id="cvextra" style="max-width:170px"><option value="pos">Visita realizada</option><option value="neg">Sin visita</option></select>` : ''}
+        <button class="btn" id="cvadd">Añadir</button></div>` : ''}
+      ${completo && !c.sistema ? `<div class="acts" style="justify-content:flex-end;border-top:1px solid var(--line);padding-top:12px">
+        <button class="btn sec dang" id="cdel">Eliminar clasificador</button></div>` : ''}`;
+
+    const recarga = async () => {
+      const { data } = await db.rpc('catalogos_todos');
+      CATS = data || [];
+      Object.assign(c, CATS.find(x => x.id === id) || c);
+      pinta(); cargarCatalogos();
+    };
+
+    if ($('cvadd')) $('cvadd').onclick = async () => {
+      const v = $('cvnew').value.trim(); if (!v) return;
+      const { error } = await db.rpc('guardar_valor', { p: { clasificador_id: id, valor: v,
+        extra: $('cvextra') ? $('cvextra').value : null } });
+      if (error) { toast('No se ha podido añadir', true); return; }
+      toast('Valor añadido'); recarga();
+    };
+    $('dbody').querySelectorAll('[data-vtog]').forEach(b => b.onclick = async () => {
+      const [vid, activo] = b.dataset.vtog.split('|');
+      await db.rpc('guardar_valor', { p: { id: vid, activo: activo === '1' } });
+      recarga();
+    });
+    $('dbody').querySelectorAll('[data-vren]').forEach(b => b.onclick = async () => {
+      const [vid, actual] = b.dataset.vren.split('|');
+      const nuevo = await pedirTexto('Nuevo nombre', actual, { titulo: 'Renombrar valor', ok: 'Guardar' });
+      if (!nuevo) return;
+      await db.rpc('guardar_valor', { p: { id: vid, valor: nuevo } });
+      toast('Renombrado'); recarga();
+    });
+    $('dbody').querySelectorAll('[data-vdel]').forEach(b => b.onclick = async () => {
+      if (!await preguntar('Las fichas y visitas que ya lo usan lo conservan, pero dejará de aparecer.',
+        { titulo: '¿Eliminar el valor?', ok: 'Eliminar', peligro: true })) return;
+      const { data: r } = await db.rpc('borrar_valor', { p_id: b.dataset.vdel });
+      if (r && r.ok === false) { toast('No tienes permiso', true); return; }
+      toast('Eliminado'); recarga();
+    });
+    if ($('cdel')) $('cdel').onclick = async () => {
+      if (!await preguntar(`Se elimina "${c.nombre}" y todos sus valores.`,
+        { titulo: '¿Eliminar el clasificador?', ok: 'Eliminar', peligro: true })) return;
+      const { data: r } = await db.rpc('borrar_clasificador', { p_id: id });
+      if (r && r.ok === false) { toast(r.error === 'sistema' ? 'Los del sistema no se pueden eliminar' : 'Sin permiso', true); return; }
+      $('dlg').close(); toast('Clasificador eliminado'); pintarCatalogos(); cargarCatalogos();
+    };
+  };
+  pinta();
+  $('dlg').showModal();
+}
+
+function nuevoClasificador() {
+  let valores = [''];
+  const grupos = [...new Set(CATS.map(c => c.grupo || 'General').concat(['Médicos', 'Visitas', 'Ventas', 'General']))];
+
+  const pinta = () => {
+    $('dbody').innerHTML = `
+      <div class="fh"><div><h2>Nuevo clasificador</h2>
+        <div class="sm">Una lista propia que podrás usar en fichas, visitas o pedidos</div></div>
+        <button class="x" data-cerrar aria-label="Cerrar">✕</button></div>
+      <div class="g2">
+        <div><label for="ncn2">Nombre</label><input id="ncn2" placeholder="p. ej. Tipo de centro"></div>
+        <div><label for="ncg">Grupo</label><select id="ncg">${grupos.map(g => `<option>${esc(g)}</option>`).join('')}</select></div>
+      </div>
+      <div class="g2">
+        <div><label for="nca">¿Dónde se usa?</label><select id="nca">
+          <option value="medico">En la ficha del médico</option>
+          <option value="visita">Al registrar una visita</option>
+          <option value="pedido">En los pedidos</option></select></div>
+        <div><label for="ncd">Descripción</label><input id="ncd" placeholder="Para qué sirve"></div>
+      </div>
+      <label>Valores</label>
+      <div id="ncv">${valores.map((v, i) => `<div class="g2" style="grid-template-columns:1fr auto;margin-bottom:6px">
+        <input data-ncv="${i}" value="${esc(v)}" placeholder="Valor ${i + 1}">
+        ${valores.length > 1 ? `<button type="button" class="btn sec" data-ncx="${i}">✕</button>` : ''}</div>`).join('')}</div>
+      <div class="acts"><button type="button" class="btn sec" id="ncmas">+ Añadir valor</button></div>
+      <div class="acts" style="justify-content:flex-end">
+        <button class="btn sec" data-cerrar>Cancelar</button>
+        <button class="btn" id="ncok2">Crear clasificador</button></div>`;
+
+    const leer = () => valores = [...$('ncv').querySelectorAll('[data-ncv]')].map(i => i.value);
+    $('ncmas').onclick = () => { leer(); valores.push(''); pinta(); };
+    $('dbody').querySelectorAll('[data-ncx]').forEach(b => b.onclick = () => { leer(); valores.splice(+b.dataset.ncx, 1); pinta(); });
+    $('ncok2').onclick = async ev => {
+      leer();
+      const nombre = $('ncn2').value.trim();
+      if (!nombre) { toast('Ponle un nombre', true); return; }
+      ev.target.disabled = true;
+      const { data: r } = await db.rpc('crear_clasificador', { p: {
+        nombre, grupo: $('ncg').value, ambito: $('nca').value, descripcion: $('ncd').value.trim(),
+        valores: valores.map(v => v.trim()).filter(Boolean)
+      }});
+      ev.target.disabled = false;
+      if (r && r.ok === false) { toast('No tienes permiso', true); return; }
+      $('dlg').close(); toast('Clasificador creado'); pintarCatalogos(); cargarCatalogos();
+    };
+  };
+  pinta();
+  $('dlg').showModal();
+}
+
+/* ---------------- duplicados pendientes con su pareja ---------------- */
+
+async function revisarPendientes() {
+  cargando($('dbody'), 'Buscando pendientes…');
+  $('dlg').showModal();
+  const { data } = await db.rpc('duplicados_pendientes');
+  const l = data || [];
+  $('dbody').innerHTML = `
+    <div class="fh"><div><h2>Pendientes de unificar</h2>
+      <div class="sm">${l.length} fichas marcadas al darlas de alta</div></div>
+      <button class="x" data-cerrar aria-label="Cerrar">✕</button></div>
+    <div class="lista">${l.map(x => `<div class="item" style="cursor:default">
+      <span class="ic w">${x.pct ? x.pct + '%' : '?'}</span>
+      <span class="tx"><b>${esc(x.nombre)}</b>
+        <span class="sm">Código ${esc(x.codigo)} · ${esc(x.centro || '')} ${esc(x.municipio || '')}</span>
+        <span class="sm">${x.par_nombre ? 'Se parece a ' + esc(x.par_nombre) : 'Sin pareja identificada'}</span></span>
+      <span class="acts" style="margin:0">
+        ${x.par_id ? `<button class="btn" data-cmp="${x.id}|${x.par_id}">Comparar</button>` : ''}
+        <button class="btn sec" data-dficha="${x.id}">Ver ficha</button></span></div>`).join('')
+      || '<div class="vacio">No hay fichas pendientes de unificar.</div>'}</div>`;
+
+  $('dbody').querySelectorAll('[data-cmp]').forEach(b => b.onclick = () => {
+    const [a, c] = b.dataset.cmp.split('|'); compararFichas(a, c);
+  });
+  $('dbody').querySelectorAll('[data-dficha]').forEach(b => b.onclick = () => { $('dlg').close(); abrirFicha(b.dataset.dficha); });
 }
 
 
