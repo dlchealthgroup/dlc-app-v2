@@ -322,7 +322,7 @@ async function abrirFicha(id) {
       ${c.telefono ? `<div class="sm">Teléfono: ${esc(c.telefono)}</div>` : ''}
       <div class="dias" style="margin-top:8px">${dias.map(k => `<span class="${(c.dias || {})[k] ? 'on' : ''}">${k}</span>`).join('')}</div>
       ${dias.filter(k => (c.dias || {})[k]).map(k => `<div class="sm">${k}: ${esc(c.dias[k])}</div>`).join('')}
-      ${c.lat ? `<div class="sm" style="margin-top:6px"><a href="https://www.google.com/maps/dir/?api=1&destination=${c.lat},${c.lon}" target="_blank" rel="noopener">Cómo llegar</a></div>` : ''}
+      ${c.lat ? `<div class="sm" style="margin-top:6px"><a href="${enlaceNav([c.lat, c.lon])}" target="_blank" rel="noopener">Cómo llegar</a></div>` : ''}
     </div>`).join('')}
     <div class="blk"><h3>Visitas</h3>
       ${vis.length ? vis.slice(0, 8).map(v => `<div style="padding:6px 0;border-top:1px solid var(--line)">
@@ -869,27 +869,6 @@ document.addEventListener('click', async e => {
 
 let RUTAS = [], PLAN = null;
 
-async function cargarRutas() {
-  $('v-rutas').innerHTML = `
-    <div class="saludo"><div><h1>Rutas</h1><div class="fecha">Elige una ruta para planificar el día</div></div></div>
-    <div class="card" id="rlista"><div class="skel"></div><div class="skel" style="width:60%"></div></div>
-    <div id="rplan"></div>`;
-  const { data, error } = await db.rpc('rutas_visibles');
-  if (error) { $('rlista').innerHTML = `<div class="vacio">No se ha podido cargar: ${esc(error.message)}</div>`; return; }
-  RUTAS = data || [];
-  if (!RUTAS.length) {
-    $('rlista').innerHTML = `<div class="vacio">Todavía no hay rutas creadas. El gestor de rutas llega en la próxima entrega;
-      mientras tanto puedes planificar desde el Directorio con los filtros.</div>`;
-    return;
-  }
-  $('rlista').innerHTML = `<h2>Tus rutas<span class="n">${RUTAS.length}</span></h2><div class="lista">${
-    RUTAS.map(r => `<div class="item" style="cursor:default">
-      <span class="ic ${r.tipo === 'Urgente' ? 'w' : ''}">${r.tipo === 'Urgente' ? '★' : '◉'}</span>
-      <span class="tx"><b>${esc(r.nombre)}</b><span class="sm">${r.dinamica ? 'Por criterios' : r.n_fijos + ' médicos'} · ${r.visitados} visitados${r.desde ? ' desde ' + fechaCorta(r.desde) : ''}</span></span>
-      <span class="acts" style="margin:0"><button class="btn" data-ruta="${r.id}">Planificar hoy</button></span>
-    </div>`).join('')}</div>`;
-}
-
 document.addEventListener('click', e => {
   const b = e.target.closest('[data-ruta]');
   if (b) planificar(b.dataset.ruta, b);
@@ -910,54 +889,33 @@ async function planificar(rutaId, btn) {
   const { data, error } = await db.rpc('medicos_de_ruta', { p_id: rutaId });
   btn.disabled = false; btn.textContent = orig;
   if (error) { toast('No se ha podido planificar: ' + error.message, true); return; }
-
   const conXY = (data || []).filter(m => m.lat && m.lon);
   if (!conXY.length) { toast('Esta ruta no tiene médicos con ubicación', true); return; }
-
-  // Agrupamos por centro y ordenamos por cercanía desde el punto de salida
-  const salida = (PERFIL.preferencias && PERFIL.preferencias.salida) || { nombre: 'Santpedor', lat: 41.7833, lon: 1.8414 };
-  const paradas = {};
-  conXY.forEach(m => {
-    const k = (m.centro_nombre || 'Consulta') + '|' + (m.municipio || '');
-    (paradas[k] = paradas[k] || { centro: m.centro_nombre || 'Consulta privada', municipio: m.municipio, dir: m.direccion, xy: [m.lat, m.lon], medicos: [] }).medicos.push(m);
-  });
-
-  let pos = [salida.lat, salida.lon], t = 9 * 60, libres = Object.values(paradas), orden = [];
-  while (libres.length && t < 18 * 60 && orden.length < 12) {
-    libres.sort((a, b) => km(pos, a.xy) - km(pos, b.xy));
-    const p = libres.shift();
-    const viaje = minutosEntre(pos, p.xy);
-    const dura = 10 + 15 * Math.min(p.medicos.length, 6);
-    if (t + viaje + dura > 18 * 60) break;
-    orden.push({ ...p, llegada: t + viaje, fin: t + viaje + dura, viaje });
-    t += viaje + dura; pos = p.xy;
-  }
-
-  PLAN = { rutaId, salida, paradas: orden, fin: t + minutosEntre(pos, [salida.lat, salida.lon]) };
-  pintarPlan();
-  window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+  construirPlan(conXY, rutaId, btn);
 }
 
 function pintarPlan() {
   if (!PLAN) { $('rplan').innerHTML = ''; return; }
   const total = PLAN.paradas.reduce((n, p) => n + p.medicos.length, 0);
-  const enlace = 'https://www.google.com/maps/dir/?api=1&origin=' + PLAN.salida.lat + ',' + PLAN.salida.lon +
-    '&destination=' + PLAN.salida.lat + ',' + PLAN.salida.lon + '&travelmode=driving&waypoints=' +
-    encodeURIComponent(PLAN.paradas.map(p => p.xy.join(',')).join('|'));
+  const ultima = PLAN.paradas[PLAN.paradas.length - 1];
+  const enlace = enlaceNav(navActual() === 'google' ? [PLAN.salida.lat, PLAN.salida.lon] : ultima.xy,
+    navActual() === 'google' ? PLAN.paradas.map(p => p.xy) : null);
 
   $('rplan').innerHTML = `<div class="card">
-    <h2>Plan de hoy<span class="n">${total} médicos</span></h2>
-    <p class="sm">Salida de ${esc(PLAN.salida.nombre)} a las 09:00 · ${PLAN.paradas.length} paradas · vuelta sobre las ${hm(PLAN.fin)}</p>
+    <h2>Plan de hoy<span class="n">${total} ${total === 1 ? 'médico' : 'médicos'}</span></h2>
+    <p class="sm">Salida de ${esc(PLAN.salida.nombre)} a las ${PLANCFG().salida} · ${PLAN.paradas.length} ${PLAN.paradas.length === 1 ? 'parada' : 'paradas'} ·
+      vuelta sobre las ${hm(PLAN.fin)} · <button class="kcfg" id="planhora">⚙ Cambiar horario</button></p>
     <div class="lista">${PLAN.paradas.map((p, i) => `<div class="item" style="cursor:default">
       <span class="ic">${i + 1}</span>
       <span class="tx"><b>${esc(p.centro)}</b>
         <span class="sm">${hm(p.llegada)}–${hm(p.fin)} · ${esc([p.dir, p.municipio].filter(Boolean).join(', '))} · ${p.medicos.length} ${p.medicos.length === 1 ? 'médico' : 'médicos'}</span>
         <span class="sm">${p.medicos.map(m => esc(m.nombre)).join(' · ')}</span></span>
+      <span class="acts" style="margin:0"><a class="btn sec" href="${enlaceNav(p.xy)}" target="_blank" rel="noopener">Ir</a></span>
     </div>`).join('')}</div>
     <div id="planmapa" style="height:0;margin:0 16px;border-radius:12px;overflow:hidden"></div>
     <div class="acts" style="padding:12px 16px 16px">
       <button class="btn sec" id="planver">Ver la ruta en el mapa</button>
-      <a class="btn" href="${enlace}" target="_blank" rel="noopener">Abrir en Google Maps</a>
+      <a class="btn" href="${enlace}" target="_blank" rel="noopener">Abrir en ${esc((NAVEGADORES.find(n => n[0] === navActual()) || [])[1] || 'el mapa')}</a>
       <button class="btn sec" id="planag">Guardar en mi agenda</button>
       <button class="btn" id="planempezar">▶ Empezar ruta</button>
       <button class="btn sec" id="plancerrar">Cerrar</button>
@@ -965,6 +923,7 @@ function pintarPlan() {
 
   $('plancerrar').onclick = () => { PLAN = null; pintarPlan(); };
   $('planver').onclick = e => { mapaDelPlan(); e.target.classList.add('hide'); };
+  if ($('planhora')) $('planhora').onclick = abrirHorarioPlan;
   $('planempezar').onclick = () => empezarRuta();
   $('planag').onclick = async ev => {
     ev.target.disabled = true; ev.target.textContent = 'Guardando…';
@@ -1016,14 +975,13 @@ const puedeCatalogos = () => PERFIL && (PERFIL.rol === 'Administrador' || ((PERF
 /* ---------------- configuración ---------------- */
 
 async function cargarConfig() {
-  const secs = [['prefs', 'Mis preferencias'], ['rutas', 'Gestor de rutas']]
-    .concat(puedeCatalogos() ? [['cat', 'Clasificadores']] : []);
+  const secs = [['prefs', 'Mis preferencias']].concat(puedeCatalogos() ? [['cat', 'Clasificadores']] : []);
+  if (CFG_SEC === 'rutas') CFG_SEC = 'prefs';
   $('v-config').innerHTML = `
     <div class="saludo"><div><h1>Configuración</h1><div class="fecha">Ajustes de tu cuenta y de la plataforma</div></div></div>
     <div class="subnav">${secs.map(([k, t]) => `<button data-cs="${k}" aria-pressed="${CFG_SEC === k}">${t}</button>`).join('')}</div>
     <div id="cfgcuerpo"></div>`;
   if (CFG_SEC === 'prefs') pintarPrefs();
-  if (CFG_SEC === 'rutas') pintarGestorRutas();
   if (CFG_SEC === 'cat') pintarCatalogos();
 }
 
@@ -1057,7 +1015,11 @@ function pintarPrefs() {
       ${caja('salida', s, 'Punto de salida', 'Dónde empiezas el día')}
       ${caja('llegada', l, 'Punto de llegada', 'Déjalo vacío para volver al punto de salida')}
     </div>
+    <div class="card" style="padding:16px;margin-top:14px"><h2 style="padding:0">Navegación</h2>
+      <p class="sm" style="padding:0">Con qué app se abren las rutas y los "cómo llegar".</p>
+      <div style="max-width:260px;margin-top:8px">${selectorNav()}</div></div>
     <div class="acts" style="justify-content:flex-end"><button class="btn" id="pfguardar">Guardar preferencias</button></div>`;
+  if ($('navsel')) $('navsel').onchange = e => cambiarNavegador(e.target.value);
 
   $('cfgcuerpo').querySelectorAll('[data-pg]').forEach(b => b.onclick = async () => {
     const k = b.dataset.pg, dir = $('cfgcuerpo').querySelector(`[data-pd="${k}"]`).value.trim();
@@ -1118,110 +1080,6 @@ function pintarPrefs() {
 }
 
 /* ---------------- gestor de rutas ---------------- */
-
-async function pintarGestorRutas() {
-  $('cfgcuerpo').innerHTML = '<div class="card"><div class="skel"></div><div class="skel" style="width:60%"></div></div>';
-  const { data } = await db.rpc('rutas_visibles');
-  RUTAS = data || [];
-  $('cfgcuerpo').innerHTML = `
-    <div class="acts"><button class="btn" id="rnueva">+ Nueva ruta</button></div>
-    <div class="card">${RUTAS.length ? `<h2>Rutas<span class="n">${RUTAS.length}</span></h2><div class="lista">${
-      RUTAS.map(r => `<div class="item" style="cursor:default">
-        <span class="ic ${r.tipo === 'Urgente' ? 'w' : ''}">${r.tipo === 'Urgente' ? '★' : '◉'}</span>
-        <span class="tx"><b>${esc(r.nombre)}</b><span class="sm">${r.dinamica ? 'Por criterios' : r.n_fijos + ' médicos'} · ${r.visitados} visitados</span></span>
-        <span class="acts" style="margin:0">
-          <button class="btn sec" data-ruta="${r.id}">Planificar</button>
-          ${r.mia || PERFIL.rol === 'Administrador' ? `<button class="btn sec" data-redit="${r.id}">Editar</button>
-          <button class="btn sec" data-rdel="${r.id}">Eliminar</button>` : ''}</span></div>`).join('')}</div>`
-      : '<div class="vacio">Todavía no hay rutas. Crea la primera con el botón de arriba.</div>'}</div>`;
-
-  $('rnueva').onclick = () => editorRuta(null);
-  $('cfgcuerpo').querySelectorAll('[data-redit]').forEach(b => b.onclick = () => editorRuta(b.dataset.redit));
-  $('cfgcuerpo').querySelectorAll('[data-rdel]').forEach(b => b.onclick = async () => {
-    const r = RUTAS.find(x => x.id === b.dataset.rdel);
-    if (!await preguntar(`¿Eliminar la ruta "${r.nombre}"?\nLos médicos y sus visitas no se borran.`, { titulo: 'Eliminar ruta', ok: 'Eliminar', peligro: true })) return;
-    const { error } = await db.rpc('guardar_ruta', { p: { id: r.id, activa: false } });
-    if (error) { toast('No se ha podido: ' + error.message, true); return; }
-    toast('Ruta eliminada'); pintarGestorRutas();
-  });
-}
-
-async function editorRuta(id) {
-  const r = id ? RUTAS.find(x => x.id === id) : null;
-  const { data: op } = await db.rpc('opciones_filtros', {});
-  const sel = (lista, v) => '<option value=""></option>' + (lista || []).map(o =>
-    `<option ${v === o.v ? 'selected' : ''}>${esc(o.v)}</option>`).join('');
-
-  $('dbody').innerHTML = `
-    <div class="fh"><div><h2>${id ? 'Editar ruta' : 'Nueva ruta'}</h2>
-      <div class="sm">Por criterios se recalcula sola cada día</div></div>
-      <button class="x" data-cerrar aria-label="Cerrar">✕</button></div>
-    <label for="rn">Nombre</label><input id="rn" value="${esc(r ? r.nombre : '')}" placeholder="p. ej. Urgentes zona alta">
-    <div class="g2">
-      <div><label for="rt">Tipo</label><select id="rt">
-        <option ${r && r.tipo === 'Normal' ? 'selected' : ''}>Normal</option>
-        <option ${r && r.tipo === 'Urgente' ? 'selected' : ''}>Urgente</option></select></div>
-      <div><label for="rd">Contar visitas desde</label><input id="rd" type="date" value="${esc((r && r.desde) || hoyISO())}"></div>
-    </div>
-    <label>Criterios <span class="sm">· deja todo vacío para incluir a todos los que puedas ver</span></label>
-    <div class="g2">
-      <div><label for="cprov">Provincia</label><select id="cprov">${sel(op.provincias)}</select></div>
-      <div><label for="cmuni">Municipio</label><select id="cmuni">${sel(op.municipios)}</select></div>
-    </div>
-    <div class="g2">
-      <div><label for="cesp">Especialidad</label><select id="cesp">${sel(op.especialidades)}</select></div>
-      <div><label for="cest">Estado comercial</label><select id="cest">${sel(op.estados)}</select></div>
-    </div>
-    <div class="g2">
-      <div><label for="csv">Sin visitar hace más de (días)</label><input id="csv" type="number" min="1" max="365" placeholder="p. ej. 20"></div>
-      <div><label for="cdia">Pasan consulta</label><select id="cdia"><option value=""></option>
-        ${DIAS.map(k => `<option value="${k}">${DIAN[k]}</option>`).join('')}</select></div>
-    </div>
-    <label class="opt" style="margin-top:10px"><input type="checkbox" id="curg"> Solo urgentes</label>
-    <div id="rprev" class="sm" style="margin-top:10px"></div>
-    <div class="acts" style="justify-content:flex-end">
-      <button class="btn sec" data-cerrar>Cancelar</button>
-      <button class="btn sec" id="rprob">Ver cuántos cumplen</button>
-      <button class="btn" id="rguardar">${id ? 'Guardar' : 'Crear ruta'}</button>
-    </div>`;
-
-  const reglas = () => {
-    const g = {};
-    if ($('cprov').value) g.provincia = $('cprov').value;
-    if ($('cmuni').value) g.municipio = $('cmuni').value;
-    if ($('cesp').value) g.especialidad = $('cesp').value;
-    if ($('cest').value) g.estado = $('cest').value;
-    if ($('csv').value) g.sinVisita = +$('csv').value;
-    if ($('cdia').value) g.dia = $('cdia').value;
-    if ($('curg').checked) g.urgentes = true;
-    return g;
-  };
-
-  $('rprob').onclick = async ev => {
-    ev.target.disabled = true;
-    const { data } = await db.rpc('ids_filtrados', {
-      f_provincia: reglas().provincia || null, f_municipio: reglas().municipio || null,
-      f_estado: reglas().estado || null, f_especialidad: reglas().especialidad || null,
-      f_urgentes: !!reglas().urgentes
-    });
-    ev.target.disabled = false;
-    $('rprev').innerHTML = `<b>${num((data || []).length)}</b> médicos cumplen ahora estos criterios
-      ${reglas().sinVisita ? ' (antes de aplicar el filtro de días sin visitar)' : ''}.`;
-  };
-
-  $('rguardar').onclick = async ev => {
-    if (!$('rn').value.trim()) { toast('Ponle un nombre a la ruta', true); return; }
-    ev.target.disabled = true; ev.target.textContent = 'Guardando…';
-    const { error } = await db.rpc('guardar_ruta', { p: {
-      id: id || null, nombre: $('rn').value.trim(), tipo: $('rt').value, desde: $('rd').value,
-      visible_para: PERFIL.rol === 'Administrador' ? '*' : '', reglas: reglas(), codigos: []
-    }});
-    ev.target.disabled = false; ev.target.textContent = id ? 'Guardar' : 'Crear ruta';
-    if (error) { toast('No se ha podido guardar: ' + error.message, true); return; }
-    $('dlg').close(); toast('Ruta guardada'); pintarGestorRutas();
-  };
-  $('dlg').showModal();
-}
 
 /* ---------------- clasificadores ---------------- */
 
@@ -2004,7 +1862,7 @@ function empezarRuta() {
   pintarRutaBarra();
   toast('Ruta iniciada. ¡Buena ruta!');
   const p = PLAN.paradas[0];
-  if (p) window.open('https://www.google.com/maps/dir/?api=1&destination=' + p.xy.join(','), '_blank', 'noopener');
+  if (p) window.open(enlaceNav(p.xy), '_blank', 'noopener');
 }
 
 setInterval(() => { if (rutaActiva()) pintarRutaBarra(); }, 60000);
@@ -2662,6 +2520,370 @@ async function panelComisionUsuario(u) {
         <option value="importe" ${u.comision_ver === 'importe' ? 'selected' : ''}>Unidades e importe</option>
       </select></div>
     </div>`;
+}
+
+
+
+/* ============================================================
+   DLC OS 2.0 · Entrega 12 · Bloque A: rutas, plan y agenda
+   ============================================================ */
+
+let RSEC = 'mis', PROPUESTAS = null;
+const PLANCFG = () => Object.assign({ salida: '09:00', visita: 15, tope: '18:00', parada: 10 },
+  (PERFIL.preferencias || {}).plan || {});
+
+/* ---------------- navegador de mapas ---------------- */
+
+const NAVEGADORES = [['google', 'Google Maps'], ['apple', 'Apple Maps'], ['waze', 'Waze']];
+const navActual = () => (PERFIL.preferencias || {}).navegador || 'google';
+
+function enlaceNav(destino, paradas) {
+  const n = navActual();
+  const d = Array.isArray(destino) ? destino.join(',') : destino;
+  if (n === 'waze') return 'https://waze.com/ul?ll=' + encodeURIComponent(d) + '&navigate=yes';
+  if (n === 'apple') return 'https://maps.apple.com/?daddr=' + encodeURIComponent(d) + '&dirflg=d';
+  const wp = paradas && paradas.length ? '&waypoints=' + encodeURIComponent(paradas.map(p => p.join(',')).join('|')) : '';
+  return 'https://www.google.com/maps/dir/?api=1&destination=' + encodeURIComponent(d) + '&travelmode=driving' + wp;
+}
+
+async function cambiarNavegador(n) {
+  const prefs = Object.assign({}, PERFIL.preferencias || {}, { navegador: n });
+  const { data } = await db.rpc('guardar_preferencias', { p: prefs });
+  PERFIL.preferencias = data || prefs;
+  toast('Navegación con ' + (NAVEGADORES.find(x => x[0] === n) || [])[1]);
+  if (PLAN) pintarPlan();
+}
+
+const selectorNav = () => `<select id="navsel" title="Navegador de mapas" style="max-width:160px">${
+  NAVEGADORES.map(([v, t]) => `<option value="${v}" ${navActual() === v ? 'selected' : ''}>${t}</option>`).join('')}</select>`;
+
+/* ---------------- pantalla de rutas ---------------- */
+
+async function cargarRutas() {
+  $('v-rutas').innerHTML = `
+    <div class="saludo"><div><h1>Rutas</h1><div class="fecha">Crea, edita y planifica tus rutas</div></div>
+      <div class="acts" style="margin:0">${selectorNav()}
+        <button class="btn" id="rnueva">+ Nueva ruta</button></div></div>
+    <div class="subnav">
+      <button data-rs="mis" aria-pressed="${RSEC === 'mis'}">Mis rutas</button>
+      <button data-rs="prop" aria-pressed="${RSEC === 'prop'}">Propuestas automáticas</button>
+    </div>
+    <div id="rcuerpo"><div class="card"><div class="skel"></div><div class="skel" style="width:60%"></div></div></div>
+    <div id="rplan"></div>`;
+
+  $('rnueva').onclick = () => editorRuta(null);
+  $('navsel').onchange = e => cambiarNavegador(e.target.value);
+  $('v-rutas').querySelectorAll('[data-rs]').forEach(b => b.onclick = () => { RSEC = b.dataset.rs; cargarRutas(); });
+
+  if (RSEC === 'mis') await listaRutas(); else await listaPropuestas();
+  if (PLAN) pintarPlan();
+}
+
+async function listaRutas() {
+  const { data, error } = await db.rpc('rutas_visibles');
+  if (error) { $('rcuerpo').innerHTML = `<div class="card"><div class="vacio">No se ha podido cargar: ${esc(error.message)}</div></div>`; return; }
+  RUTAS = data || [];
+  if (!RUTAS.length) {
+    $('rcuerpo').innerHTML = `<div class="card"><div class="vacio">
+      Todavía no tienes rutas. Créala con <b>+ Nueva ruta</b>, con una lista de médicos concretos
+      o por criterios que se recalculan solos.<br><br>
+      También puedes usar las <b>propuestas automáticas</b> de la pestaña de al lado.</div></div>`;
+    return;
+  }
+  $('rcuerpo').innerHTML = `<div class="card"><h2>Mis rutas<span class="n">${RUTAS.length}</span></h2>
+    <div class="lista">${RUTAS.map(r => `<div class="item" style="cursor:default">
+      <span class="ic ${r.tipo === 'Urgente' ? 'w' : ''}">${r.tipo === 'Urgente' ? '★' : '◉'}</span>
+      <span class="tx"><b>${esc(r.nombre)}</b><span class="sm">
+        ${r.dinamica ? 'Por criterios' : r.n_fijos + ' médicos'} · ${r.visitados} visitados${r.desde ? ' desde ' + fechaCorta(r.desde) : ''}
+        ${r.mia ? '' : ' · de ' + esc(r.duenyo)}</span></span>
+      <span class="acts" style="margin:0">
+        <button class="btn" data-ruta="${r.id}">Planificar</button>
+        <button class="btn sec" data-rver="${r.id}">Ver médicos</button>
+        ${r.mia || PERFIL.rol === 'Administrador' ? `<button class="btn sec" data-redit="${r.id}">Editar</button>
+          <button class="btn sec" data-rdup="${r.id}">Duplicar</button>
+          <button class="btn sec" data-rdel="${r.id}">Eliminar</button>` : ''}</span></div>`).join('')}</div></div>`;
+
+  $('rcuerpo').querySelectorAll('[data-redit]').forEach(b => b.onclick = () => editorRuta(b.dataset.redit));
+  $('rcuerpo').querySelectorAll('[data-rver]').forEach(b => b.onclick = () => verMedicosRuta(b.dataset.rver));
+  $('rcuerpo').querySelectorAll('[data-rdup]').forEach(b => b.onclick = () => duplicarRuta(b.dataset.rdup));
+  $('rcuerpo').querySelectorAll('[data-rdel]').forEach(b => b.onclick = async () => {
+    const r = RUTAS.find(x => x.id === b.dataset.rdel);
+    if (!await preguntar(`Se elimina "${r.nombre}".\nLos médicos y sus visitas no se borran.`,
+      { titulo: '¿Eliminar la ruta?', ok: 'Eliminar', peligro: true })) return;
+    await db.rpc('guardar_ruta', { p: { id: r.id, activa: false } });
+    toast('Ruta eliminada'); cargarRutas();
+  });
+}
+
+async function duplicarRuta(id) {
+  const r = RUTAS.find(x => x.id === id); if (!r) return;
+  const nombre = await pedirTexto('Nombre de la copia', r.nombre + ' (copia)', { titulo: 'Duplicar ruta', ok: 'Duplicar' });
+  if (!nombre) return;
+  const { error } = await db.rpc('guardar_ruta', { p: {
+    nombre, tipo: r.tipo, desde: hoyISO(), nota: r.nota,
+    codigos: r.codigos || [], reglas: r.reglas || null, visible_para: r.visible_para || ''
+  }});
+  if (error) { toast('No se ha podido duplicar: ' + error.message, true); return; }
+  toast('Ruta duplicada'); cargarRutas();
+}
+
+async function verMedicosRuta(id) {
+  const r = RUTAS.find(x => x.id === id);
+  $('dbody').innerHTML = '<div class="skel"></div><div class="skel" style="width:60%"></div>';
+  $('dlg').showModal();
+  const { data } = await db.rpc('medicos_de_ruta', { p_id: id });
+  const lista = data || [];
+  $('dbody').innerHTML = `
+    <div class="fh"><div><h2>${esc(r.nombre)}</h2>
+      <div class="sm">${lista.length} médicos · ${r.dinamica ? 'por criterios, se recalcula cada día' : 'lista fija'}</div></div>
+      <button class="x" data-cerrar aria-label="Cerrar">✕</button></div>
+    <div class="lista">${lista.map(m => `<button class="item" data-mficha="${m.id}">
+      <span class="ic ${m.urgente ? 'w' : ''}">${m.urgente ? '!' : '·'}</span>
+      <span class="tx"><b>${esc(m.nombre)}</b><span class="sm">${esc(m.especialidad || '')} · ${esc(m.centro_nombre || '')} ${esc(m.municipio || '')}</span></span>
+    </button>`).join('') || '<div class="vacio">Ningún médico cumple ahora mismo los criterios.</div>'}</div>
+    <div class="acts" style="justify-content:flex-end"><button class="btn" data-ruta="${id}">Planificar hoy</button></div>`;
+  $('dbody').querySelectorAll('[data-mficha]').forEach(b => b.onclick = () => { $('dlg').close(); abrirFicha(b.dataset.mficha); });
+}
+
+/* ---------------- propuestas automáticas ---------------- */
+
+async function listaPropuestas() {
+  const { data, error } = await db.rpc('propuestas_rutas', { lim: 60 });
+  if (error) { $('rcuerpo').innerHTML = `<div class="card"><div class="vacio">${esc(error.message)}</div></div>`; return; }
+  PROPUESTAS = data;
+  const dn = { L: 'lunes', M: 'martes', X: 'miércoles', J: 'jueves', V: 'viernes' }[data.dia] || 'hoy';
+  const bloques = [
+    ['hoy', '📅', `Pasan consulta ${dn}`, 'Con día de consulta conocido y sin visita reciente'],
+    ['pendientes', '⏳', 'Pendientes de rutas anteriores', 'Planificados y no visitados'],
+    ['urgentes', '❗', 'Urgentes sin visitar', 'Marcados como urgentes'],
+    ['interesados', '🔥', 'Interesados sin visita en 20 días', 'Para no perder el interés'],
+    ['sin_visitar', '🆕', 'Sin visitar nunca', 'Primeras visitas, agrupados por zona']
+  ].filter(([k]) => (data[k] || []).length);
+
+  $('rcuerpo').innerHTML = bloques.length ? `<div class="card">
+    <h2>Propuestas de hoy</h2><p class="sm">Calculadas con tus datos. Planifícalas o guárdalas como ruta.</p>
+    <div class="lista">${bloques.map(([k, ic, t, s]) => `<div class="item" style="cursor:default">
+      <span class="ic">${ic}</span>
+      <span class="tx"><b>${t}</b><span class="sm">${s} · <b>${num(data[k].length)}</b> médicos</span></span>
+      <span class="acts" style="margin:0">
+        <button class="btn" data-prop="${k}">Planificar</button>
+        <button class="btn sec" data-propg="${k}|${esc(t)}">Guardar como ruta</button></span></div>`).join('')}</div></div>`
+    : '<div class="card"><div class="vacio">Ahora mismo no hay propuestas: todo al día.</div></div>';
+
+  $('rcuerpo').querySelectorAll('[data-prop]').forEach(b => b.onclick = e => planDesdeLista(PROPUESTAS[b.dataset.prop], b.dataset.prop, e.target));
+  $('rcuerpo').querySelectorAll('[data-propg]').forEach(b => b.onclick = async () => {
+    const [k, t] = b.dataset.propg.split('|');
+    const nombre = await pedirTexto('Nombre de la ruta', t, { titulo: 'Guardar como ruta', ok: 'Guardar' });
+    if (!nombre) return;
+    const { error } = await db.rpc('guardar_ruta', { p: {
+      nombre, tipo: k === 'urgentes' ? 'Urgente' : 'Normal', desde: hoyISO(),
+      codigos: PROPUESTAS[k].map(m => m.id), reglas: null
+    }});
+    if (error) { toast('No se ha podido guardar: ' + error.message, true); return; }
+    toast('Guardada como ruta fija'); RSEC = 'mis'; cargarRutas();
+  });
+}
+
+/* ---------------- editor de ruta ---------------- */
+
+async function editorRuta(id) {
+  const r = id ? RUTAS.find(x => x.id === id) : null;
+  let modo = r ? (r.dinamica ? 'crit' : 'lista') : 'lista';
+  let codigos = r && r.codigos ? r.codigos.slice() : [];
+  let medicos = [];
+  let busca = '';
+  let cab = { nombre: r ? r.nombre : '', tipo: r ? r.tipo : 'Normal', desde: (r && r.desde) || hoyISO() };
+  const leerCab = () => { if ($('rn')) cab = { nombre: $('rn').value, tipo: $('rt').value, desde: $('rd').value }; };
+  const { data: op } = await db.rpc('opciones_filtros', {});
+  const g = Object.assign({}, (r && r.reglas) || {});
+
+  if (codigos.length) {
+    const { data } = await db.rpc('medicos_por_ids', { p_ids: codigos });
+    medicos = data || [];
+  }
+
+  const sel = (lista, v) => '<option value=""></option>' + (lista || []).map(o =>
+    `<option ${v === o.v ? 'selected' : ''}>${esc(o.v)}</option>`).join('');
+
+  const pinta = async () => {
+    leerCab();
+    $('dbody').innerHTML = `
+      <div class="fh"><div><h2>${id ? 'Editar ruta' : 'Nueva ruta'}</h2>
+        <div class="sm">Una lista fija de médicos, o criterios que se recalculan cada día</div></div>
+        <button class="x" data-cerrar aria-label="Cerrar">✕</button></div>
+      <label for="rn">Nombre</label><input id="rn" value="${esc(cab.nombre)}" placeholder="p. ej. Urgentes zona alta">
+      <div class="g2">
+        <div><label for="rt">Tipo</label><select id="rt">
+          <option ${cab.tipo !== 'Urgente' ? 'selected' : ''}>Normal</option>
+          <option ${cab.tipo === 'Urgente' ? 'selected' : ''}>Urgente</option></select></div>
+        <div><label for="rd">Contar visitas desde</label><input id="rd" type="date" value="${esc(cab.desde)}"></div>
+      </div>
+      <label>Cómo se eligen los médicos</label>
+      <div class="subnav" style="margin:6px 0 10px">
+        <button type="button" data-rm="lista" aria-pressed="${modo === 'lista'}">Lista de médicos</button>
+        <button type="button" data-rm="crit" aria-pressed="${modo === 'crit'}">Por criterios</button></div>
+
+      ${modo === 'lista' ? `
+        <div class="chips">${medicos.map(m => `<span class="chip">${esc(m.nombre)}
+          <button type="button" data-rq="${m.id}" style="border:0;background:none;color:var(--dang);cursor:pointer;font-weight:700">✕</button></span>`).join('')
+          || '<span class="sm">Todavía no has añadido médicos.</span>'}</div>
+        <label for="rbusca">Añadir médicos</label>
+        <input id="rbusca" value="${esc(busca)}" placeholder="Busca por nombre, centro o municipio" autocomplete="off">
+        <div id="rres" class="lista"></div>`
+      : `
+        <div class="g2">
+          <div><label for="cprov">Provincia</label><select id="cprov">${sel(op.provincias, g.provincia)}</select></div>
+          <div><label for="cmuni">Municipio</label><select id="cmuni">${sel(op.municipios, g.municipio)}</select></div>
+        </div>
+        <div class="g2">
+          <div><label for="cesp">Especialidad</label><select id="cesp">${sel(op.especialidades, g.especialidad)}</select></div>
+          <div><label for="cest">Estado comercial</label><select id="cest">${sel(op.estados, g.estado)}</select></div>
+        </div>
+        <div class="g2">
+          <div><label for="csv">Sin visitar hace más de (días)</label><input id="csv" type="number" min="1" max="365" value="${g.sinVisita || ''}"></div>
+          <div><label for="cdia">Pasan consulta</label><select id="cdia"><option value=""></option>
+            ${DIAS.map(k => `<option value="${k}" ${g.dia === k ? 'selected' : ''}>${DIAN[k]}</option>`).join('')}</select></div>
+        </div>
+        <label class="opt" style="margin-top:10px"><input type="checkbox" id="curg" ${g.urgentes ? 'checked' : ''}> Solo urgentes</label>
+        <div id="rprev" class="sm" style="margin-top:10px"></div>`}
+
+      <div class="acts" style="justify-content:flex-end">
+        <button class="btn sec" data-cerrar>Cancelar</button>
+        ${modo === 'crit' ? '<button class="btn sec" id="rprob">Ver cuántos cumplen</button>' : ''}
+        <button class="btn" id="rguardar">${id ? 'Guardar' : 'Crear ruta'}</button></div>`;
+
+    $('dbody').querySelectorAll('[data-rm]').forEach(b => b.onclick = () => { modo = b.dataset.rm; pinta(); });
+    $('dbody').querySelectorAll('[data-rq]').forEach(b => b.onclick = () => {
+      codigos = codigos.filter(c => c !== b.dataset.rq);
+      medicos = medicos.filter(m => m.id !== b.dataset.rq);
+      pinta();
+    });
+
+    if (modo === 'lista') {
+      let t;
+      const buscarMed = async q => {
+        if (q.length < 2) { $('rres').innerHTML = ''; return; }
+        const { data } = await db.rpc('buscar_medicos', { q, f_provincia: null, f_municipio: null, f_estado: null,
+          f_especialidad: null, f_area: null, f_urgentes: false, f_mios: false, f_sin_visitar: false,
+          orden: 'nombre', lim: 8, desplaz: 0 });
+        const res = (data && data.filas || []).filter(m => !codigos.includes(m.id));
+        $('rres').innerHTML = res.map(m => `<button class="item" data-radd='${esc(JSON.stringify({ id: m.id, nombre: m.nombre, especialidad: m.especialidad, centro_nombre: m.centro_nombre, municipio: m.municipio }))}'>
+          <span class="ic">+</span><span class="tx"><b>${esc(m.nombre)}</b>
+            <span class="sm">${esc(m.especialidad || '')} · ${esc(m.centro_nombre || '')} ${esc(m.municipio || '')}</span></span></button>`).join('')
+          || '<div class="vacio">Sin coincidencias.</div>';
+        $('rres').querySelectorAll('[data-radd]').forEach(b => b.onclick = () => {
+          const m = JSON.parse(b.dataset.radd);
+          codigos.push(m.id); medicos.push(m); busca = ''; pinta();
+        });
+      };
+      $('rbusca').oninput = e => { busca = e.target.value; clearTimeout(t); t = setTimeout(() => buscarMed(e.target.value.trim()), 300); };
+      if (busca) buscarMed(busca);
+    } else {
+      const reglas = () => {
+        const o = {};
+        if ($('cprov').value) o.provincia = $('cprov').value;
+        if ($('cmuni').value) o.municipio = $('cmuni').value;
+        if ($('cesp').value) o.especialidad = $('cesp').value;
+        if ($('cest').value) o.estado = $('cest').value;
+        if ($('csv').value) o.sinVisita = +$('csv').value;
+        if ($('cdia').value) o.dia = $('cdia').value;
+        if ($('curg').checked) o.urgentes = true;
+        return o;
+      };
+      $('rprob').onclick = async ev => {
+        ev.target.disabled = true;
+        const rg = reglas();
+        const { data } = await db.rpc('ids_filtrados', {
+          f_provincia: rg.provincia || null, f_municipio: rg.municipio || null,
+          f_estado: rg.estado || null, f_especialidad: rg.especialidad || null, f_urgentes: !!rg.urgentes });
+        ev.target.disabled = false;
+        $('rprev').innerHTML = `<b>${num((data || []).length)}</b> médicos cumplen ahora estos criterios${rg.sinVisita ? ', antes de aplicar los días sin visitar' : ''}.`;
+      };
+      $('dbody').__reglas = reglas;
+    }
+
+    $('rguardar').onclick = async ev => {
+      if (!$('rn').value.trim()) { toast('Ponle un nombre a la ruta', true); return; }
+      if (modo === 'lista' && !codigos.length) { toast('Añade al menos un médico', true); return; }
+      ev.target.disabled = true; ev.target.textContent = 'Guardando…';
+      const { error } = await db.rpc('guardar_ruta', { p: {
+        id: id || null, nombre: $('rn').value.trim(), tipo: $('rt').value, desde: $('rd').value,
+        visible_para: PERFIL.rol === 'Administrador' ? '*' : '',
+        codigos: modo === 'lista' ? codigos : [],
+        reglas: modo === 'crit' ? ($('dbody').__reglas ? $('dbody').__reglas() : {}) : null
+      }});
+      ev.target.disabled = false; ev.target.textContent = id ? 'Guardar' : 'Crear ruta';
+      if (error) { toast('No se ha podido guardar: ' + error.message, true); return; }
+      $('dlg').close(); toast('Ruta guardada'); RSEC = 'mis'; cargarRutas();
+    };
+  };
+  pinta();
+  $('dlg').showModal();
+}
+
+/* ---------------- plan del día con horario configurable ---------------- */
+
+async function planDesdeLista(lista, nombre, btn) {
+  const conXY = (lista || []).filter(m => m.lat && m.lon);
+  if (!conXY.length) { toast('Ninguno de esos médicos tiene ubicación', true); return; }
+  construirPlan(conXY, nombre, btn);
+}
+
+function construirPlan(conXY, rutaId, btn) {
+  const cfg = PLANCFG();
+  const salida = (PERFIL.preferencias || {}).salida || { nombre: 'Santpedor', lat: 41.7833, lon: 1.8414 };
+  const paradas = {};
+  conXY.forEach(m => {
+    const k = (m.centro_nombre || 'Consulta') + '|' + (m.municipio || '');
+    (paradas[k] = paradas[k] || { centro: m.centro_nombre || 'Consulta privada', municipio: m.municipio,
+      dir: m.direccion, xy: [m.lat, m.lon], medicos: [] }).medicos.push(m);
+  });
+
+  const t0 = +cfg.salida.slice(0, 2) * 60 + +cfg.salida.slice(3), tope = +cfg.tope.slice(0, 2) * 60 + +cfg.tope.slice(3);
+  let pos = [salida.lat, salida.lon], t = t0, libres = Object.values(paradas), orden = [];
+  while (libres.length && t < tope && orden.length < 14) {
+    libres.sort((a, b) => km(pos, a.xy) - km(pos, b.xy));
+    const p = libres.shift();
+    const viaje = minutosEntre(pos, p.xy);
+    const dura = cfg.parada + cfg.visita * Math.min(p.medicos.length, 8);
+    if (t + viaje + dura > tope) break;
+    orden.push({ ...p, llegada: t + viaje, fin: t + viaje + dura, viaje });
+    t += viaje + dura; pos = p.xy;
+  }
+  PLAN = { rutaId, salida, paradas: orden, fin: t + minutosEntre(pos, [salida.lat, salida.lon]), fecha: hoyISO() };
+  pintarPlan();
+  window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+}
+
+function abrirHorarioPlan() {
+  const c = PLANCFG();
+  $('dbody').innerHTML = `
+    <div class="fh"><div><h2>Horario del plan</h2><div class="sm">Se guarda en tus preferencias</div></div>
+      <button class="x" data-cerrar aria-label="Cerrar">✕</button></div>
+    <div class="g2">
+      <div><label for="hsal">Hora de salida</label><input id="hsal" type="time" value="${c.salida}"></div>
+      <div><label for="htop">Vuelta como tarde</label><input id="htop" type="time" value="${c.tope}"></div>
+    </div>
+    <div class="g2">
+      <div><label for="hvis">Minutos por médico</label><input id="hvis" type="number" min="5" max="60" value="${c.visita}"></div>
+      <div><label for="hpar">Minutos fijos por parada</label><input id="hpar" type="number" min="0" max="40" value="${c.parada}"></div>
+    </div>
+    <div class="acts" style="justify-content:flex-end">
+      <button class="btn sec" data-cerrar>Cancelar</button>
+      <button class="btn" id="hok">Guardar y recalcular</button></div>`;
+  $('hok').onclick = async ev => {
+    ev.target.disabled = true;
+    const plan = { salida: $('hsal').value, tope: $('htop').value, visita: +$('hvis').value || 15, parada: +$('hpar').value || 10 };
+    const prefs = Object.assign({}, PERFIL.preferencias || {}, { plan });
+    const { data } = await db.rpc('guardar_preferencias', { p: prefs });
+    PERFIL.preferencias = data || prefs;
+    $('dlg').close(); toast('Horario guardado');
+    if (PLAN && PLAN.rutaId) {
+      if (typeof PLAN.rutaId === 'string' && PROPUESTAS && PROPUESTAS[PLAN.rutaId]) planDesdeLista(PROPUESTAS[PLAN.rutaId], PLAN.rutaId);
+      else planificar(PLAN.rutaId, $('rnueva') || document.createElement('button'));
+    }
+  };
+  $('dlg').showModal();
 }
 
 
