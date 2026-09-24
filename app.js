@@ -12741,6 +12741,266 @@ ir = function (t) {
 };
 
 
+/* ============================================================
+   v2.42.0 · Notificaciones para todos y configurables, Mi perfil,
+   Rutas y Mensajes como apartados propios, Material de visita y
+   Almacenes explicados, controles compactos en Configuración,
+   navegación de Configuración sin desplazarse y alta con resumen
+   ============================================================ */
+
+/* ---------------- notificaciones ---------------- */
+
+const TIPOS_NOTIF = [
+  ['pauta', '💊', 'Pautas a mi nombre', 'Cada vez que se registra una pauta con tu nombre', ['Medico']],
+  ['venta_cartera', '🛒', 'Ventas de mi cartera', 'Cuando se valida una venta de un médico que llevas', ['Comercial']],
+  ['cartera', '🩺', 'Cambios en mi cartera', 'Cuando te asignan médicos nuevos', ['Comercial']],
+  ['cruce', '🔁', 'Visitas de otros a mi cartera', 'Cuando otra persona visita a un médico que llevas', ['Comercial']],
+  ['pedido_validado', '📦', 'Pedidos validados', 'Cada pedido que se valida (menos los tuyos)', ['Administrador', 'Dirección', 'Televenta']]
+];
+const tiposDeMiRol = () => TIPOS_NOTIF.filter(t => t[4].includes(PERFIL.rol));
+let NOTIF_N = 0;
+async function refrescarCampana() {
+  if (!PERFIL || document.body.classList.contains('sin-sesion')) return;
+  const { data } = await RPC_ORIG('mis_notificaciones', { lim: 30 });
+  const d = data || {}; NOTIF_N = d.sin_leer || 0;
+  let b = $('mdavisos');
+  if (!b) { const u = $('ubtn'); if (!u) return; u.insertAdjacentHTML('beforebegin', '<button class="mdavisos" id="mdavisos" aria-label="Notificaciones"></button>'); b = $('mdavisos'); }
+  b.innerHTML = `🔔${NOTIF_N ? `<span class="nb2">${NOTIF_N > 9 ? '9+' : NOTIF_N}</span>` : ''}`;
+  b.onclick = () => panelNotificaciones(d.lista || []);
+}
+pintarAvisos = refrescarCampana;
+function irEnlace(e) {
+  if (!e) return;
+  const [t, id] = String(e).split(':');
+  if (t === 'ficha' && id) abrirFicha(id); else if (t === 'pedido' && id) verPedido(id);
+  else if (t === 'informe') ir('informe'); else if (t === 'directorio') ir('directorio');
+}
+function panelNotificaciones(l) {
+  const ico = t => (TIPOS_NOTIF.find(x => x[0] === t) || [])[1] || '🔔';
+  $('dbody').innerHTML = `<div class="fh"><div><h2>Notificaciones</h2><div class="sm">${NOTIF_N ? NOTIF_N + ' sin leer' : 'Estás al día'}</div></div>
+    <button class="x" data-cerrar aria-label="Cerrar">✕</button></div>
+    <div class="notlista">${l.map(x => `<button class="notit ${x.leida_en ? '' : 'nuevo'}" data-nid="${x.id}" data-nen="${esc(x.enlace || '')}">
+      <span class="ic">${ico(x.tipo)}</span><span class="tx"><b>${esc(x.titulo)}</b><span class="sm">${esc(x.cuerpo || '')}</span>
+      <span class="sm">${new Date(x.creado_en).toLocaleString('es-ES', { dateStyle: 'short', timeStyle: 'short' })}</span></span></button>`).join('') || '<div class="vacio">No tienes notificaciones.</div>'}</div>
+    <div class="acts" style="justify-content:space-between;flex-wrap:wrap"><button class="btn sec" id="notcfg">⚙ Elegir qué notificaciones recibo</button>
+      ${NOTIF_N ? '<button class="btn sec" id="notleer">Marcar todas como leídas</button>' : ''}</div>`;
+  $('dlg').showModal();
+  $('dbody').querySelectorAll('[data-nid]').forEach(b => b.onclick = async () => {
+    await db.rpc('leer_notificacion', { p_id: b.dataset.nid }); $('dlg').close(); irEnlace(b.dataset.nen); refrescarCampana();
+  });
+  if ($('notleer')) $('notleer').onclick = async () => { await db.rpc('leer_notificaciones'); $('dlg').close(); refrescarCampana(); };
+  $('notcfg').onclick = () => { $('dlg').close(); CFG_SEC = 'notif'; ir('config'); };
+}
+setInterval(refrescarCampana, 60000);
+mostrarApp = (orig => function (p) { orig(p); setTimeout(refrescarCampana, 800); })(mostrarApp);
+
+function pintarNotif() {
+  const pref = (PERFIL.preferencias || {}).notif || {}, tipos = tiposDeMiRol();
+  $('cfgcuerpo').innerHTML = `<div class="card cfgpanel"><h2 style="padding:0 0 4px">Notificaciones</h2>
+    <p class="sm">Te llegan a la campana 🔔 de arriba. Elige cuáles quieres recibir.</p>
+    ${tipos.length ? `<div class="notcfg">${tipos.map(([k, ic, t, d]) => `<label class="vfswitch"><input type="checkbox" data-nt="${k}" ${pref[k] === false ? '' : 'checked'}><span class="sw"></span>
+      <span><b>${ic} ${esc(t)}</b><br><span class="sm">${esc(d)}</span></span></label>`).join('')}</div>` : '<div class="vacio">Tu perfil no tiene notificaciones disponibles todavía.</div>'}</div>`;
+  $('cfgcuerpo').querySelectorAll('[data-nt]').forEach(c => c.onchange = async () => {
+    const notif = Object.assign({}, (PERFIL.preferencias || {}).notif || {}, { [c.dataset.nt]: c.checked });
+    const prefs = Object.assign({}, PERFIL.preferencias || {}, { notif });
+    const { data, error } = await db.rpc('guardar_preferencias', { p: prefs });
+    if (error) { toast('No se ha podido guardar', true); c.checked = !c.checked; return; }
+    PERFIL.preferencias = data || prefs; toast(c.checked ? 'Activada' : 'Desactivada');
+  });
+}
+
+/* ---------------- Mi perfil ---------------- */
+
+function pintarPerfil() {
+  const pr = PERFIL.preferencias || {};
+  const inicios = [['inicio', 'Inicio'], ['agenda', 'Agenda'], ['rutas', 'Rutas'], ['directorio', 'Directorio'], ['ventas', 'Pedidos']].filter(([k]) => puedeModulo(k));
+  $('cfgcuerpo').innerHTML = `<div id="perfilcab"></div>
+    <div class="card cfgpanel"><h2 style="padding:0 0 8px">Mis datos</h2>
+      <div class="g2"><div><label for="pfn">Nombre visible</label><input id="pfn" value="${esc(PERFIL.nombre)}"></div>
+        <div><label for="pft">Teléfono</label><input id="pft" inputmode="tel" value="${esc(pr.telefono || '')}" placeholder="Para que el equipo pueda llamarte"></div></div>
+      <div class="g2"><div><label for="pfi">Al entrar, abrir</label><select id="pfi">${inicios.map(([k, t]) => `<option value="${k}" ${(pr.inicio || 'inicio') === k ? 'selected' : ''}>${t}</option>`).join('')}</select></div><div></div></div>
+      <div class="acts" style="justify-content:flex-end"><button class="btn" id="pfok">Guardar</button></div></div>
+    <div class="card cfgpanel"><h2 style="padding:0 0 8px">Contraseña</h2>
+      <div class="g2"><div><label for="pfp1">Nueva contraseña</label><input id="pfp1" type="password" autocomplete="new-password"></div>
+        <div><label for="pfp2">Repítela</label><input id="pfp2" type="password" autocomplete="new-password"></div></div>
+      <div class="acts" style="justify-content:flex-end"><button class="btn sec" id="pfpok">Cambiar contraseña</button></div></div>`;
+  // Tarjeta de contexto (datos, accesos y actividad)
+  const tmp = $('cfgcuerpo'); const guard = tmp.innerHTML;
+  $('pfok').onclick = async () => {
+    const nombre = $('pfn').value.trim(); if (!nombre) { toast('El nombre no puede quedar vacío', true); return; }
+    const prefs = Object.assign({}, pr, { telefono: $('pft').value.trim(), inicio: $('pfi').value });
+    const [a, b] = await Promise.all([db.rpc('guardar_preferencias', { p: prefs }), db.from('perfiles').update({ nombre }).eq('id', PERFIL.id)]);
+    if (a.error) { toast('No se ha podido guardar', true); return; }
+    PERFIL.preferencias = a.data || prefs; if (!b.error) { PERFIL.nombre = nombre; $('uname').textContent = nombre.split(' ')[0]; $('av').textContent = iniciales(nombre); }
+    toast('Datos guardados');
+  };
+  $('pfpok').onclick = async () => {
+    const p1 = $('pfp1').value, p2 = $('pfp2').value;
+    if (p1.length < 8) { toast('Mínimo 8 caracteres', true); return; } if (p1 !== p2) { toast('No coinciden', true); return; }
+    const { error } = await db.auth.updateUser({ password: p1 });
+    if (error) { toast('No se ha podido cambiar: ' + error.message, true); return; }
+    $('pfp1').value = $('pfp2').value = ''; toast('Contraseña cambiada');
+  };
+  // Se reutiliza la tarjeta de perfil con accesos y actividad
+  const caja = document.createElement('div'); caja.id = 'cfgcuerpo-tmp';
+  pintarPrefsPerfil();
+}
+async function pintarPrefsPerfil() {
+  // La tarjeta #miperfil la genera el envoltorio de pintarPrefs: se pinta en un contenedor aparte y se mueve
+  const real = $('cfgcuerpo'); real.id = 'cfgcuerpo-real';
+  const t = document.createElement('div'); t.id = 'cfgcuerpo'; t.style.display = 'none'; document.body.appendChild(t);
+  try { await pintarPrefs(); } catch (e) {}
+  const mp = t.querySelector('#miperfil'); t.remove(); real.id = 'cfgcuerpo';
+  if (mp && $('perfilcab')) $('perfilcab').replaceWith(mp);
+}
+// Al entrar, se abre el módulo elegido
+mostrarApp = (orig => function (p) {
+  const primera = !APP_VISIBLE; orig(p);
+  const ini = (p.preferencias || {}).inicio;
+  if (primera && ini && ini !== 'inicio' && puedeModulo(ini)) setTimeout(() => ir(ini), 50);
+})(mostrarApp);
+
+/* ---------------- Rutas y desplazamientos · Mensajes ---------------- */
+
+async function pintarPrefsParte(parte) {
+  await pintarPrefs();
+  const c = $('cfgcuerpo'); if (!c) return;
+  if ($('miperfil')) $('miperfil').remove();
+  const tpl = $('tplok') ? $('tplok').closest('.card, .blk, div[id]') : null;
+  const plantillas = tpl && tpl.closest('#cfgcuerpo > *');
+  if (parte === 'rutas') {
+    if (plantillas) plantillas.remove();
+    c.insertAdjacentHTML('afterbegin', '<div class="card cfgpanel"><h2 style="padding:0 0 4px">Rutas y desplazamientos</h2><p class="sm">Desde dónde sales, dónde terminas y con qué app se abre la navegación. El horario de las rutas está en su propio apartado.</p></div>');
+  } else {
+    [...c.children].forEach(x => { if (x !== plantillas) x.remove(); });
+    c.insertAdjacentHTML('afterbegin', '<div class="card cfgpanel"><h2 style="padding:0 0 4px">Mensajes</h2><p class="sm">Plantillas del resumen semanal que envías por WhatsApp o email. Las variables entre llaves se rellenan solas.</p></div>');
+  }
+}
+
+/* ---------------- Material de visita ---------------- */
+
+async function pintarMaterial() {
+  await Promise.all([cargarAjustes(), cargarProductos()]);
+  const m = Object.assign({ producto_id: null, restar_stock: false }, AJUSTES.muestras || {});
+  const { data: clas } = await db.rpc('clasificadores_visita');
+  const mat = (clas || []).find(c => c.clave === 'MATERIAL');
+  const { data: cid } = await db.from('clasificadores').select('id').eq('clave', 'MATERIAL').maybeSingle();
+  const { data: vals } = cid ? await db.from('valores_clasificador').select('id,valor,activo,dato_tipo').eq('clasificador_id', cid.id).order('orden') : { data: [] };
+  $('cfgcuerpo').innerHTML = `
+    <div class="card cfgpanel"><h2 style="padding:0 0 4px">Material de visita</h2>
+      <p class="sm">Todo lo que un comercial puede dejar en una visita. Al registrar la visita se marca qué se entregó y cuánto, y queda en la ficha del médico y en Analítica (material por comercial, por médico y por mes).</p>
+      <div class="mattipos"><div><b>💊 Muestras de producto</b><span>Unidades de un producto del catálogo. Pueden descontarse del stock.</span></div>
+        <div><b>📚 Material promocional</b><span>Dípticos, talonarios de recomendación, flyers, tarjetas… Se cuentan, pero no descuentan stock.</span></div></div></div>
+    <div class="card cfgpanel"><h2 style="padding:0 0 4px">💊 Muestras de producto</h2>
+      <div class="g2"><div><label for="muprod">Producto que se entrega como muestra</label><select id="muprod"><option value="">— Ninguno —</option>${PRODUCTOS.filter(p => p.tipo !== 'servicio').map(p => `<option value="${p.id}" ${p.id === m.producto_id ? 'selected' : ''}>${esc(p.nombre)}</option>`).join('')}</select></div><div></div></div>
+      <label class="vfswitch" style="margin-top:10px"><input type="checkbox" id="murest" ${m.restar_stock ? 'checked' : ''}><span class="sw"></span>
+        <span><b>Descontar las muestras del stock</b><br><span class="sm">Salen del maletín de quien registra la visita (o del almacén central si no tiene), empezando por el lote que caduca antes. Así sabes cuántas muestras quedan y a quién llegó cada lote.</span></span></label>
+      <div class="acts" style="justify-content:flex-end"><button class="btn" id="muok">Guardar</button></div></div>
+    <div class="card cfgpanel"><h2 style="padding:0 0 4px">📚 Material promocional</h2>
+      <p class="sm">Lo que aparece para marcar al registrar una visita. «Pide cantidad» hace que se indique cuántas unidades se dejaron.</p>
+      <div class="matlista">${(vals || []).map(v => `<div class="matfila ${v.activo ? '' : 'off'}"><b>${esc(v.valor)}</b><span class="sm">${v.dato_tipo === 'numero' ? 'Pide cantidad' : 'Solo se marca'}</span>
+        <label class="vfswitch mini"><input type="checkbox" data-mact="${v.id}" ${v.activo ? 'checked' : ''}><span class="sw"></span><span class="sm">${v.activo ? 'Activo' : 'Oculto'}</span></label></div>`).join('') || '<div class="sm">Todavía no hay material.</div>'}</div>
+      <div class="matadd"><input id="matn" placeholder="Nuevo material, p. ej. Póster para consulta"><label class="opt" style="margin:0"><input type="checkbox" id="matq" checked> Pide cantidad</label>
+        <button class="btn sec" id="matok" ${cid ? '' : 'disabled'}>Añadir</button></div></div>`;
+  $('muok').onclick = async () => {
+    if ($('murest').checked && !$('muprod').value) { toast('Elige el producto de las muestras', true); return; }
+    const { error } = await db.rpc('guardar_ajuste', { p_clave: 'muestras', p_valor: { producto_id: $('muprod').value || null, restar_stock: $('murest').checked } });
+    if (error) { toast('No se ha podido guardar', true); return; } AJUSTES.muestras = { producto_id: $('muprod').value || null, restar_stock: $('murest').checked }; toast('Guardado');
+  };
+  $('cfgcuerpo').querySelectorAll('[data-mact]').forEach(c => c.onchange = async () => { await db.rpc('guardar_valor', { p: { id: c.dataset.mact, activo: c.checked } }); toast(c.checked ? 'Visible en las visitas' : 'Oculto en las visitas'); cargarCatalogos(); pintarMaterial(); });
+  $('matok').onclick = async () => {
+    const v = $('matn').value.trim(); if (!v) return;
+    const { error } = await db.rpc('guardar_valor', { p: Object.assign({ clasificador_id: cid.id, valor: v }, $('matq').checked ? { dato_tipo: 'numero', dato_etiqueta: 'Unidades' } : {}) });
+    if (error) { toast('No se ha podido: ' + error.message, true); return; } toast('Añadido'); cargarCatalogos(); pintarMaterial();
+  };
+}
+
+/* ---------------- Almacenes ---------------- */
+
+async function pintarAlmacenes2() {
+  await cargarAlmacenes(); if (!COMS.length) await cargarComerciales();
+  const { data: st } = await RPC_ORIG('stock_resumen', {});
+  const sinMaletin = COMS.filter(u => u.rol === 'Comercial' && !ALMACENES.some(a => a.usuario_id === u.id));
+  $('cfgcuerpo').innerHTML = `
+    <div class="card cfgpanel"><h2 style="padding:0 0 4px">Almacenes</h2>
+      <p class="sm">Dónde está físicamente tu stock. Cada unidad está en un almacén y en un lote, así sabes qué hay, dónde y cuándo caduca.</p>
+      <div class="mattipos"><div><b>🏢 Almacén central</b><span>Donde entra la mercancía al recibir las compras y de donde salen los pedidos.</span></div>
+        <div><b>💼 Maletín de comercial</b><span>Las muestras que lleva cada comercial. Se reponen traspasando desde el central y se descuentan al registrar visitas.</span></div></div></div>
+    <div class="card cfgpanel"><h2 style="padding:0 0 8px">Tus almacenes</h2>
+      <div class="almgrid">${ALMACENES.map(a => `<div class="almc"><span class="ic">${a.tipo === 'central' ? '🏢' : '💼'}</span>
+        <b>${esc(a.nombre)}</b><span class="sm">${a.tipo === 'central' ? 'Almacén central' : 'Maletín de ' + esc(a.usuario || '—')}${a.activo ? '' : ' · inactivo'}</span>
+        <span class="almu"><b>${num(a.unidades || 0)}</b> unidades</span></div>`).join('')}</div>
+      ${sinMaletin.length ? `<div class="avisoh" style="margin-top:12px"><span>${sinMaletin.length === 1 ? esc(sinMaletin[0].nombre) + ' no tiene' : sinMaletin.length + ' comerciales no tienen'} maletín: sus muestras saldrán del almacén central.</span></div>` : ''}
+      <div class="matadd" style="margin-top:12px"><select id="almu">${COMS.filter(u => u.rol === 'Comercial').map(u => `<option value="${u.id}">${esc(u.nombre)}</option>`).join('')}</select>
+        <button class="btn sec" id="almok">Crear maletín</button></div>
+      <p class="sm" style="margin-top:8px">Para pasar unidades del central a un maletín: Productos → Stock → abre el producto → «Traspasar».${Array.isArray(st) && st.length ? '' : ''}</p></div>`;
+  $('almok').onclick = async () => {
+    const u = COMS.find(x => x.id === $('almu').value); if (!u) return;
+    const { error } = await db.rpc('guardar_almacen', { p: { nombre: 'Maletín ' + String(u.nombre).split(' ')[0], tipo: 'maletin', usuario_id: u.id } });
+    if (error) { toast('No se ha podido crear', true); return; } toast('Maletín creado'); pintarAlmacenes2();
+  };
+}
+
+/* ---------------- Configuración: apartados y navegación ---------------- */
+
+cargarConfig = (orig => async function () {
+  if (CFG_SEC === 'prefs') CFG_SEC = 'perfil';
+  const sec = CFG_SEC;
+  if (['perfil', 'rutas', 'mensajes', 'notif'].includes(sec)) CFG_SEC = 'prefs';
+  await orig();
+  CFG_SEC = sec;
+  const nav = document.querySelector('.cfgnav'); if (!nav) return;
+  const pref = nav.querySelector('[data-cfg="prefs"]');
+  if (pref) {
+    pref.dataset.cfg = 'perfil'; pref.querySelector('b').textContent = 'Mi perfil'; pref.querySelector('em').textContent = 'Tus datos, contraseña y qué abrir al entrar';
+    pref.insertAdjacentHTML('afterend', `<button data-cfg="notif"><span class="ci">🔔</span><span><b>Notificaciones</b><em>Qué avisos quieres recibir</em></span></button>
+      <button data-cfg="rutas"><span class="ci">📍</span><span><b>Rutas y desplazamientos</b><em>Punto de salida y llegada, y app de navegación</em></span></button>`);
+    const hor = nav.querySelector('[data-cfg="horario"]'); if (hor) nav.querySelector('[data-cfg="rutas"]').after(hor);
+    const kp = nav.querySelector('[data-cfg="kpis"]'); if (kp) kp.insertAdjacentHTML('afterend', `<button data-cfg="mensajes"><span class="ci">💬</span><span><b>Mensajes</b><em>Plantillas del resumen semanal</em></span></button>`);
+  }
+  const mues = nav.querySelector('[data-cfg="mues"]'); if (mues) { mues.querySelector('b').textContent = 'Material de visita'; mues.querySelector('em').textContent = 'Muestras y material promocional que se entrega'; }
+  const acc = { perfil: pintarPerfil, notif: pintarNotif, rutas: () => pintarPrefsParte('rutas'), mensajes: () => pintarPrefsParte('mensajes'), mues: pintarMaterial, alm: pintarAlmacenes2 };
+  const abrir = b => {
+    CFG_SEC = b.dataset.cfg; nav.querySelectorAll('[data-cfg]').forEach(x => x.classList.toggle('on', x === b));
+    // El contenido aparece a la vista, sin tener que desplazarse
+    const hub = document.querySelector('.cfghub');
+    if (hub) { const y = ES_MOVIL() ? $('cfgcuerpo').getBoundingClientRect().top + scrollY - 70 : hub.getBoundingClientRect().top + scrollY - 90; if (Math.abs(scrollY - y) > 40) scrollTo({ top: Math.max(0, y), behavior: 'smooth' }); }
+  };
+  nav.querySelectorAll('[data-cfg]').forEach(b => {
+    const previo = b.onclick;
+    b.onclick = () => { if (acc[b.dataset.cfg]) { salirPanel(); abrir(b); acc[b.dataset.cfg](); } else { if (previo) previo(); abrir(b); } };
+  });
+  const act = nav.querySelector(`[data-cfg="${CFG_SEC}"]`);
+  if (act && acc[CFG_SEC]) { nav.querySelectorAll('[data-cfg]').forEach(x => x.classList.toggle('on', x === act)); salirPanel(); acc[CFG_SEC](); }
+  else if (act) nav.querySelectorAll('[data-cfg]').forEach(x => x.classList.toggle('on', x === act));
+})(cargarConfig);
+
+/* ---------------- alta de usuario: resumen al terminar ---------------- */
+
+nuevoUsuario = (orig => function (pre) {
+  orig(pre);
+  const crear = $('ncrear').onclick;
+  $('ncrear').onclick = async ev => {
+    const datos = { nombre: $('nn').value.trim(), email: $('ne').value.trim(), pass: $('np').value, rol: $('nr').value };
+    await crear(ev);
+    const ok = /Usuario creado/.test($('nmsg') ? $('nmsg').textContent : '');
+    if (!ok) return;
+    const vinc = ($('nmsg').textContent.match(/Vinculado a (.+)\./) || [])[1];
+    delete $('dlg').dataset.sucio;
+    const url = location.origin + location.pathname;
+    const texto = `Hola ${datos.nombre.split(' ')[0]}, ya tienes acceso a ${nombreApp()}.\nEntra en ${url}\nUsuario: ${datos.email}\nContraseña temporal: ${datos.pass}\nCámbiala al entrar (Configuración → Mi perfil).`;
+    $('dbody').innerHTML = `<div class="fh"><div><h2>✓ Usuario creado</h2><div class="sm">Pásale estos datos para que entre</div></div><button class="x" data-cerrar aria-label="Cerrar">✕</button></div>
+      <div class="usrok"><div><span>Nombre</span><b>${esc(datos.nombre)}</b></div><div><span>Rol</span><b>${esc(datos.rol)}</b></div>
+        <div><span>Usuario</span><b>${esc(datos.email)}</b></div><div><span>Contraseña temporal</span><b class="mono">${esc(datos.pass)}</b></div>
+        ${vinc ? `<div><span>Médico vinculado</span><b>${esc(vinc)}</b></div>` : ''}<div><span>Dirección</span><b>${esc(url)}</b></div></div>
+      <p class="sm">Si la confirmación por correo está activada, primero deberá confirmar su email.</p>
+      <div class="acts" style="justify-content:flex-end;flex-wrap:wrap"><button class="btn sec" id="usrcop">Copiar los datos</button><button class="btn" data-cerrar>Hecho</button></div>`;
+    delete $('dlg').dataset.sucio;
+    $('usrcop').onclick = async () => { try { await navigator.clipboard.writeText(texto); toast('Copiado: pégalo en un mensaje'); } catch (e) { toast('No se ha podido copiar', true); } };
+  };
+})(nuevoUsuario);
+
+
 // Barra inferior del móvil y barra de «Entrar como» desde el primer momento
 pintarBnav();
 

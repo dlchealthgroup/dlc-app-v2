@@ -1048,6 +1048,37 @@ body.masabierto .bnav{border-top-color:transparent;box-shadow:none}
 .bmasbox{bottom:calc(60px + env(safe-area-inset-bottom,0px));border-radius:22px 22px 0 0;box-shadow:0 -10px 30px rgba(11,58,102,.12)}
 @media (max-width:1100px){.planes{grid-template-columns:1fr 1fr}}
 @media (max-width:760px){.planes,.marcaed,.usrgrid,.usracc,.nivleg{grid-template-columns:1fr}.usrlista{grid-template-columns:1fr}.usrcard{grid-template-columns:auto 1fr}.usrdat{grid-column:2;align-items:flex-start;flex-direction:row;gap:10px}}
+/* v2.42.0 */
+.cfgnav{position:sticky;top:96px;max-height:calc(100vh - 110px);overflow:auto;padding-right:4px;scrollbar-width:thin}
+.cfgcuerpo{min-height:60vh}
+.cfgcuerpo .card + .card{margin-top:12px}
+.cfgpanel .selw,.cfgpanel .numw,#cfgcuerpo .selw,#cfgcuerpo .numw{max-width:200px}
+#cfgcuerpo .g2 > div > select,#cfgcuerpo .g2 > div > input:not([type=checkbox]){max-width:420px}
+#cfgcuerpo select.nvsel{max-width:none}
+.notlista{display:flex;flex-direction:column;gap:6px;max-height:60vh;overflow:auto;margin:6px 0}
+.notit{display:flex;gap:10px;align-items:flex-start;text-align:left;border:1px solid var(--line);background:#fff;border-radius:14px;padding:10px 12px;cursor:pointer;font:inherit;color:var(--ink)}
+.notit.nuevo{background:var(--sky-soft);border-color:#CFE4F4}.notit .ic{font-size:20px}.notit .tx{display:flex;flex-direction:column;gap:2px}.notit b{color:var(--navy)}
+.notcfg{display:flex;flex-direction:column;gap:12px;margin-top:10px}
+.mattipos{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
+.mattipos div{display:flex;flex-direction:column;gap:3px;padding:12px 14px;border-radius:14px;background:var(--sky-soft);font-size:13px}.mattipos b{color:var(--navy)}
+.matlista{display:flex;flex-direction:column;gap:6px;margin:10px 0}
+.matfila{display:grid;grid-template-columns:1fr auto auto;gap:12px;align-items:center;padding:8px 12px;border:1px solid var(--line);border-radius:12px;background:#fff}
+.matfila.off{opacity:.55}
+.vfswitch.mini{margin:0;gap:8px;align-items:center}.vfswitch.mini .sw{width:38px;height:22px;flex-basis:38px}.vfswitch.mini .sw::after{width:16px;height:16px}
+.vfswitch.mini input:checked + .sw::after{left:19px}
+.matadd{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.matadd input{flex:1 1 240px}.matadd select{flex:1 1 220px;width:auto}
+.almgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px}
+.almc{display:flex;flex-direction:column;gap:3px;padding:14px;border-radius:14px;border:1px solid var(--line);background:#fff}
+.almc .ic{font-size:22px}.almc b{color:var(--navy)}.almu{margin-top:6px;font-size:13px;color:var(--muted)}.almu b{font-size:18px}
+.usrok{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:10px 0}
+.usrok div{display:flex;flex-direction:column;gap:2px;padding:10px 12px;border-radius:12px;background:var(--sky-soft)}
+.usrok span{font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}.usrok b{color:var(--navy);word-break:break-all}
+@media (max-width:760px){.cfgnav{position:static;max-height:none;overflow:visible}.mattipos,.usrok{grid-template-columns:1fr}.matfila{grid-template-columns:1fr auto}.matfila .sm:first-of-type{grid-column:1}}
+
+.selw input::-webkit-datetime-edit,.selw input::-webkit-datetime-edit-fields-wrapper,.selw input::-webkit-datetime-edit-text,
+.selw input::-webkit-datetime-edit-month-field,.selw input::-webkit-datetime-edit-day-field,.selw input::-webkit-datetime-edit-year-field,
+.selw input::-webkit-datetime-edit-hour-field,.selw input::-webkit-datetime-edit-minute-field,.selw input::-webkit-datetime-edit-ampm-field{opacity:0;background:transparent!important;color:transparent!important}
+.selw input::selection{background:transparent}
 </style>
 </head>
 <body>
@@ -1183,6 +1214,6 @@ body.masabierto .bnav{border-top-color:transparent;box-shadow:none}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js" defer></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="./config.js"></script>
-<script src="./app.js?v=2.41.0"></script>
+<script src="./app.js?v=2.42.0"></script>
 </body>
 </html>
