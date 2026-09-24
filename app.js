@@ -2063,9 +2063,10 @@ function cabeceraTabla() {
 /* arrastrar el borde de una columna */
 let ARR = null;
 document.addEventListener('pointerdown', e => {
-  const h = e.target.closest('[data-res]'); if (!h) return;
-  e.preventDefault();
+  const h = e.target.closest('i.res[data-res]'); if (!h) return;   // solo el borde de una cabecera
   const cfg = colsConfig(), c = cfg.find(x => x.k === h.dataset.res);
+  if (!c) return;
+  e.preventDefault();
   ARR = { k: h.dataset.res, x0: e.clientX, w0: c.w, cfg };
   document.body.style.cursor = 'col-resize';
 });
@@ -4126,13 +4127,22 @@ const rcCopia = r => ({ data: r.data == null ? r.data : JSON.parse(JSON.stringif
 
 function invalidarCache() {
   RC.clear(); RC_VUELO.clear(); RC_EPOCA++;
+  try { ESQUEMAS = []; } catch (e) {}          // listas guardadas en memoria que deben volver a pedirse
   try { Object.keys(localStorage).filter(k => k.startsWith('dlc-rc-')).forEach(k => localStorage.removeItem(k)); } catch (e) {}
 }
 
+// Las peticiones de Supabase no traen .catch ni .finally: se añaden para que el código que los usa no falle.
+const conCatch = b => {
+  if (b && typeof b.then === 'function' && typeof b.catch !== 'function') {
+    b.catch = f => Promise.resolve(b).catch(f);
+    b.finally = f => Promise.resolve(b).finally(f);
+  }
+  return b;
+};
 db.rpc = function (fn, params, opts) {
-  if (RPC_ESCRITURA.test(fn)) { invalidarCache(); return RPC_ORIG(fn, params, opts); }
+  if (RPC_ESCRITURA.test(fn)) { invalidarCache(); return conCatch(RPC_ORIG(fn, params, opts)); }
   const ttl = RPC_TTL[fn];
-  if (!ttl || !navigator.onLine) return RPC_ORIG(fn, params, opts);
+  if (!ttl || !navigator.onLine) return conCatch(RPC_ORIG(fn, params, opts));
 
   const k = fn + '|' + JSON.stringify(params || {});
   let e = RC.get(k);
