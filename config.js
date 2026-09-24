@@ -17,7 +17,7 @@
   // Es pruebas si se abre desde apptest.… o desde el repositorio de pruebas en GitHub
   const esPruebas = /^apptest\./i.test(location.hostname) || /\/dlc-app-test\//i.test(location.pathname);
   const entorno = esPruebas ? 'pruebas' : 'produccion';
-  const cfg = Object.assign({ version: '2.28.0', entorno }, ENTORNOS[entorno]);
+  const cfg = Object.assign({ version: '2.29.0', entorno }, ENTORNOS[entorno]);
   if (/^PEGA_/.test(cfg.url)) { cfg.sinConfigurar = true; cfg.url = 'https://entorno-sin-configurar.invalid'; cfg.anon = 'x'; }
   window.DLC_CONFIG = cfg;
 })();

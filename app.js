@@ -816,6 +816,10 @@ async function cargarAgenda() {
   if (!AG_FECHA) AG_FECHA = hoyISO();
   const desde = AG_MODO === 'dia' ? AG_FECHA : lunesDe(AG_FECHA);
   const hasta = AG_MODO === 'dia' ? AG_FECHA : isoMas(desde, 6);
+  // Si se vuelve a pintar la misma vista, se conserva lo que había mientras llegan los datos (sin parpadeo)
+  const prev = $('agcuerpo');
+  const clave = AG_MODO + '|' + desde + '|' + (typeof agUid === 'function' ? agUid() : '');
+  const previo = prev && prev.dataset.modo === clave ? prev.innerHTML : null;
 
   $('v-agenda').innerHTML = `
     <div class="saludo"><div><h1>Agenda</h1><div class="fecha" id="agtit">…</div></div>
@@ -828,7 +832,7 @@ async function cargarAgenda() {
         <button class="btn ${AG_MODO === 'mes' ? '' : 'sec'}" data-ag="mes">Mes</button>
         <button class="btn" data-ag="nueva">+ Nueva cita</button>
       </div></div>
-    <div class="card" id="agcuerpo"><div class="skel"></div><div class="skel" style="width:70%"></div></div>
+    <div class="card" id="agcuerpo" ${previo ? `data-modo="${esc(clave)}"` : ''}>${previo || '<div class="skel"></div><div class="skel" style="width:70%"></div><div class="skel" style="width:85%"></div>'}</div>
     <div class="card" id="agpend"></div>`;
 
   $('agtit').textContent = AG_MODO === 'dia'
@@ -849,7 +853,8 @@ async function cargarAgenda() {
   (citas || []).forEach(c => { (porDia[c.fecha] = porDia[c.fecha] || []).push(c); });
   const dias = AG_MODO === 'dia' ? [AG_FECHA] : Array.from({ length: 7 }, (_, i) => isoMas(desde, i));
 
-  $('agcuerpo').innerHTML = dias.map(f => {
+  // «Tu día» y la semana en cuadrícula se pintan después con su propio formato
+  if (AG_MODO !== 'dia' && AG_MODO !== 'semana') $('agcuerpo').innerHTML = dias.map(f => {
     const lista = porDia[f] || [];
     const hechas = lista.filter(c => c.estado === 'Visitada').length;
     return `<h2 style="padding:14px 16px 0">${fechaLarga(new Date(f + 'T00:00:00')).replace(/^./, c => c.toUpperCase())}
@@ -8505,6 +8510,7 @@ async function entrarComo(id) {
   const u = (USUARIOS || []).find(x => x.id === id) || { nombre: 'esta persona' };
   if (!await preguntar(`Verás la plataforma exactamente como ${u.nombre}: su menú, sus permisos, su cartera y sus datos.\n\nLo que hagas quedará a su nombre, y la entrada queda anotada en la auditoría. Para volver, pulsa «Volver a mi sesión» en la barra morada.`,
     { titulo: `¿Entrar como ${u.nombre}?`, ok: 'Entrar como ' + String(u.nombre).split(' ')[0] })) return;
+  pantallaCarga('Entrando como ' + u.nombre + '…');
   const { data: { session } } = await db.auth.getSession();
   if (!session) return;
   const { data, error } = await db.functions.invoke('impersonar', { body: { usuario_id: id } });
@@ -8514,7 +8520,7 @@ async function entrarComo(id) {
       : e === 'permiso' ? 'No tienes permiso para entrar como otra persona'
       : e === 'inactivo' ? 'Ese usuario está desactivado'
       : 'No se ha podido: ' + ((error && error.message) || e || 'la función «impersonar» no responde'), true);
-    return;
+    quitarCarga(); return;
   }
   localStorage.setItem(SKEY, JSON.stringify({ access_token: session.access_token, refresh_token: session.refresh_token,
     nombre: PERFIL.nombre, id: PERFIL.id, como: data.nombre, rol: data.rol, desde: Date.now() }));
@@ -8522,7 +8528,7 @@ async function entrarComo(id) {
   if (e2) {
     localStorage.removeItem(SKEY);
     await db.auth.setSession({ access_token: session.access_token, refresh_token: session.refresh_token });
-    toast('No se ha podido abrir su sesión: ' + e2.message, true); return;
+    toast('No se ha podido abrir su sesión: ' + e2.message, true); quitarCarga(); return;
   }
   limpiarDatosLocales();
   location.reload();
@@ -8970,6 +8976,245 @@ Object.assign(AYUDA, {
 });
 AYUDA.inicio[2].push('<b>Mi semana</b>, <b>Ventas del mes</b> y <b>Alertas</b> resumen lo importante. Administración y televenta ven además los cruces del equipo (médicos en dos carteras, visitas a médicos de otra cartera…) y el cumplimiento del equipo.');
 AYUDA.rutas[2].unshift('La pestaña <b>Resumen</b> muestra tu día, las propuestas para hoy y tus rutas, con accesos directos a planificar.');
+
+
+/* ============================================================
+   DLC OS 2.0 · v2.29.0 · Pantalla de carga al cambiar de sesión,
+   agenda sin parpadeos, más indicadores en Inicio y Analítica visual
+   ============================================================ */
+
+/* ---------------- pantalla de carga a pantalla completa ---------------- */
+
+function pantallaCarga(msg) {
+  let o = $('cargatotal');
+  if (!o) { document.body.insertAdjacentHTML('beforeend', '<div id="cargatotal" class="cargatotal"></div>'); o = $('cargatotal'); }
+  o.innerHTML = `<div><span class="spin"></span><b>${esc(msg)}</b><span class="sm">Un momento: se está cargando todo de nuevo</span></div>`;
+  o.classList.remove('hide');
+}
+const quitarCarga = () => { const o = $('cargatotal'); if (o) o.classList.add('hide'); };
+
+
+
+volverAMiSesion = (orig => async function () {
+  const s = suplantando();
+  pantallaCarga('Volviendo a tu sesión' + (s ? ', ' + String(s.nombre).split(' ')[0] : '') + '…');
+  await orig();
+})(volverAMiSesion);
+
+/* ---------------- agenda: una sola transición al cambiar de vista ---------------- */
+
+let ABRIR_PLAN_SEMANA = false;
+cargarAgenda = (orig => async function () {
+  await orig();
+  const c = $('agcuerpo');
+  if (c) c.dataset.modo = AG_MODO + '|' + (AG_MODO === 'dia' ? AG_FECHA : lunesDe(AG_FECHA || hoyISO())) + '|' + agUid();
+  if (ABRIR_PLAN_SEMANA && AG_MODO === 'semana' && $('semplan')) { ABRIR_PLAN_SEMANA = false; $('semplan').click(); }
+})(cargarAgenda);
+
+// «Hoy» lleva siempre a «Tu día» de hoy (en el mes, al mes actual)
+document.addEventListener('click', e => {
+  const b = e.target.closest('#v-agenda [data-ag="hoy"]');
+  if (!b) return;
+  e.stopImmediatePropagation();
+  AG_FECHA = hoyISO(); if (AG_MODO !== 'mes') AG_MODO = 'dia';
+  cargarAgenda();
+}, true);
+
+// Desde Rutas: «Planificar la semana» abre el planificador cuando la semana ya está pintada
+document.addEventListener('click', e => {
+  const b = e.target.closest('#rrsem, [data-inisem="plan"]');
+  if (!b) return;
+  e.stopImmediatePropagation();
+  ABRIR_PLAN_SEMANA = true; AG_MODO = 'semana'; AG_FECHA = hoyISO(); ir('agenda');
+}, true);
+
+/* ---------------- Inicio: más indicadores ---------------- */
+
+const pct = (a, b) => b ? Math.round(a / b * 100) : 0;
+KPI_CAT.push(
+  { id: 'uds_mes', t: 'unidades vendidas este mes', v: k => k.uds_mes, cls: k => k.uds_mes >= k.uds_mes_ant ? 'ok' : 'warn', h: 'x-analitica' },
+  { id: 'importe_mes', t: 'ventas del mes sin IVA', v: k => eurI(k.importe_mes || 0).replace(',00', ''), h: 'x-analitica' },
+  { id: 'prescriptores', t: 'médicos que han vendido este mes', v: k => k.prescriptores_mes, h: 'x-analitica' },
+  { id: 'nuevos_presc', t: 'nuevos prescriptores este mes', v: k => k.nuevos_prescriptores, cls: k => k.nuevos_prescriptores ? 'ok' : '' },
+  { id: 'activos_90', t: 'médicos con ventas en 90 días', v: k => k.activos_90 },
+  { id: 'conversion', t: 'del embudo ya prescribe', v: k => pct(k.prescriben, k.en_embudo) + '%' },
+  { id: 'visitas_7d', t: 'visitas en los últimos 7 días', v: k => k.visitas_7d },
+  { id: 'citas_7d', t: 'citas tuyas en los próximos 7 días', v: k => k.citas_7d, h: 'x-semana' },
+  { id: 'muestras_mes', t: 'muestras entregadas este mes', v: k => k.muestras_mes },
+  { id: 'material_mes', t: 'entregas de material este mes', v: k => k.material_mes },
+  { id: 'sin_visita_60', t: 'médicos sin visita en 60 días', v: k => k.sin_visita_60, cls: k => k.sin_visita_60 ? 'warn' : 'ok' },
+  { id: 'sin_horario', t: 'fichas sin horario de consulta', v: k => k.sin_horario, cls: k => k.sin_horario ? 'warn' : 'ok' },
+  { id: 'borradores', t: 'pedidos en borrador', v: k => k.borradores, cls: k => k.borradores ? 'warn' : '', h: 'x-ventas' }
+);
+Object.assign(AYUDA_KPI, {
+  uds_mes: 'Unidades de los pedidos validados desde el día 1 de este mes. En verde si va por delante de los mismos días del mes anterior. Pulsa para ir a Analítica.',
+  importe_mes: 'Importe sin IVA de los pedidos validados este mes (con el descuento de cada línea).',
+  prescriptores: 'Médicos distintos a los que se ha atribuido alguna venta este mes.',
+  nuevos_presc: 'Médicos cuya primera venta atribuida ha sido este mes: el mejor indicador de captación.',
+  activos_90: 'Médicos con alguna venta atribuida en los últimos 90 días: tu base de prescriptores activos.',
+  conversion: 'De los médicos ya presentados, interesados o prescriptores, qué parte prescribe. Mide cómo avanza el embudo.',
+  visitas_7d: 'Visitas registradas en los últimos siete días, contando hoy.',
+  citas_7d: 'Tus citas abiertas de hoy a los próximos seis días. Pulsa para ver tu semana.',
+  muestras_mes: 'Muestras entregadas en las visitas de este mes.',
+  material_mes: 'Veces que se ha entregado material comercial (dípticos, talonarios…) este mes.',
+  sin_visita_60: 'Médicos que puedes ver y que no se visitan desde hace más de 60 días (o nunca).',
+  sin_horario: 'Médicos sin días ni horas de consulta en su ficha. Sin ese dato, las rutas y el planificador no pueden ajustarse a su horario.',
+  borradores: 'Pedidos guardados como borrador que todavía no cuentan en métricas ni comisiones. Pulsa para verlos.'
+});
+['uds_mes', 'prescriptores', 'citas_7d', 'sin_visita_60'].forEach(k => { if (!KPI_DEF.includes(k)) KPI_DEF.push(k); });
+
+// Quien ya tenía indicadores guardados recibe los nuevos principales una vez (luego puede ocultarlos)
+const mostrarAppV2280 = mostrarApp;
+mostrarApp = function (perfil) {
+  const p = perfil.preferencias || {};
+  if (Array.isArray(p.kpis) && p.kpis.length) {
+    ['uds_mes', 'prescriptores', 'citas_7d', 'sin_visita_60'].forEach(id => { if (!p.kpis.some(x => x.id === id)) p.kpis.push({ id, on: true, t: '' }); });
+    KPI_CAT.forEach(k => { if (!p.kpis.some(x => x.id === k.id)) p.kpis.push({ id: k.id, on: false, t: '' }); });
+  }
+  mostrarAppV2280(perfil);
+};
+
+document.addEventListener('click', e => {
+  const k = e.target.closest('#kpis [data-k^="x-"]');
+  if (!k || e.target.closest('.ai')) return;
+  e.stopImmediatePropagation();
+  const a = k.dataset.k;
+  if (a === 'x-analitica') ir('analitica');
+  if (a === 'x-semana') { AG_MODO = 'semana'; AG_FECHA = hoyISO(); ir('agenda'); }
+  if (a === 'x-ventas') ir('ventas');
+}, true);
+
+/* ---------------- Analítica: resumen visual ---------------- */
+
+let ANSEC = 'resumen';
+const MESES_C = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+const mesTxt = m => MESES_C[+m.slice(5, 7) - 1] + ' ' + m.slice(2, 4);
+function mesesEntre(d, h) {
+  const out = []; const x = new Date(d.slice(0, 7) + '-01T12:00:00'), fin = new Date(h.slice(0, 7) + '-01T12:00:00');
+  while (x <= fin && out.length < 36) { out.push(fechaLocal(x).slice(0, 7)); x.setMonth(x.getMonth() + 1); }
+  return out;
+}
+
+function svgBarras(meses, a, b, etiquetas) {
+  // a: barras (unidades), b: línea opcional (importe). El ancho se adapta a la pantalla y el alto es fijo.
+  const caja = $('angraf'), W = Math.max(420, Math.min(1400, ((caja && caja.clientWidth) || 700) - 40)), H = 230, P = 34, n = meses.length || 1, bw = Math.max(6, (W - P * 2) / n * .62);
+  const maxA = Math.max(1, ...a), maxB = Math.max(1, ...(b || [0]));
+  const x = i => P + (W - P * 2) * (i + .5) / n;
+  const ya = v => H - 26 - (H - 50) * v / maxA, yb = v => H - 26 - (H - 50) * v / maxB;
+  return `<svg viewBox="0 0 ${W} ${H}" class="grafico" role="img" aria-label="${esc(etiquetas[0])} por mes">
+    <line x1="${P}" y1="${H - 26}" x2="${W - P}" y2="${H - 26}" class="eje"/>
+    ${a.map((v, i) => `<g><rect x="${x(i) - bw / 2}" y="${ya(v)}" width="${bw}" height="${H - 26 - ya(v)}" rx="4" class="barra1"><title>${mesTxt(meses[i])}: ${num(v)} ${etiquetas[0]}</title></rect>
+      ${v ? `<text x="${x(i)}" y="${ya(v) - 5}" class="val">${num(v)}</text>` : ''}
+      <text x="${x(i)}" y="${H - 8}" class="lab">${mesTxt(meses[i])}</text></g>`).join('')}
+    ${b ? `<polyline points="${b.map((v, i) => `${x(i)},${yb(v)}`).join(' ')}" class="linea2"/>
+      ${b.map((v, i) => `<circle cx="${x(i)}" cy="${yb(v)}" r="3.5" class="punto2"><title>${mesTxt(meses[i])}: ${eurI(v)}</title></circle>`).join('')}` : ''}
+  </svg>
+  <div class="leyenda"><span><i class="c1"></i>${esc(etiquetas[0])}</span>${b ? `<span><i class="c2"></i>${esc(etiquetas[1])}</span>` : ''}</div>`;
+}
+
+function svgDonut(items) {
+  const tot = items.reduce((n, x) => n + x.v, 0) || 1, R = 70, C = 2 * Math.PI * R;
+  const col = ['#0E2F52', '#2B6CB0', '#63A4E0', '#12805C', '#C2610F', '#8B5CF6', '#94A3B8'];
+  let acc = 0;
+  return `<div class="donutw"><svg viewBox="0 0 200 200" class="donut" role="img" aria-label="Reparto por producto">
+    <circle cx="100" cy="100" r="${R}" class="fondo"/>
+    ${items.map((x, i) => { const l = C * x.v / tot, s = `<circle cx="100" cy="100" r="${R}" stroke="${col[i % col.length]}" stroke-dasharray="${l} ${C - l}" stroke-dashoffset="${-acc}" class="arco"><title>${esc(x.n)}: ${num(x.v)} (${Math.round(x.v / tot * 100)}%)</title></circle>`; acc += l; return s; }).join('')}
+    <text x="100" y="96" class="dn1">${num(tot)}</text><text x="100" y="116" class="dn2">unidades</text></svg>
+    <div class="donutley">${items.map((x, i) => `<span><i style="background:${col[i % col.length]}"></i>${esc(x.n)} <b>${Math.round(x.v / tot * 100)}%</b></span>`).join('')}</div></div>`;
+}
+
+function barrasH(items, fmt) {
+  const max = Math.max(1, ...items.map(x => x.v));
+  return `<div class="barrash">${items.map((x, i) => `<div class="bh"><span class="bhn">${i + 1}. ${esc(x.n)}</span>
+    <span class="bhb"><i style="width:${Math.max(2, x.v / max * 100)}%"></i></span><b>${fmt(x.v)}</b></div>`).join('')}</div>`;
+}
+
+const vacioGrafico = t => `<div class="gvacio"><span>📊</span><b>Aún no hay datos para este gráfico</b><span class="sm">${esc(t)}</span></div>`;
+
+async function pintarResumenAnalitica() {
+  const cuerpo = $('anres');
+  cuerpo.innerHTML = `<div class="filtros" style="border:0;padding:0 0 12px"><div id="anper"></div></div>
+    <div class="kpis vtot" id="ankpis">${Array.from({ length: 6 }, () => '<div class="kpi ksk"><div class="skel" style="width:40%;height:24px;margin:2px 0 8px"></div><div class="skel" style="width:70%;margin:0"></div></div>').join('')}</div>
+    <div class="angrid" id="angraf"></div>`;
+  const pinta = async () => {
+    const r = $('anper').__rango();
+    const hasta = r.hasta || hoyISO(), desde = r.desde || isoMas(hasta, -364);
+    const dias = Math.round((new Date(hasta) - new Date(desde)) / 864e5) + 1;
+    const antH = isoMas(desde, -1), antD = isoMas(antH, -(dias - 1));
+    $('angraf').innerHTML = Array.from({ length: 4 }, () => `<div class="card">${skelCard('Cargando…')}</div>`).join('');
+    const [act, ant, med, actv, emb] = await Promise.all([
+      db.rpc('analitica_v2', { p_dim: 'producto', p_desde: desde, p_hasta: hasta, lim: 20 }).then(x => x.data || {}),
+      db.rpc('analitica_v2', { p_dim: 'producto', p_desde: antD, p_hasta: antH, lim: 5 }).then(x => (x.data || {}).totales || {}),
+      db.rpc('analitica_v2', { p_dim: 'medico', p_desde: desde, p_hasta: hasta, lim: 10 }).then(x => (x.data || {}).filas || []),
+      db.rpc('actividad_mensual', { p_desde: desde, p_hasta: hasta }).then(x => x.data || []),
+      db.rpc('embudo_comercial').then(x => x.data || {})
+    ]);
+    const t = act.totales || {};
+    const d = (a, b) => !b ? '<span class="sm">sin datos del periodo anterior</span>'
+      : `<span class="delta ${a >= b ? 'up' : 'down'}">${a >= b ? '▲' : '▼'} ${Math.abs(Math.round((a - b) / b * 100))}%</span> <span class="sm">vs periodo anterior</span>`;
+    const kpi = (v, tit, ayuda, extra) => `<div class="kpi"><button class="ai" data-ayuda-txt="${esc(ayuda)}" data-ayuda-tit="${esc(tit)}" aria-label="Qué es">i</button>
+      <b>${v}</b><span>${esc(tit)}</span>${extra ? `<span class="kx">${extra}</span>` : ''}</div>`;
+    const visitas = actv.reduce((n, x) => n + x.visitas, 0);
+    $('ankpis').innerHTML =
+      kpi(num(t.unidades || 0), 'Unidades vendidas', 'Unidades de pedidos validados en el periodo.', d(+t.unidades || 0, +ant.unidades || 0)) +
+      kpi(eurI(t.importe || 0), 'Ventas sin IVA', 'Importe sin IVA de los pedidos validados, con el descuento de cada línea.', d(+t.importe || 0, +ant.importe || 0)) +
+      kpi(num(t.pedidos || 0), 'Pedidos', 'Pedidos validados en el periodo.', d(+t.pedidos || 0, +ant.pedidos || 0)) +
+      kpi(t.pedidos ? eurI(t.importe / t.pedidos) : '—', 'Ticket medio', 'Importe medio de cada pedido: ventas sin IVA entre número de pedidos.') +
+      kpi(num(t.medicos || 0), 'Médicos que prescriben', 'Médicos distintos con alguna venta atribuida en el periodo.', d(+t.medicos || 0, +ant.medicos || 0)) +
+      kpi(visitas ? (Math.round((t.unidades || 0) / visitas * 10) / 10).toString().replace('.', ',') : '—', 'Unidades por visita', 'Unidades vendidas entre visitas registradas en el periodo. Indica cuánto rinde cada visita.');
+
+    const meses = mesesEntre(desde, hasta);
+    const serie = {}; (act.serie || []).forEach(s => serie[s.mes] = s);
+    const vis = {}; actv.forEach(s => vis[s.mes] = s);
+    const orden = ['Sin contactar', 'Presentado', 'Interesado', 'Prescribe'];
+    const embTot = orden.reduce((n, k) => n + (+emb[k] || 0), 0);
+    $('angraf').innerHTML = `
+      <div class="card ancard ancha"><h2>Evolución de las ventas</h2>
+        ${(t.unidades || 0) ? svgBarras(meses, meses.map(m => (serie[m] || {}).unidades || 0), meses.map(m => +((serie[m] || {}).importe || 0)), ['Unidades', 'Importe sin IVA'])
+          : vacioGrafico('Cuando haya pedidos validados verás aquí las unidades (barras) y el importe (línea) de cada mes.')}
+        <p class="leer"><b>Cómo leerlo:</b> cada barra son las unidades vendidas en el mes y la línea, el importe. Si la línea sube más que las barras, se vende a mejor precio (menos descuento o productos de más valor).</p></div>
+      <div class="card ancard"><h2>Reparto por producto</h2>
+        ${(act.por_producto || []).length ? svgDonut((act.por_producto || []).slice(0, 6).map(x => ({ n: x.nombre, v: x.unidades })))
+          : vacioGrafico('Verás qué parte de las unidades corresponde a cada producto.')}
+        <p class="leer"><b>Cómo leerlo:</b> el porcentaje de unidades de cada producto en el periodo. Sirve para ver de qué depende la facturación.</p></div>
+      <div class="card ancard"><h2>Médicos que más prescriben</h2>
+        ${med.filter(x => x.clave !== 'sin').length ? barrasH(med.filter(x => x.clave !== 'sin').map(x => ({ n: x.nombre, v: x.unidades })), num) : vacioGrafico('Aparecerán los 10 médicos con más unidades atribuidas.')}
+        <p class="leer"><b>Cómo leerlo:</b> los diez médicos con más unidades atribuidas. Son los que conviene cuidar: visitas frecuentes, material y seguimiento.</p></div>
+      <div class="card ancard"><h2>Embudo comercial</h2>
+        ${embTot ? `<div class="embudo">${orden.map((k, i) => { const v = +emb[k] || 0, ant2 = i ? (+emb[orden[i - 1]] || 0) : 0;
+          return `<div class="emb"><span class="embn">${esc(k)}</span><span class="embb"><i style="width:${Math.max(3, v / embTot * 100)}%"></i></span><b>${num(v)}</b>
+            ${i ? `<span class="sm">${ant2 ? pct(v, ant2 + v) + '% avanza' : ''}</span>` : '<span class="sm"></span>'}</div>`; }).join('')}
+          ${emb['No interesado'] ? `<div class="sm" style="margin-top:6px">No interesados: ${num(emb['No interesado'])}</div>` : ''}</div>`
+          : vacioGrafico('Verás cuántos médicos hay en cada estado comercial.')}
+        <p class="leer"><b>Cómo leerlo:</b> cuántos médicos hay en cada estado. El porcentaje indica qué parte ha pasado a ese estado respecto al anterior. El objetivo es que la barra de «Prescribe» crezca.</p></div>
+      <div class="card ancard ancha"><h2>Actividad y resultados</h2>
+        ${actv.length || (t.unidades || 0) ? svgBarras(meses, meses.map(m => (vis[m] || {}).visitas || 0), meses.map(m => (serie[m] || {}).unidades || 0), ['Visitas', 'Unidades vendidas'])
+          : vacioGrafico('Verás las visitas de cada mes junto a las unidades vendidas.')}
+        <p class="leer"><b>Cómo leerlo:</b> las barras son las visitas registradas y la línea, las unidades vendidas. Si las visitas suben y las ventas no, conviene revisar a quién se visita y con qué mensaje.</p></div>`;
+  };
+  montarPeriodo($('anper'), { id: 'analitica-resumen', valor: 'anio', alCambiar: pinta });
+  pinta();
+}
+
+cargarAnalitica = (orig => async function () {
+  await orig();
+  const v = $('v-analitica'), panel = v.querySelector('.panel');
+  if (!panel) return;
+  v.querySelector('.saludo').insertAdjacentHTML('afterend', `<div class="subnav" id="ansub">
+    <button data-ansec="resumen" aria-pressed="${ANSEC === 'resumen'}">Resumen</button>
+    <button data-ansec="explorar" aria-pressed="${ANSEC === 'explorar'}">Explorar datos</button></div>
+    <div id="anres" class="${ANSEC === 'resumen' ? '' : 'hide'}"></div>`);
+  panel.classList.toggle('hide', ANSEC === 'resumen');
+  v.querySelectorAll('[data-ansec]').forEach(b => b.onclick = () => {
+    ANSEC = b.dataset.ansec;
+    v.querySelectorAll('[data-ansec]').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+    $('anres').classList.toggle('hide', ANSEC !== 'resumen'); panel.classList.toggle('hide', ANSEC === 'resumen');
+    if (ANSEC === 'resumen' && !$('ankpis')) pintarResumenAnalitica();
+  });
+  if (ANSEC === 'resumen') pintarResumenAnalitica();
+})(cargarAnalitica);
+
+AYUDA.analitica[2].unshift('<b>Resumen</b>: indicadores con la comparación frente al periodo anterior y gráficos explicados (evolución, productos, médicos, embudo y actividad). <b>Explorar datos</b>: ranking y tablas con filtros por médico, comercial y producto.');
 
 
 // Barra inferior del móvil y barra de «Entrar como» desde el primer momento

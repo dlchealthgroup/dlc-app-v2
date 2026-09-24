@@ -401,6 +401,53 @@ body.conruta{padding-top:46px}
 .alerta2.media .an{background:var(--warn);color:#fff}
 .prec{font-size:11.5px;color:var(--warn);font-weight:650}
 .dgrid.servs{--cols:minmax(200px,2fr) 100px 60px 110px minmax(140px,1fr) 90px;min-width:720px}
+/* v2.29.0 */
+.cargatotal{position:fixed;inset:0;z-index:300;background:rgba(245,247,250,.92);display:grid;place-items:center;backdrop-filter:blur(2px)}
+.cargatotal.hide{display:none}
+.cargatotal > div{display:flex;flex-direction:column;align-items:center;gap:10px;text-align:center;padding:24px}
+.cargatotal .spin{width:42px;height:42px;border-width:4px}
+.cargatotal b{font-size:17px;color:var(--navy)}
+.rgrid .card > .acts{padding:0 16px 16px;margin-top:4px}
+.rgrid .card > h2{padding-bottom:4px}
+.kx{display:block;margin-top:4px;font-size:11.5px}
+.angrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.angrid .card{margin:0}
+.ancard.ancha{grid-column:1 / -1}
+.ancard{padding-bottom:6px}
+.ancard .leer{font-size:12.5px;color:var(--muted);padding:0 16px 10px;margin:6px 0 0;line-height:1.5}
+.grafico{width:100%;height:auto;max-height:260px;display:block;padding:0 8px}
+#anper{max-width:340px}
+.grafico .eje{stroke:var(--line);stroke-width:1}
+.grafico .barra1{fill:var(--sky);opacity:.85}
+.grafico .linea2{fill:none;stroke:var(--navy);stroke-width:2.5}
+.grafico .punto2{fill:#fff;stroke:var(--navy);stroke-width:2}
+.grafico .val{font-size:10.5px;fill:var(--ink);text-anchor:middle;font-weight:650}
+.grafico .lab{font-size:10.5px;fill:var(--muted);text-anchor:middle}
+.leyenda{display:flex;gap:16px;padding:4px 16px;font-size:12px;color:var(--muted)}
+.leyenda i{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:5px;vertical-align:-1px}
+.leyenda .c1{background:var(--sky)}.leyenda .c2{background:var(--navy)}
+.donutw{display:flex;align-items:center;gap:14px;padding:6px 16px;flex-wrap:wrap}
+.donut{width:170px;height:170px;flex:0 0 auto}
+.donut .fondo{fill:none;stroke:var(--bg);stroke-width:26}
+.donut .arco{fill:none;stroke-width:26;transform:rotate(-90deg);transform-origin:100px 100px}
+.donut .dn1{font-size:26px;font-weight:750;fill:var(--navy);text-anchor:middle}
+.donut .dn2{font-size:12px;fill:var(--muted);text-anchor:middle}
+.donutley{display:flex;flex-direction:column;gap:6px;font-size:13px}
+.donutley i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px}
+.barrash{padding:4px 16px;display:flex;flex-direction:column;gap:7px}
+.bh{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr) 44px;gap:8px;align-items:center;font-size:12.5px}
+.bhn{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bhb{height:12px;background:var(--bg);border-radius:6px;overflow:hidden}
+.bhb i{display:block;height:100%;background:var(--sky);border-radius:6px}
+.bh b{text-align:right}
+.embudo{padding:4px 16px;display:flex;flex-direction:column;gap:9px}
+.emb{display:grid;grid-template-columns:110px minmax(0,1fr) 44px 80px;gap:8px;align-items:center;font-size:13px}
+.embb{height:16px;background:var(--bg);border-radius:6px;overflow:hidden}
+.embb i{display:block;height:100%;background:linear-gradient(90deg,var(--navy),var(--sky));border-radius:6px}
+.gvacio{display:flex;flex-direction:column;align-items:center;gap:4px;text-align:center;padding:26px 16px;color:var(--muted);background:repeating-linear-gradient(135deg,var(--bg) 0 10px,var(--panel) 10px 20px);border-radius:12px;margin:6px 16px}
+.gvacio span:first-child{font-size:26px}
+.gvacio b{color:var(--navy)}
+@media (max-width:860px){.angrid{grid-template-columns:1fr}.emb{grid-template-columns:90px minmax(0,1fr) 36px}.emb .sm{display:none}}
 #franjapruebas{position:relative;z-index:95;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;
   background:repeating-linear-gradient(135deg,#B45309 0 14px,#C2610F 14px 28px);color:#fff;padding:8px 16px;font-size:13px}
 #franjapruebas .btn{min-height:32px;padding:4px 12px;font-size:12.5px}
@@ -654,6 +701,6 @@ input[type=date],input[type=time],input[type=month],input[type=datetime-local]{c
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js" defer></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="./config.js"></script>
-<script src="./app.js?v=2.28.0"></script>
+<script src="./app.js?v=2.29.0"></script>
 </body>
 </html>
