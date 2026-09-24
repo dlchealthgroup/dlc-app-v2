@@ -18,7 +18,7 @@ const F = { q: '', prov: '', muni: '', esp: '', est: '', urg: false, orden: 'nom
 const PASO = 50;
 
 const hoyISO = () => new Date().toISOString().slice(0, 10);
-const fechaLarga = d => d.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' });
+let fechaLarga = d => d.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' });
 const fechaCorta = s => { const d = new Date(s + 'T00:00:00'); return d.toLocaleDateString('es-ES', { day: 'numeric', month: 'short' }); };
 const iniciales = n => String(n || '').split(/\s+/).slice(0, 2).map(x => x[0] || '').join('').toUpperCase();
 const num = n => Number(n || 0).toLocaleString('es');
@@ -12410,7 +12410,7 @@ async function pintarMarca() {
   let logo = m.logo;
   $('cfgcuerpo').innerHTML = `<div class="card cfgpanel"><h2 style="padding:0 0 4px">Marca de la empresa</h2>
     <p class="sm">Así se ve la plataforma para todo tu equipo: en la pantalla de acceso, arriba en cada pantalla, en la app del móvil y en las facturas.</p>
-    <div class="marcaed"><div class="marcaprev"><img id="mklogo" src="${esc(logo || 'logo-circulo.png')}" alt=""><b id="mknomp">${esc(m.nombre)}</b></div>
+    <div class="marcaed"><div class="marcaprev"><img id="mklogo" src="${esc(logo || 'logo-app.png')}" alt=""><b id="mknomp">${esc(m.nombre)}</b></div>
       <div><label for="mknom">Nombre de la plataforma</label><input id="mknom" value="${esc(m.nombre)}" placeholder="p. ej. Acme Comercial">
         <label>Logo o imagen de perfil</label>
         <div class="acts" style="margin:0"><label class="btn sec" for="mkfile" style="margin:0">Subir imagen</label><input id="mkfile" type="file" accept="image/*" class="hide">
@@ -12426,7 +12426,7 @@ async function pintarMarca() {
     const lado = Math.min(img.width, img.height); x.drawImage(img, (img.width - lado) / 2, (img.height - lado) / 2, lado, lado, 0, 0, 256, 256);
     logo = c.toDataURL('image/png'); $('mklogo').src = logo;
   };
-  if ($('mkquitar')) $('mkquitar').onclick = () => { logo = null; $('mklogo').src = 'logo-circulo.png'; };
+  if ($('mkquitar')) $('mkquitar').onclick = () => { logo = null; $('mklogo').src = 'logo-app.png'; };
   $('mkok').onclick = async () => {
     const v = { nombre: $('mknom').value.trim() || 'Mi empresa', logo, logo_factura: $('mkfac').checked };
     const { error } = await db.rpc('guardar_ajuste', { p_clave: 'marca', p_valor: v });
@@ -12870,6 +12870,7 @@ async function pintarPrefsParte(parte) {
   const plantillas = tpl && tpl.closest('#cfgcuerpo > *');
   if (parte === 'rutas') {
     if (plantillas) plantillas.remove();
+    c.querySelectorAll(':scope > p.sm').forEach(p => p.remove());
     c.insertAdjacentHTML('afterbegin', '<div class="card cfgpanel"><h2 style="padding:0 0 4px">Rutas y desplazamientos</h2><p class="sm">Desde dónde sales, dónde terminas y con qué app se abre la navegación. El horario de las rutas está en su propio apartado.</p></div>');
   } else {
     [...c.children].forEach(x => { if (x !== plantillas) x.remove(); });
@@ -12999,6 +13000,220 @@ nuevoUsuario = (orig => function (pre) {
     $('usrcop').onclick = async () => { try { await navigator.clipboard.writeText(texto); toast('Copiado: pégalo en un mensaje'); } catch (e) { toast('No se ha podido copiar', true); } };
   };
 })(nuevoUsuario);
+
+
+/* ============================================================
+   v2.43.0 · Idiomas por persona (castellano, inglés, alemán,
+   francés e italiano), precios alineados con el mercado, paquete
+   ampliado de notificaciones, logo neutro y ayudas «i» renovadas
+   ============================================================ */
+
+/* ---------------- logo: el de la empresa o uno neutro ---------------- */
+
+const LOGO_NEUTRO = 'logo-app.png';
+aplicarMarca = (orig => function () {
+  orig();
+  if (!MARCA.logo) document.querySelectorAll('header .logo, .lbox img, #bootsplash img').forEach(i => { i.src = LOGO_NEUTRO; });
+})(aplicarMarca);
+aplicarMarca();
+// En la factura solo va el logo si la empresa ha subido el suyo
+logoData = async function () { if (MARCA.logo && (AJUSTES.marca || {}).logo_factura !== false) { LOGO_DATA = MARCA.logo; LOGO_CIRC = true; return MARCA.logo; } return null; };
+
+/* ---------------- planes alineados con el mercado ---------------- */
+
+PLANES.splice(0, PLANES.length,
+  { id: 'esencial', nombre: 'Esencial', precio: 29, incluidos: 2, bloque: [1, 10], medicos: 0, para: 'Para empezar a ordenar las visitas',
+    modulos: ['inicio', 'agenda', 'rutas', 'directorio', 'seguimiento'],
+    ventajas: ['Directorio de médicos y centros', 'Agenda, «Tu día» y registro de visitas', 'Rutas optimizadas y planificación semanal', 'App móvil instalable'] },
+  { id: 'profesional', nombre: 'Profesional', precio: 59, incluidos: 4, bloque: [1, 10], medicos: 0, para: 'Para equipos que venden y miden',
+    modulos: ['inicio', 'agenda', 'rutas', 'directorio', 'seguimiento', 'ventas', 'pacientes', 'productos', 'analitica'],
+    ventajas: ['Todo lo de Esencial', 'Pedidos, clientes y llamadas', 'Productos y stock por lotes', 'Analítica, ranking y comisiones'] },
+  { id: 'avanzado', nombre: 'Avanzado', precio: 99, incluidos: 7, bloque: [1, 10], medicos: 25, para: 'Con facturación y varios comerciales',
+    modulos: ['inicio', 'agenda', 'rutas', 'directorio', 'seguimiento', 'ventas', 'pacientes', 'productos', 'analitica', 'facturacion'],
+    ventajas: ['Todo lo de Profesional', 'Facturación con VeriFactu y cobros', 'Compras, proveedores y trazabilidad', 'Zonas, supervisión y espacio del médico (25)'] },
+  { id: 'premium', nombre: 'Premium', precio: 179, incluidos: 15, bloque: [1, 8], medicos: null, para: 'Redes comerciales completas',
+    modulos: ['inicio', 'agenda', 'rutas', 'directorio', 'seguimiento', 'ventas', 'pacientes', 'productos', 'analitica', 'facturacion'],
+    ventajas: ['Todo lo de Avanzado', 'Espacio del médico sin límite', 'Entrar como otro usuario y auditoría', 'Soporte prioritario y ayuda con la migración'] });
+pintarPlan2 = (orig => async function () {
+  await orig();
+  const c = $('cfgcuerpo'); if (!c) return;
+  // Textos del modelo por usuario (en lugar de bloques)
+  c.querySelectorAll('.plan .sm').forEach(s => { s.textContent = s.textContent.replace(/\+1 usuarios por (.+?)\/mes/, 'usuario extra: $1/mes'); });
+  const b = $('plbloque'); if (b) b.textContent = b.textContent.replace(/Añadir un bloque de 1 usuarios \((.+)\)/, 'Añadir un usuario extra ($1)');
+  c.querySelectorAll('.manlist li span:last-child').forEach(li => {
+    if (/bloques de usuarios/.test(li.textContent)) li.textContent = 'Cada plan incluye usuarios; si el equipo crece, se añaden usuarios sueltos sin cambiar de plan.';
+    if (/dos meses gratis/.test(li.textContent)) li.textContent = 'Pago mensual con tarjeta o domiciliación, sin permanencia.';
+  });
+  const act = c.querySelector('.planact .sm'); if (act) act.textContent = act.textContent.replace(/ \+ (\d+) bloques? de 1/, ' + $1 extra');
+})(pintarPlan2);
+
+/* ---------------- notificaciones ampliadas ---------------- */
+
+TIPOS_NOTIF.push(
+  ['citas_hoy', '📅', 'Mis citas de hoy', 'Al empezar el día, cuántas citas tienes', ['Comercial', 'Administrador', 'Dirección', 'Televenta']],
+  ['sin_visitar', '⏳', 'Médicos sin visitar', 'Los lunes, médicos de tu cartera con más de 60 días sin visita', ['Comercial']],
+  ['cliente_nuevo', '🧑‍⚕️', 'Pacientes nuevos de mi cartera', 'Cuando se da de alta un cliente que viene de un médico tuyo', ['Comercial']],
+  ['pago_recibido', '💳', 'Pagos de mis pedidos', 'Cuando se valida el pago de un pedido que creaste', ['Comercial', 'Televenta', 'Administrador']],
+  ['borrador_nuevo', '✏️', 'Pedidos en borrador', 'Cuando alguien deja un pedido pendiente de validar', ['Administrador', 'Televenta']],
+  ['seguimientos_hoy', '📞', 'Llamadas de seguimiento', 'Al empezar el día, las llamadas que tocan hoy', ['Administrador', 'Televenta']],
+  ['pagos_pendientes', '⌛', 'Pagos pendientes', 'Al empezar el día, pedidos con el pago pendiente hace más de una semana', ['Administrador', 'Televenta']],
+  ['facturas_vencidas', '🧾', 'Facturas vencidas', 'Al empezar el día, facturas vencidas sin cobrar', ['Administrador', 'Dirección', 'Televenta']],
+  ['stock_minimo', '📉', 'Stock bajo', 'Cuando un producto baja de su stock mínimo', ['Administrador', 'Dirección']],
+  ['lotes_caducan', '⚠️', 'Lotes que caducan', 'Al empezar el día, lotes que caducan en 30 días', ['Administrador', 'Dirección']],
+  ['compra_recibida', '🚚', 'Mercancía recibida', 'Cuando se registra la recepción de una compra', ['Administrador', 'Dirección']],
+  ['rectificativa', '↩️', 'Facturas rectificativas', 'Cada rectificativa que se emite', ['Administrador', 'Dirección']],
+  ['duplicado', '🧩', 'Posibles duplicados', 'Cuando una ficha se marca como posible duplicado', ['Administrador']],
+  ['usuario_nuevo', '👤', 'Usuarios nuevos', 'Cuando se da de alta una persona', ['Administrador']],
+  ['esquema', '€', 'Mi comisión', 'Cuando te asignan un esquema de comisión', ['Comercial', 'Televenta', 'Dirección']]);
+irEnlace = (orig => function (e) {
+  const [t] = String(e || '').split(':');
+  if (t === 'agenda') { AG_MODO = 'dia'; AG_FECHA = hoyISO(); ir('agenda'); }
+  else if (t === 'llamadas') { PEDSEC = 'llamadas'; ir('ventas'); }
+  else if (t === 'ventas') { PEDSEC = 'ventas'; ir('ventas'); }
+  else if (t === 'stock') { PSEC = 'stock'; ir('productos'); }
+  else if (t === 'facturacion') ir('facturacion');
+  else if (t === 'duplicados') ir('duplicados');
+  else orig(e);
+})(irEnlace);
+// Resumen del día: se genera la primera vez que se abre la plataforma cada día
+mostrarApp = (orig => function (p) {
+  orig(p);
+  if (p.rol !== 'Medico') setTimeout(() => Promise.resolve(RPC_ORIG('avisos_del_dia', {})).then(r => { if (r && r.data && r.data.nuevo) refrescarCampana(); }, () => {}), 1500);
+})(mostrarApp);
+// Configuración de notificaciones agrupada
+pintarNotif = (orig => function () {
+  orig();
+  const c = $('cfgcuerpo').querySelector('.notcfg'); if (!c) return;
+  const al = ['citas_hoy', 'seguimientos_hoy', 'pagos_pendientes', 'facturas_vencidas', 'lotes_caducan', 'sin_visitar'];
+  const labels = [...c.children];
+  const dia = labels.filter(l => al.includes(l.querySelector('[data-nt]').dataset.nt));
+  if (dia.length) { c.insertAdjacentHTML('beforeend', '<h3 class="mansub">Resumen al empezar el día</h3>'); dia.forEach(l => c.appendChild(l)); }
+  if (labels.length > dia.length) c.insertAdjacentHTML('afterbegin', '<h3 class="mansub" style="margin-top:0">Al momento</h3>');
+})(pintarNotif);
+
+/* ---------------- idiomas ---------------- */
+
+const IDIOMAS = [['es', 'Castellano'], ['en', 'English'], ['de', 'Deutsch'], ['fr', 'Français'], ['it', 'Italiano']];
+const LOCALES = { es: 'es-ES', en: 'en-GB', de: 'de-DE', fr: 'fr-FR', it: 'it-IT' };
+// [castellano, inglés, alemán, francés, italiano]
+const I18N = [
+  ['Inicio', 'Home', 'Start', 'Accueil', 'Home'], ['Agenda', 'Calendar', 'Kalender', 'Agenda', 'Agenda'], ['Rutas', 'Routes', 'Routen', 'Itinéraires', 'Percorsi'],
+  ['Directorio', 'Directory', 'Verzeichnis', 'Annuaire', 'Rubrica'], ['Clientes', 'Customers', 'Kunden', 'Clients', 'Clienti'], ['Productos', 'Products', 'Produkte', 'Produits', 'Prodotti'],
+  ['Calidad del dato', 'Data quality', 'Datenqualität', 'Qualité des données', 'Qualità dei dati'], ['Pedidos', 'Orders', 'Bestellungen', 'Commandes', 'Ordini'],
+  ['Analítica', 'Analytics', 'Analysen', 'Analyses', 'Analisi'], ['Facturación', 'Invoicing', 'Rechnungen', 'Facturation', 'Fatturazione'], ['Más', 'More', 'Mehr', 'Plus', 'Altro'],
+  ['Mi informe', 'My report', 'Mein Bericht', 'Mon rapport', 'Il mio report'], ['Configuración', 'Settings', 'Einstellungen', 'Paramètres', 'Impostazioni'],
+  ['Manual de uso', 'User guide', 'Handbuch', 'Guide d’utilisation', 'Manuale'], ['Cerrar sesión', 'Sign out', 'Abmelden', 'Se déconnecter', 'Esci'],
+  ['Cambiar contraseña', 'Change password', 'Passwort ändern', 'Changer le mot de passe', 'Cambia password'],
+  ['Guardar', 'Save', 'Speichern', 'Enregistrer', 'Salva'], ['Cancelar', 'Cancel', 'Abbrechen', 'Annuler', 'Annulla'], ['Cerrar', 'Close', 'Schließen', 'Fermer', 'Chiudi'],
+  ['Editar', 'Edit', 'Bearbeiten', 'Modifier', 'Modifica'], ['Eliminar', 'Delete', 'Löschen', 'Supprimer', 'Elimina'], ['Buscar', 'Search', 'Suchen', 'Rechercher', 'Cerca'],
+  ['Añadir', 'Add', 'Hinzufügen', 'Ajouter', 'Aggiungi'], ['Volver', 'Back', 'Zurück', 'Retour', 'Indietro'], ['Hoy', 'Today', 'Heute', 'Aujourd’hui', 'Oggi'],
+  ['Día', 'Day', 'Tag', 'Jour', 'Giorno'], ['Semana', 'Week', 'Woche', 'Semaine', 'Settimana'], ['Mes', 'Month', 'Monat', 'Mois', 'Mese'], ['Equipo', 'Team', 'Team', 'Équipe', 'Team'],
+  ['Aceptar', 'OK', 'OK', 'OK', 'OK'], ['Borrar', 'Clear', 'Leeren', 'Effacer', 'Cancella'], ['Sí', 'Yes', 'Ja', 'Oui', 'Sì'], ['No', 'No', 'Nein', 'Non', 'No'],
+  ['Entrar', 'Sign in', 'Anmelden', 'Se connecter', 'Accedi'], ['Correo', 'Email', 'E-Mail', 'E-mail', 'Email'], ['Contraseña', 'Password', 'Passwort', 'Mot de passe', 'Password'],
+  ['He olvidado la contraseña', 'I forgot my password', 'Passwort vergessen', 'Mot de passe oublié', 'Ho dimenticato la password'], ['Bienvenido', 'Welcome', 'Willkommen', 'Bienvenue', 'Benvenuto'],
+  ['Buscar médico, centro o municipio', 'Search doctor, centre or town', 'Arzt, Zentrum oder Ort suchen', 'Rechercher médecin, centre ou ville', 'Cerca medico, centro o comune'],
+  ['Tu día', 'Your day', 'Dein Tag', 'Votre journée', 'La tua giornata'], ['Alertas', 'Alerts', 'Warnungen', 'Alertes', 'Avvisi'], ['Mi semana', 'My week', 'Meine Woche', 'Ma semaine', 'La mia settimana'],
+  ['Ventas del mes', 'Sales this month', 'Umsatz des Monats', 'Ventes du mois', 'Vendite del mese'], ['Operativa de pedidos', 'Order operations', 'Bestellabwicklung', 'Suivi des commandes', 'Gestione ordini'],
+  ['Notificaciones', 'Notifications', 'Benachrichtigungen', 'Notifications', 'Notifiche'], ['Idioma', 'Language', 'Sprache', 'Langue', 'Lingua'],
+  ['Tu cuenta', 'Your account', 'Dein Konto', 'Votre compte', 'Il tuo account'], ['Mi perfil', 'My profile', 'Mein Profil', 'Mon profil', 'Il mio profilo'],
+  ['Rutas y desplazamientos', 'Routes and travel', 'Routen und Fahrten', 'Itinéraires et déplacements', 'Percorsi e spostamenti'], ['Horario de las rutas', 'Route schedule', 'Routenzeiten', 'Horaires des itinéraires', 'Orari dei percorsi'],
+  ['Indicadores de Inicio', 'Home indicators', 'Start-Kennzahlen', 'Indicateurs d’accueil', 'Indicatori della home'], ['Mensajes', 'Messages', 'Nachrichten', 'Messages', 'Messaggi'],
+  ['Base de datos', 'Database', 'Datenbank', 'Base de données', 'Database'], ['Clasificadores', 'Lists', 'Listen', 'Listes', 'Elenchi'], ['Equipo y cartera', 'Team and portfolio', 'Team und Portfolio', 'Équipe et portefeuille', 'Team e portafoglio'],
+  ['Usuarios y permisos', 'Users and permissions', 'Benutzer und Rechte', 'Utilisateurs et droits', 'Utenti e permessi'], ['Roles y permisos', 'Roles and permissions', 'Rollen und Rechte', 'Rôles et droits', 'Ruoli e permessi'],
+  ['Reglas de cartera', 'Portfolio rules', 'Portfolio-Regeln', 'Règles de portefeuille', 'Regole del portafoglio'], ['Frecuencia de visita', 'Visit frequency', 'Besuchshäufigkeit', 'Fréquence des visites', 'Frequenza delle visite'],
+  ['Comisiones', 'Commissions', 'Provisionen', 'Commissions', 'Provvigioni'], ['Accesos', 'Sign-ins', 'Anmeldungen', 'Connexions', 'Accessi'], ['Auditoría', 'Audit log', 'Protokoll', 'Journal d’audit', 'Registro attività'],
+  ['Stock', 'Stock', 'Bestand', 'Stock', 'Magazzino'], ['Almacenes', 'Warehouses', 'Lager', 'Entrepôts', 'Magazzini'], ['Material de visita', 'Visit materials', 'Besuchsmaterial', 'Matériel de visite', 'Materiale di visita'],
+  ['Datos fiscales', 'Tax details', 'Steuerdaten', 'Données fiscales', 'Dati fiscali'], ['Series y numeración', 'Series and numbering', 'Serien und Nummerierung', 'Séries et numérotation', 'Serie e numerazione'],
+  ['Empresa', 'Company', 'Unternehmen', 'Entreprise', 'Azienda'], ['Marca y logo', 'Brand and logo', 'Marke und Logo', 'Marque et logo', 'Marchio e logo'], ['Plan y suscripción', 'Plan and subscription', 'Tarif und Abo', 'Offre et abonnement', 'Piano e abbonamento'],
+  ['Mis datos', 'My details', 'Meine Daten', 'Mes données', 'I miei dati'], ['Nombre visible', 'Display name', 'Anzeigename', 'Nom affiché', 'Nome visualizzato'], ['Teléfono', 'Phone', 'Telefon', 'Téléphone', 'Telefono'],
+  ['Al entrar, abrir', 'Open on sign-in', 'Beim Start öffnen', 'Ouvrir à la connexion', 'Apri all’accesso'], ['Nueva contraseña', 'New password', 'Neues Passwort', 'Nouveau mot de passe', 'Nuova password'],
+  ['Repítela', 'Repeat it', 'Wiederholen', 'Répétez-le', 'Ripetila'], ['Punto de salida', 'Starting point', 'Startpunkt', 'Point de départ', 'Punto di partenza'], ['Punto de llegada', 'End point', 'Zielpunkt', 'Point d’arrivée', 'Punto di arrivo'],
+  ['Navegación', 'Navigation', 'Navigation', 'Navigation', 'Navigazione'], ['Nombre', 'Name', 'Name', 'Nom', 'Nome'], ['Dirección', 'Address', 'Adresse', 'Adresse', 'Indirizzo'],
+  ['Buscar dirección', 'Find address', 'Adresse suchen', 'Chercher l’adresse', 'Cerca indirizzo'], ['Usar mi ubicación', 'Use my location', 'Meinen Standort verwenden', 'Utiliser ma position', 'Usa la mia posizione'],
+  ['Guardar preferencias', 'Save preferences', 'Einstellungen speichern', 'Enregistrer', 'Salva preferenze'], ['Nuevo usuario', 'New user', 'Neuer Benutzer', 'Nouvel utilisateur', 'Nuovo utente'],
+  ['+ Nuevo usuario', '+ New user', '+ Neuer Benutzer', '+ Nouvel utilisateur', '+ Nuovo utente'], ['+ Nueva cita', '+ New appointment', '+ Neuer Termin', '+ Nouveau rendez-vous', '+ Nuovo appuntamento'],
+  ['+ Nuevo pedido', '+ New order', '+ Neue Bestellung', '+ Nouvelle commande', '+ Nuovo ordine'], ['+ Nuevo cliente', '+ New customer', '+ Neuer Kunde', '+ Nouveau client', '+ Nuovo cliente'],
+  ['Registrar visita', 'Log visit', 'Besuch erfassen', 'Enregistrer la visite', 'Registra visita'], ['Editar ficha', 'Edit record', 'Datensatz bearbeiten', 'Modifier la fiche', 'Modifica scheda'],
+  ['Marcar urgente', 'Mark urgent', 'Als dringend markieren', 'Marquer urgent', 'Segna urgente'], ['+ Añadir a mi agenda', '+ Add to my calendar', '+ Zu meinem Kalender', '+ Ajouter à mon agenda', '+ Aggiungi alla mia agenda'],
+  ['Estado', 'Status', 'Status', 'Statut', 'Stato'], ['Visitas', 'Visits', 'Besuche', 'Visites', 'Visite'], ['Comercial asignado', 'Assigned rep', 'Zuständiger Vertreter', 'Commercial assigné', 'Agente assegnato'],
+  ['Unidades pautadas', 'Units prescribed', 'Verordnete Einheiten', 'Unités prescrites', 'Unità prescritte'], ['Empezar jornada', 'Start day', 'Tag beginnen', 'Commencer la journée', 'Inizia la giornata'],
+  ['Ordenar por cercanía', 'Sort by distance', 'Nach Entfernung sortieren', 'Trier par proximité', 'Ordina per vicinanza'], ['Ventas', 'Sales', 'Verkäufe', 'Ventes', 'Vendite'],
+  ['Compras', 'Purchases', 'Einkäufe', 'Achats', 'Acquisti'], ['Proveedores', 'Suppliers', 'Lieferanten', 'Fournisseurs', 'Fornitori'], ['Llamadas', 'Calls', 'Anrufe', 'Appels', 'Chiamate'],
+  ['Resumen', 'Summary', 'Übersicht', 'Résumé', 'Riepilogo'], ['Explorar', 'Explore', 'Erkunden', 'Explorer', 'Esplora'], ['Facturas', 'Invoices', 'Rechnungen', 'Factures', 'Fatture'],
+  ['Mis rutas', 'My routes', 'Meine Routen', 'Mes itinéraires', 'I miei percorsi'], ['Propuestas automáticas', 'Suggested routes', 'Vorgeschlagene Routen', 'Itinéraires proposés', 'Percorsi suggeriti'],
+  ['Todos los módulos', 'All modules', 'Alle Module', 'Tous les modules', 'Tutti i moduli'], ['Gira el móvil', 'Rotate your phone', 'Handy drehen', 'Tournez votre téléphone', 'Ruota il telefono'],
+  ['Estás al día', 'You’re all caught up', 'Alles erledigt', 'Vous êtes à jour', 'Sei aggiornato'], ['Marcar todas como leídas', 'Mark all as read', 'Alle als gelesen markieren', 'Tout marquer comme lu', 'Segna tutte come lette'],
+  ['citas de hoy visitadas', 'today’s visits done', 'heutige Besuche erledigt', 'visites du jour faites', 'visite di oggi fatte'], ['urgentes sin visitar', 'urgent, not visited', 'dringend, nicht besucht', 'urgents non visités', 'urgenti non visitati'],
+  ['visitas esta semana', 'visits this week', 'Besuche diese Woche', 'visites cette semaine', 'visite questa settimana'], ['visitas este mes', 'visits this month', 'Besuche diesen Monat', 'visites ce mois-ci', 'visite questo mese'],
+  ['médicos interesados', 'interested doctors', 'interessierte Ärzte', 'médecins intéressés', 'medici interessati'], ['sin contactar', 'not contacted', 'nicht kontaktiert', 'non contactés', 'non contattati'],
+  ['médicos en tu cartera', 'doctors in your portfolio', 'Ärzte in deinem Portfolio', 'médecins de votre portefeuille', 'medici nel tuo portafoglio'], ['pendientes de unificar', 'pending merge', 'zusammenzuführen', 'à fusionner', 'da unire']
+];
+let IDIOMA = 'es', MAPA_I18N = null;
+const SALUDOS = { en: ['Good morning', 'Good afternoon', 'Good evening'], de: ['Guten Morgen', 'Guten Tag', 'Guten Abend'], fr: ['Bonjour', 'Bon après-midi', 'Bonsoir'], it: ['Buongiorno', 'Buon pomeriggio', 'Buonasera'] };
+function prepararIdioma(id) {
+  IDIOMA = LOCALES[id] ? id : 'es'; document.documentElement.lang = IDIOMA;
+  const i = IDIOMAS.findIndex(x => x[0] === IDIOMA);
+  MAPA_I18N = null; if (i <= 0) return;
+  MAPA_I18N = new Map();
+  const may = t => t.charAt(0).toUpperCase() + t.slice(1), min = t => t.charAt(0).toLowerCase() + t.slice(1);
+  I18N.forEach(r => { MAPA_I18N.set(r[0], r[i]); MAPA_I18N.set(min(r[0]), min(r[i])); MAPA_I18N.set(may(r[0]), may(r[i])); });
+}
+function traducirTexto(t) {
+  if (!MAPA_I18N) return null;
+  const k = t.trim(); if (!k || k.length > 90) return null;
+  const v = MAPA_I18N.get(k); if (v) return t.replace(k, v);
+  const m = k.match(/^(Buenos días|Buenas tardes|Buenas noches), (.+)$/);
+  if (m && SALUDOS[IDIOMA]) return t.replace(k, SALUDOS[IDIOMA][['Buenos días', 'Buenas tardes', 'Buenas noches'].indexOf(m[1])] + ', ' + m[2]);
+  return null;
+}
+function traducir(raiz) {
+  if (!MAPA_I18N || !raiz) return;
+  const w = document.createTreeWalker(raiz, NodeFilter.SHOW_TEXT, { acceptNode: n => n.parentElement && n.parentElement.closest('script,style,textarea,[data-notr]') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT });
+  const nodos = []; while (w.nextNode()) nodos.push(w.currentNode);
+  nodos.forEach(n => { const v = traducirTexto(n.nodeValue); if (v != null && v !== n.nodeValue) n.nodeValue = v; });
+  (raiz.querySelectorAll ? raiz.querySelectorAll('[placeholder],[title],[aria-label]') : []).forEach(e => ['placeholder', 'title', 'aria-label'].forEach(a => {
+    const x = e.getAttribute(a); if (!x) return; const v = traducirTexto(x); if (v != null && v !== x) e.setAttribute(a, v);
+  }));
+}
+let TR_PEND = new Set(), TR_RAF = 0;
+new MutationObserver(ms => {
+  if (!MAPA_I18N) return;
+  ms.forEach(m => m.addedNodes.forEach(n => { if (n.nodeType === 1) TR_PEND.add(n); else if (n.nodeType === 3 && n.parentElement) TR_PEND.add(n.parentElement); }));
+  if (TR_RAF) return;
+  TR_RAF = requestAnimationFrame(() => { TR_RAF = 0; const l = [...TR_PEND]; TR_PEND.clear(); l.forEach(n => n.isConnected && traducir(n)); });
+}).observe(document.body, { childList: true, subtree: true });
+// Fechas en el idioma elegido
+fechaLarga = (orig => function (d) { return IDIOMA === 'es' ? orig(d) : new Date(d).toLocaleDateString(LOCALES[IDIOMA], { weekday: 'long', day: 'numeric', month: 'long' }); })(fechaLarga);
+function aplicarIdioma(id) {
+  prepararIdioma(id);
+  try { localStorage.setItem('app-idioma', IDIOMA); } catch (e) {}
+  if (MAPA_I18N) traducir(document.body);
+}
+prepararIdioma((() => { try { return localStorage.getItem('app-idioma') || 'es'; } catch (e) { return 'es'; } })());
+if (MAPA_I18N) traducir(document.body);
+mostrarApp = (orig => function (p) {
+  const id = (p.preferencias || {}).idioma || 'es';
+  if (id !== IDIOMA) { if (IDIOMA !== 'es' && id === 'es') { try { localStorage.setItem('app-idioma', 'es'); } catch (e) {} location.reload(); return; } prepararIdioma(id); }
+  orig(p); if (MAPA_I18N) traducir(document.body);
+})(mostrarApp);
+// Selector de idioma en Mi perfil
+pintarPerfil = (orig => function () {
+  orig();
+  const g = $('pfi') && $('pfi').closest('.g2'); if (!g) return;
+  const vacio = g.children[1];
+  vacio.innerHTML = `<label for="pfl">Idioma</label><select id="pfl" data-notr>${IDIOMAS.map(([k, n]) => `<option value="${k}" ${IDIOMA === k ? 'selected' : ''}>${n}</option>`).join('')}</select>`;
+  $('pfl').onchange = async () => {
+    const id = $('pfl').value;
+    const prefs = Object.assign({}, PERFIL.preferencias || {}, { idioma: id });
+    const { data, error } = await db.rpc('guardar_preferencias', { p: prefs });
+    if (error) { toast('No se ha podido guardar', true); return; }
+    PERFIL.preferencias = data || prefs;
+    try { localStorage.setItem('app-idioma', id); } catch (e) {}
+    // Al volver al castellano se recarga para recuperar los textos originales
+    if (id === 'es') { location.reload(); return; }
+    aplicarIdioma(id); toast('✓');
+  };
+})(pintarPerfil);
 
 
 // Barra inferior del móvil y barra de «Entrar como» desde el primer momento

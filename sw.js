@@ -1,8 +1,8 @@
 /* DLC OS 2.0 · Service worker: la app se pide primero a la red (siempre la última versión)
    y solo se usa la copia guardada si no hay conexión. Nunca guarda datos. */
-const CACHE = 'dlc-os-2.42.0';
-const FILES = ['./', './index.html', './app.js?v=2.42.0', './config.js', './manifest.webmanifest',
-               './logo.png', './dlc-icon-192.png', './dlc-icon-512.png', './dlc-apple-touch-180.png'];
+const CACHE = 'dlc-os-2.43.0';
+const FILES = ['./', './index.html', './app.js?v=2.43.0', './config.js', './manifest.webmanifest',
+               './logo-app.png', './icon-192.png', './icon-512.png', './apple-touch-180.png'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES)).then(() => self.skipWaiting()));
