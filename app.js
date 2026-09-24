@@ -4121,7 +4121,7 @@ const RPC_TTL = {                 // segundos
   esquemas_lista: 300, liquidaciones_lista: 120, pedidos_lista: 60, contactos_lista: 60,
   analitica_tabla: 120, analitica_unidades: 120, cartera_usuario: 60, duplicados_pendientes: 30
 };
-const RPC_ESCRITURA = /^(actualizar_|anular_|asignar_|atribuir_|borrar_|crear_|estado_cita|guardar_|liquidar|perfil_nuevo|quitar_|registrar_visita|resolver_accion|tocar|unificar_|descartar_)/;
+const RPC_ESCRITURA = /^(actualizar_|anular_|aplazar_|asignar_|atribuir_|borrar_|crear_|estado_cita|guardar_|liquidar|ordenar_|perfil_nuevo|quitar_|registrar_visita|resolver_accion|tocar|unificar_|descartar_)/;
 
 const RC = new Map(), RC_VUELO = new Map();
 let RC_EPOCA = 0;
@@ -6847,6 +6847,430 @@ Object.assign(AYUDA, {
 });
 AYUDA.inicio[2].splice(1, 1, 'El icono ⚙ junto a «Compartir la semana» abre los indicadores: el ojo los muestra u oculta y las flechas cambian el orden.');
 AYUDA.ventas[2].push('Arriba tienes los totales del periodo (solo pedidos validados) y al final de la tabla, la suma.');
+
+
+/* ============================================================
+   DLC OS 2.0 · v2.24.0 · «Tu día»: la agenda del día es la ruta.
+   Estados de cita, orden del día, jornada en curso
+   ============================================================ */
+
+/* ---------------- estados de cita ---------------- */
+
+const CITA_ABIERTA = ['Planificada', 'Confirmada'];
+Object.assign(EST_COL, { Planificada: 'var(--navy)', Confirmada: 'var(--sky)', Visitada: 'var(--ok)',
+  'No estaba': 'var(--warn)', Aplazada: 'var(--muted)', Descartada: 'var(--muted)' });
+const pillCita = e => `<span class="pill cest" style="background:${EST_COL[e] || 'var(--muted)'}1f;color:${EST_COL[e] || 'var(--muted)'}">${esc(e)}</span>`;
+
+// La ruta en curso de versiones anteriores se sustituye por la jornada
+try { Object.keys(localStorage).filter(k => k.startsWith('dlc-ruta-')).forEach(k => localStorage.removeItem(k)); } catch (e) {}
+
+/* ---------------- jornada ---------------- */
+
+const JKEY = () => 'dlc-jornada-' + (PERFIL ? PERFIL.id : '');
+function jornadaActiva() {
+  let j = null;
+  try { j = JSON.parse(localStorage.getItem(JKEY()) || 'null'); } catch (e) {}
+  if (j && j.fecha !== hoyISO()) { localStorage.removeItem(JKEY()); return null; }   // una jornada solo dura su día
+  return j;
+}
+
+async function citasDelDia(fecha) {
+  const r = await rpcCache('agenda_rango', { p_desde: fecha, p_hasta: fecha, p_usuario: PERFIL.id }, 'agenda-' + fecha);
+  return r.data || [];
+}
+
+async function empezarJornada() {
+  const citas = await citasDelDia(hoyISO());
+  if (!citas.some(c => CITA_ABIERTA.includes(c.estado))) { toast('No tienes citas abiertas hoy. Añade citas o planifica una ruta.', true); return; }
+  localStorage.setItem(JKEY(), JSON.stringify({ fecha: hoyISO(), inicio: Date.now() }));
+  pintarRutaBarra();
+  toast('Jornada iniciada');
+  AG_MODO = 'dia'; AG_FECHA = hoyISO();
+  if (TAB === 'agenda') cargarAgenda(); else ir('agenda');
+}
+
+async function terminarJornada() {
+  const j = jornadaActiva(); if (!j) return;
+  invalidarCache();
+  const citas = await citasDelDia(hoyISO());
+  const hechas = citas.filter(c => c.estado === 'Visitada').length;
+  const abiertas = citas.filter(c => CITA_ABIERTA.includes(c.estado)).length;
+  const ok = await preguntar(`Tiempo: ${durTxt(Date.now() - j.inicio)} · Visitadas: ${hechas} de ${citas.filter(c => c.estado !== 'Descartada').length}` +
+    (abiertas ? `\n\nTe quedan ${abiertas} ${abiertas === 1 ? 'cita abierta' : 'citas abiertas'}: siguen en tu agenda y mañana aparecerán en «Pendientes de días anteriores» para moverlas.` : ''),
+    { titulo: '¿Terminar la jornada?', ok: 'Terminar jornada' });
+  if (!ok) return;
+  localStorage.removeItem(JKEY());
+  pintarRutaBarra();
+  toast(`Jornada terminada · ${hechas} visitadas`);
+  if (TAB === 'agenda') cargarAgenda();
+  if (TAB === 'rutas') cargarRutas();
+}
+
+async function pintarRutaBarra() {
+  const j = jornadaActiva(), el = $('rutabar');
+  if (!j) { el.classList.add('hide'); document.body.classList.remove('conruta'); return; }
+  el.classList.remove('hide'); document.body.classList.add('conruta');
+  const citas = await citasDelDia(hoyISO());
+  const hechas = citas.filter(c => c.estado === 'Visitada' || c.estado === 'No estaba').length;
+  const total = citas.filter(c => !['Descartada', 'Aplazada'].includes(c.estado)).length;
+  el.innerHTML = `<span>● <b>Jornada en curso</b> · <span class="rt">${durTxt(Date.now() - j.inicio)}</span> · ${hechas} de ${total} hechas</span>
+    <span class="acts" style="margin:0"><button class="btn sec" id="rbver">Ver mi día</button><button class="btn dang" id="rbfin">Terminar</button></span>`;
+  $('rbver').onclick = () => { AG_MODO = 'dia'; AG_FECHA = hoyISO(); ir('agenda'); };
+  $('rbfin').onclick = terminarJornada;
+}
+
+/* ---------------- orden y horas estimadas ---------------- */
+
+const minHora = h => h ? (+String(h).slice(0, 2) * 60 + +String(h).slice(3, 5)) : null;
+const xyCita = c => c.lat != null && c.lon != null ? [+c.lat, +c.lon] : null;
+const salidaUsuario = () => (PERFIL.preferencias || {}).salida || { nombre: 'la salida', lat: 41.7833, lon: 1.8414 };
+
+/** Calcula la hora estimada de cada cita abierta siguiendo el orden actual. */
+function estimarDia(citas, fecha) {
+  const cfg = PLANCFG(), sal = salidaUsuario();
+  const ahora = new Date(), minAhora = ahora.getHours() * 60 + ahora.getMinutes();
+  let t = minHora(cfg.salida);
+  if (fecha === hoyISO()) t = Math.max(t, Math.ceil(minAhora / 5) * 5);
+  let pos = [sal.lat, sal.lon], anterior = null;
+  const est = {};
+  citas.forEach(c => {
+    if (!CITA_ABIERTA.includes(c.estado)) { if (xyCita(c)) pos = xyCita(c); return; }
+    const xy = xyCita(c);
+    const mismoSitio = anterior && xy && anterior[0] === xy[0] && anterior[1] === xy[1];
+    if (xy && !mismoSitio) { t += minutosEntre(pos, xy) + cfg.parada; pos = xy; }
+    const fija = minHora(c.hora);
+    if (fija != null && fija > t) t = fija;
+    est[c.id] = t;
+    t += cfg.visita;
+    anterior = xy;
+  });
+  return { est, fin: t + minutosEntre(pos, [sal.lat, sal.lon]), tope: minHora(cfg.tope) };
+}
+
+/** Orden por cercanía: las citas con hora fija marcan el esqueleto; las demás se insertan donde menos desvío suman. */
+function ordenarPorCercania(citas) {
+  const sal = salidaUsuario(), s0 = [sal.lat, sal.lon];
+  const cerradas = citas.filter(c => !CITA_ABIERTA.includes(c.estado));
+  const abiertas = citas.filter(c => CITA_ABIERTA.includes(c.estado));
+  const sinSitio = abiertas.filter(c => !xyCita(c));
+  const fijas = abiertas.filter(c => xyCita(c) && c.hora).sort((a, b) => minHora(a.hora) - minHora(b.hora));
+  const libres = abiertas.filter(c => xyCita(c) && !c.hora).sort((a, b) => km(s0, xyCita(a)) - km(s0, xyCita(b)));
+  const seq = fijas.slice();
+  libres.forEach(c => {
+    const xy = xyCita(c);
+    let mejor = 0, coste = Infinity;
+    for (let i = 0; i <= seq.length; i++) {
+      const prev = i === 0 ? s0 : xyCita(seq[i - 1]), next = i === seq.length ? null : xyCita(seq[i]);
+      const d = km(prev, xy) + (next ? km(xy, next) - km(prev, next) : 0);
+      if (d < coste) { coste = d; mejor = i; }
+    }
+    seq.splice(mejor, 0, c);
+  });
+  return cerradas.concat(seq, sinSitio);
+}
+
+async function guardarOrden(citas) {
+  const { data: r, error } = await db.rpc('ordenar_citas', { p_ids: citas.map(c => c.id) });
+  if (error || (r && r.ok === false)) { toast('No se ha podido guardar el orden', true); return false; }
+  return true;
+}
+
+function proximoDiaConsulta(dias, desde) {
+  const letras = 'DLMXJVS', claves = Object.keys(dias || {}).filter(k => (dias || {})[k]);
+  const d = new Date((desde || hoyISO()) + 'T12:00:00');
+  for (let i = 1; i <= 21; i++) {
+    d.setDate(d.getDate() + 1);
+    const l = letras[d.getDay()];
+    if (l === 'D' || l === 'S') continue;
+    if (!claves.length || claves.includes(l)) return fechaLocal(d);
+  }
+  return isoMas(desde || hoyISO(), 1);
+}
+
+/* ---------------- «Tu día» en la agenda ---------------- */
+
+let TD_CITAS = [];
+
+async function pintarTuDia() {
+  const fecha = AG_FECHA, esHoy = fecha === hoyISO(), pasado = fecha < hoyISO();
+  const verTodos = PERFIL.rol === 'Administrador';
+  const r = await rpcCache('agenda_rango', { p_desde: fecha, p_hasta: fecha, p_usuario: verTodos ? null : PERFIL.id }, 'agenda-' + fecha);
+  if (AG_FECHA !== fecha || AG_MODO !== 'dia') return;
+  const todas = r.data || [];
+  const mias = todas.filter(c => c.usuario_id === PERFIL.id);
+  const otras = todas.filter(c => c.usuario_id !== PERFIL.id);
+  TD_CITAS = mias;
+  const { est, fin, tope } = estimarDia(mias, fecha);
+  const j = jornadaActiva();
+  const n = e => mias.filter(c => e.includes(c.estado)).length;
+  const activas = mias.filter(c => !['Descartada', 'Aplazada'].includes(c.estado));
+  const abiertas = n(CITA_ABIERTA);
+  const pasaTope = abiertas && fin > tope;
+  const conSitio = mias.filter(c => CITA_ABIERTA.includes(c.estado) && xyCita(c)).length;
+
+  $('agcuerpo').innerHTML = `
+    <div class="tdhead">
+      <div><h2 style="padding:0">${esHoy ? 'Tu día' : pasado ? 'Lo que pasó este día' : 'Tu agenda de este día'}</h2>
+        <div class="tdstats">
+          <span><b>${num(activas.length)}</b> citas</span>
+          <span><b style="color:var(--ok)">${n(['Visitada'])}</b> visitadas</span>
+          ${n(['No estaba']) ? `<span><b style="color:var(--warn)">${n(['No estaba'])}</b> no estaban</span>` : ''}
+          <span><b>${abiertas}</b> por hacer</span>
+          ${abiertas && !pasado ? `<span>Fin estimado <b style="color:${pasaTope ? 'var(--warn)' : 'var(--navy)'}">${hm(fin)}</b>${pasaTope ? ' · pasa de tu hora tope' : ''}</span>` : ''}
+        </div></div>
+      <div class="acts" style="margin:0">
+        ${!pasado && conSitio > 1 ? '<button class="btn sec" id="tdordenar" title="Ordena las citas abiertas para recorrer menos kilómetros. Las que tienen hora fija se respetan.">Ordenar por cercanía</button>' : ''}
+        ${esHoy && !j && abiertas ? '<button class="btn" id="tdempezar">▶ Empezar jornada</button>' : ''}
+        ${esHoy && j ? '<button class="btn dang" id="tdterminar">Terminar jornada</button>' : ''}
+      </div>
+    </div>
+    ${esHoy && j ? `<div class="tdjornada">● Jornada en curso desde hace ${durTxt(Date.now() - j.inicio)}. Registra cada visita al terminarla.</div>` : ''}
+    ${mias.length ? `<div class="lista tdlista">${mias.map((c, i) => {
+      const abierta = CITA_ABIERTA.includes(c.estado);
+      const hora = c.hora ? esc(String(c.hora).slice(0, 5)) : (abierta && est[c.id] != null && !pasado ? '~' + hm(est[c.id]) : '·');
+      const idxAb = mias.filter(x => CITA_ABIERTA.includes(x.estado)).indexOf(c);
+      return `<div class="item tdit ${abierta ? '' : 'cerrada'}" data-tdf="${c.medico_id}" role="button" tabindex="0">
+        <span class="tdnum">${i + 1}</span>
+        <span class="ic tdh" title="${c.hora ? 'Hora fijada' : 'Hora estimada según el orden'}" style="background:${EST_COL[c.estado]}1f;color:${EST_COL[c.estado]}">${hora}</span>
+        <span class="tx"><b>${c.urgente ? '<span class="pill p-urg">Urgente</span> ' : ''}${esc(c.nombre)}</b>
+          <span class="sm">${esc([c.centro_nombre, c.municipio].filter(Boolean).join(' · ') || 'Sin centro')}${!xyCita(c) && abierta ? ' · <span style="color:var(--warn)">sin ubicación</span>' : ''}</span>
+          <span class="sm">${pillCita(c.estado)}${c.origen ? ' · ' + esc(c.origen) : ''}${c.nota ? ' · ' + esc(c.nota) : ''}</span></span>
+        <span class="acts tdacts" style="margin:0">
+          ${abierta && !pasado ? `
+            <span class="tdord">
+              <button class="kmv" data-td="sube|${c.id}" aria-label="Subir" ${idxAb <= 0 ? 'disabled' : ''}>${ICO.arriba}</button>
+              <button class="kmv" data-td="baja|${c.id}" aria-label="Bajar" ${idxAb >= abiertas - 1 ? 'disabled' : ''}>${ICO.abajo}</button></span>` : ''}
+          ${abierta ? `<button class="btn" data-td="visita|${c.id}">Registrar visita</button>` : ''}
+          ${c.estado === 'No estaba' && !pasado ? `<button class="btn sec" data-td="nueva|${c.id}">Nueva cita</button>` : ''}
+          <button class="btn sec tdmas" data-td="mas|${c.id}" aria-label="Más acciones">⋯</button>
+        </span></div>`;
+    }).join('')}</div>` : `<div class="vacio">${esHoy ? 'No tienes citas hoy. Planifica una ruta en Rutas o mira las sugerencias de abajo.' : 'Sin citas este día.'}</div>`}
+    ${otras.length ? `<h3 class="tdotros">Citas de otras personas · ${otras.length}</h3>
+      <div class="lista">${otras.map(c => `<div class="item" style="cursor:default"><span class="ic">${c.hora ? esc(String(c.hora).slice(0, 5)) : '·'}</span>
+        <span class="tx"><b>${esc(c.nombre)}</b><span class="sm">${esc(c.usuario || '')} · ${pillCita(c.estado)}</span></span></div>`).join('')}</div>` : ''}`;
+
+  if ($('tdempezar')) $('tdempezar').onclick = empezarJornada;
+  if ($('tdterminar')) $('tdterminar').onclick = terminarJornada;
+  if ($('tdordenar')) $('tdordenar').onclick = async () => {
+    const nuevo = ordenarPorCercania(mias);
+    if (await guardarOrden(nuevo)) { toast('Citas ordenadas por cercanía'); cargarAgenda(); }
+  };
+  $('agcuerpo').querySelectorAll('[data-tdf]').forEach(el => {
+    const abrir = e => { if (e.target.closest('button, a, .tdmenu')) return; abrirFicha(el.dataset.tdf); };
+    el.onclick = abrir; el.onkeydown = e => { if (e.key === 'Enter') abrir(e); };
+  });
+}
+
+/* Menú «⋯» de cada cita */
+function menuCita(boton, c) {
+  document.querySelectorAll('.tdmenu').forEach(m => m.remove());
+  const abierta = CITA_ABIERTA.includes(c.estado), futura = c.fecha >= hoyISO();
+  const ops = [
+    abierta && c.estado === 'Planificada' ? ['confirmar', 'Marcar como confirmada', 'Ya has hablado con la consulta'] : null,
+    abierta && c.estado === 'Confirmada' ? ['desconfirmar', 'Quitar la confirmación', ''] : null,
+    abierta ? ['noestaba', 'No estaba', 'Lo anota en su historial y te propone otra fecha'] : null,
+    abierta ? ['hora', c.hora ? 'Cambiar la hora' : 'Fijar una hora', ''] : null,
+    abierta ? ['aplazar', 'Aplazar a otro día', 'Queda como aplazada y se crea la cita nueva'] : null,
+    xyCita(c) ? ['llegar', 'Cómo llegar', ''] : null,
+    ['ficha', 'Ver ficha', ''],
+    abierta ? ['descartar', 'Descartar', 'Ya no hace falta ir'] : null,
+    futura && c.estado !== 'Visitada' ? ['borrar', 'Borrar la cita', 'Desaparece de la agenda'] : null
+  ].filter(Boolean);
+  const m = document.createElement('div');
+  m.className = 'tdmenu'; m.__t = Date.now();
+  m.innerHTML = ops.map(([k, t, s]) => `<button data-tdop="${k}" class="${k === 'borrar' || k === 'descartar' ? 'peligro' : ''}"><b>${esc(t)}</b>${s ? `<span>${esc(s)}</span>` : ''}</button>`).join('');
+  document.body.appendChild(m);
+  const r = boton.getBoundingClientRect();
+  m.style.top = Math.min(window.innerHeight - m.offsetHeight - 10, r.bottom + 6) + 'px';
+  m.style.left = Math.max(10, Math.min(window.innerWidth - m.offsetWidth - 10, r.right - m.offsetWidth)) + 'px';
+  m.querySelectorAll('[data-tdop]').forEach(b => b.onclick = () => { m.remove(); accionCita(b.dataset.tdop, c); });
+}
+document.addEventListener('pointerdown', e => {
+  if (!e.target.closest('.tdmenu, .tdmas')) document.querySelectorAll('.tdmenu').forEach(m => m.remove());
+}, true);
+// Se cierra al desplazarse, salvo en el primer instante (el propio toque puede mover un poco la página)
+document.addEventListener('scroll', () => document.querySelectorAll('.tdmenu').forEach(m => { if (Date.now() - (m.__t || 0) > 400) m.remove(); }), true);
+
+async function accionCita(k, c) {
+  const refrescar = () => { cargarAgenda(); cargarInicio(); pintarRutaBarra(); };
+  if (k === 'ficha') return abrirFicha(c.medico_id);
+  if (k === 'llegar') return window.open(enlaceNav(xyCita(c)), '_blank', 'noopener');
+  if (k === 'hora') return cambiarHoraCita(c.id, c.hora || '');
+  if (k === 'confirmar' || k === 'desconfirmar' || k === 'descartar') {
+    const estado = k === 'confirmar' ? 'Confirmada' : k === 'desconfirmar' ? 'Planificada' : 'Descartada';
+    const r = await escribir('estado_cita', { p_id: c.id, p_estado: estado });
+    if (r && r.error) { toast('No se ha podido cambiar', true); return; }
+    toast(estado === 'Confirmada' ? 'Cita confirmada' : estado === 'Descartada' ? 'Cita descartada' : 'Confirmación quitada'); refrescar(); return;
+  }
+  if (k === 'borrar') {
+    if (!await preguntar('La cita desaparece de la agenda.', { titulo: '¿Borrar la cita?', ok: 'Borrar', peligro: true })) return;
+    const { data: r } = await db.rpc('borrar_cita', { p_id: c.id });
+    if (r && r.ok === false) { toast(r.error === 'pasada' ? 'Solo se pueden borrar citas de hoy en adelante' : 'No se ha podido borrar', true); return; }
+    toast('Cita borrada'); refrescar(); return;
+  }
+  if (k === 'aplazar') {
+    const f = await pedirFecha('¿A qué día la pasas?', proximoDiaConsulta(c.dias, c.fecha),
+      { titulo: 'Aplazar la cita', ok: 'Aplazar' });
+    if (!f) return;
+    const { data: r, error } = await db.rpc('aplazar_cita', { p_id: c.id, p_fecha: f, p_hora: null, p_origen: 'Aplazada' });
+    if (error || (r && r.ok === false)) { toast('No se ha podido aplazar', true); return; }
+    toast('Aplazada al ' + fechaCorta(f)); refrescar(); return;
+  }
+  if (k === 'noestaba') {
+    const neg = (CAT.RESULTADO || []).filter(x => x.extra === 'neg');
+    if (!neg.length) { toast('Falta un resultado negativo en Configuración → Clasificadores', true); return; }
+    let res = neg[0].valor;
+    if (neg.length > 1) {
+      const op = await elegirOpcion('¿Qué ha pasado?', c.nombre, [{ k: 'no', t: 'Cancelar', cls: 'sec' }].concat(neg.map((x, i) => ({ k: 'n' + i, t: x.valor, cls: 'sec' }))));
+      if (!op) return;
+      res = neg[+op.slice(1)].valor;
+    }
+    const { error } = await db.rpc('registrar_visita', { p: { medico_id: c.medico_id, fecha: c.fecha, resultados: [res],
+      op_id: 'v-' + c.medico_id + '-' + Date.now() } });
+    if (error) { toast('No se ha podido guardar: ' + error.message, true); return; }
+    toast('Anotado: ' + res);
+    refrescar();
+    return nuevaFechaTrasNoEstaba(c);
+  }
+  if (k === 'nueva') return nuevaFechaTrasNoEstaba(c);
+}
+
+async function nuevaFechaTrasNoEstaba(c) {
+  const prop = proximoDiaConsulta(c.dias, c.fecha);
+  const op = await elegirOpcion('¿Le buscamos otro día?', `${c.nombre}\n\nEl próximo día que pasa consulta es el ${fechaLarga(new Date(prop + 'T00:00:00'))}.`,
+    [{ k: 'no', t: 'Ahora no', cls: 'sec' }, { k: 'otra', t: 'Elegir otra fecha', cls: 'sec' }, { k: 'prop', t: 'Cita el ' + fechaCorta(prop) }]);
+  if (!op) return;
+  let f = prop;
+  if (op === 'otra') { f = await pedirFecha('¿Qué día?', prop, { titulo: 'Nueva cita', ok: 'Crear cita' }); if (!f) return; }
+  const { data: r, error } = await db.rpc('guardar_cita', { p: { medico_id: c.medico_id, fecha: f, centro_nombre: c.centro_nombre,
+    estado: 'Planificada', origen: 'No estaba el ' + fechaCorta(c.fecha), op_id: 'ne-' + c.id + '-' + f } });
+  if (error || (r && r.ok === false)) { toast('No se ha podido crear la cita', true); return; }
+  toast('Nueva cita el ' + fechaCorta(f)); cargarAgenda();
+}
+
+document.addEventListener('click', async e => {
+  const b = e.target.closest('[data-td]');
+  if (!b) return;
+  e.stopPropagation();
+  const [acc, id] = b.dataset.td.split('|');
+  const c = TD_CITAS.find(x => x.id === id);
+  if (!c) return;
+  if (acc === 'mas') return menuCita(b, c);
+  if (acc === 'visita') return abrirVisita(c.medico_id);
+  if (acc === 'nueva') return nuevaFechaTrasNoEstaba(c);
+  if (acc === 'sube' || acc === 'baja') {
+    const ab = TD_CITAS.filter(x => CITA_ABIERTA.includes(x.estado)), i = ab.indexOf(c), j = acc === 'sube' ? i - 1 : i + 1;
+    if (j < 0 || j >= ab.length) return;
+    [ab[i], ab[j]] = [ab[j], ab[i]];
+    const orden = TD_CITAS.filter(x => !CITA_ABIERTA.includes(x.estado)).concat(ab);
+    if (await guardarOrden(orden)) cargarAgenda();
+  }
+});
+
+// La vista de día de la agenda es «Tu día»
+cargarAgenda = (orig => async function () {
+  await orig();
+  if (TAB === 'agenda' && AG_MODO === 'dia') await pintarTuDia();
+})(cargarAgenda);
+
+// Al cerrar una visita o una cita, se refresca el día
+$('dlg').addEventListener('close', () => { if (TAB === 'agenda') setTimeout(() => { cargarAgenda(); pintarRutaBarra(); }, 350); });
+
+// En la semana, «Mover» ahora aplaza (antes dejaba la cita en un estado que ya no existía)
+document.addEventListener('click', async e => {
+  const c = e.target.closest('[data-cita^="repro|"]');
+  if (!c) return;
+  e.stopImmediatePropagation(); e.preventDefault();
+  const id = c.dataset.cita.split('|')[1];
+  const f = await pedirFecha('¿A qué día la pasas?', isoMas(hoyISO(), 1), { titulo: 'Aplazar la cita', ok: 'Aplazar' });
+  if (!f) return;
+  const { data: r, error } = await db.rpc('aplazar_cita', { p_id: id, p_fecha: f, p_hora: null, p_origen: 'Aplazada' });
+  if (error || (r && r.ok === false)) { toast('No se ha podido aplazar', true); return; }
+  toast('Aplazada al ' + fechaCorta(f)); cargarAgenda();
+}, true);
+
+/* ---------------- rutas: el plan se convierte en la agenda del día ---------------- */
+
+async function planAAgenda(plan) {
+  const fecha = plan.fecha || hoyISO();
+  const meds = plan.paradas.flatMap(p => p.medicos.map(m => ({ m, centro: p.centro })));
+  const existentes = await citasDelDia(fecha);
+  const ids = [];
+  let orden = existentes.length;
+  for (const { m, centro } of meds) {
+    const ya = existentes.find(c => c.medico_id === m.id && CITA_ABIERTA.includes(c.estado));
+    if (ya) { ids.push(ya.id); continue; }
+    const { data: r, error } = await db.rpc('guardar_cita', { p: { medico_id: m.id, fecha, hora: null, centro_nombre: centro,
+      estado: 'Planificada', origen: 'Ruta' + (typeof plan.rutaId === 'string' && plan.rutaId.length > 20 ? '' : ''), orden: ++orden,
+      op_id: 'c-' + m.id + '-' + fecha } });
+    if (error || !r || !r.ok) { toast('No se ha podido guardar alguna cita', true); return null; }
+    ids.push(r.id);
+  }
+  // Orden: primero lo que ya había cerrado, después el orden del plan
+  const cerradas = existentes.filter(c => !CITA_ABIERTA.includes(c.estado)).map(c => c.id);
+  const abiertasPrevias = existentes.filter(c => CITA_ABIERTA.includes(c.estado) && !ids.includes(c.id)).map(c => c.id);
+  await db.rpc('ordenar_citas', { p_ids: cerradas.concat(ids, abiertasPrevias) });
+  invalidarCache();
+  return { fecha, n: meds.length };
+}
+
+async function empezarRuta() {
+  if (!PLAN) return;
+  if (PLAN.fecha && PLAN.fecha !== hoyISO()) { toast('Este plan es para otro día: guárdalo en tu agenda.', true); return; }
+  const r = await planAAgenda(PLAN);
+  if (!r) return;
+  PLAN = null;
+  localStorage.setItem(JKEY(), JSON.stringify({ fecha: hoyISO(), inicio: Date.now() }));
+  pintarRutaBarra();
+  toast('Plan pasado a tu agenda · jornada iniciada');
+  AG_MODO = 'dia'; AG_FECHA = hoyISO();
+  ir('agenda');
+}
+
+pintarPlan = (orig => function () {
+  orig();
+  if ($('planag')) $('planag').onclick = async ev => {
+    ev.target.disabled = true;
+    const r = await planAAgenda(PLAN);
+    ev.target.disabled = false;
+    if (!r) return;
+    toast(`${r.n} citas en tu agenda del ${fechaCorta(r.fecha)}`);
+    AG_MODO = 'dia'; AG_FECHA = r.fecha; PLAN = null; ir('agenda');
+  };
+  if ($('planempezar')) { $('planempezar').textContent = '▶ Pasar a mi agenda y empezar'; $('planempezar').onclick = empezarRuta; }
+  if ($('planag')) $('planag').textContent = 'Guardar en mi agenda';
+})(pintarPlan);
+
+// En Rutas, la ruta en curso se ve en «Tu día»
+async function pintarRutaEnCurso() {
+  if (TAB !== 'rutas') return;
+  if (!$('renc')) $('v-rutas').querySelector('.saludo').insertAdjacentHTML('afterend', '<div id="renc"></div>');
+  const j = jornadaActiva();
+  $('renc').innerHTML = j ? `<div class="card renc"><h2>Jornada en curso</h2>
+    <p class="sm">Empezaste hace ${durTxt(Date.now() - j.inicio)}. El orden, las horas y el registro de visitas están en tu agenda de hoy.</p>
+    <div class="acts" style="padding:0 16px 16px"><button class="btn" id="rencver">Ver mi día</button>
+      <button class="btn sec dang" id="rencfin">Terminar jornada</button></div></div>` : '';
+  if (j) { $('rencver').onclick = () => { AG_MODO = 'dia'; AG_FECHA = hoyISO(); ir('agenda'); }; $('rencfin').onclick = terminarJornada; }
+}
+
+/* ---------------- ayudas ---------------- */
+
+Object.assign(AYUDA, {
+  agenda: ['Agenda y «Tu día»', 'Tus citas por día, semana o mes. La vista de día es tu ruta.', [
+    'Las citas se ordenan como vas a visitarlas. <b>Ordenar por cercanía</b> calcula el recorrido más corto; las citas con hora fija se respetan. Las flechas cambian el orden a mano.',
+    'La hora con «~» es una estimación según el orden, tu horario y los desplazamientos. Una hora sin «~» es una hora fijada.',
+    '<b>Empezar jornada</b> activa la barra verde. Registra cada visita al terminarla: la cita pasa a <b>Visitada</b>.',
+    'Estados: <b>Planificada</b> y <b>Confirmada</b> (abiertas); <b>Visitada</b>, <b>No estaba</b>, <b>Aplazada</b> y <b>Descartada</b> (cerradas).',
+    '<b>No estaba</b> lo anota en su historial y te propone el próximo día que pasa consulta.',
+    '<b>Aplazar</b> deja la cita como aplazada y crea la nueva, así se ve el cumplimiento real.',
+    'Las citas abiertas de días anteriores aparecen abajo para moverlas a hoy.']],
+  rutas: ['Rutas', 'Plantillas para llenar tu agenda.', [
+    '<b>Lista fija</b>: tú eliges los médicos. <b>Por criterios</b>: se rellena sola con los filtros.',
+    'Al planificar ves el orden y las horas estimadas. <b>Guardar en mi agenda</b> crea las citas de ese día; <b>Pasar a mi agenda y empezar</b> además inicia la jornada.',
+    'Durante la jornada todo se hace desde <b>Agenda → Tu día</b>.',
+    '<b>⚙ Horario de rutas</b> cambia la salida, la hora tope y los minutos por médico y por parada.',
+    'Solo entran médicos con ubicación. Completar la dirección y los días de consulta mejora mucho las rutas.']]
+});
 
 pintarConexion();
 vaciarCola();
