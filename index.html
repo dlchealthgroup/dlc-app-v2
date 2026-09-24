@@ -2,7 +2,12 @@
 <html lang="es">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="DLC OS">
+<meta name="format-detection" content="telephone=no">
 <title>DLC OS</title>
 <meta name="theme-color" content="#EAF5FC">
 <meta name="color-scheme" content="light only">
@@ -784,6 +789,24 @@ dialog::backdrop{background:rgba(11,58,102,.28);backdrop-filter:blur(3px)}
 body.modo-medico .gsearch{visibility:hidden}
 .dgrid.asigs{--cols:minmax(160px,1.4fr) minmax(140px,1.2fr) 130px 100px 100px;min-width:680px}
 .alertlist .item{border-radius:10px}
+
+/* v2.36.1 · tamaños estables en el móvil y solo en vertical */
+html{-webkit-text-size-adjust:100%;text-size-adjust:100%;overflow-x:hidden}
+body{overflow-x:hidden;width:100%;min-height:100dvh;overscroll-behavior-y:none}
+@media (max-width:760px){
+  /* Con menos de 16 px el iPhone amplía la pantalla al escribir y no la devuelve a su tamaño */
+  input,select,textarea,.selval{font-size:16px!important}
+  .datol input,.datol select,.dph input,.lrow input,.lrow select{font-size:16px!important}
+}
+#girar{display:none}
+@media (orientation:landscape) and (max-height:520px) and (pointer:coarse){
+  #girar{display:flex;position:fixed;inset:0;z-index:2000;flex-direction:column;align-items:center;justify-content:center;gap:14px;text-align:center;padding:24px;
+    background:url('./fondo.jpg') left top/cover no-repeat,#F3F8FC;color:var(--navy)}
+  #girar .gi{font-size:44px;animation:girar 1.6s ease-in-out infinite}
+  #girar b{font-size:18px}
+  body > *:not(#girar){visibility:hidden}
+}
+@keyframes girar{0%,20%{transform:rotate(90deg)}60%,100%{transform:rotate(0deg)}}
 </style>
 </head>
 <body>
@@ -804,6 +827,7 @@ body.modo-medico .gsearch{visibility:hidden}
   </form>
 </section>
 
+<div id="girar" role="alert"><span class="gi">📱</span><b>Gira el móvil</b><span>DLC OS se usa en vertical.</span></div>
 <div id="app" class="hide">
   <header>
     <div class="top">
@@ -918,6 +942,6 @@ body.modo-medico .gsearch{visibility:hidden}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js" defer></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="./config.js"></script>
-<script src="./app.js?v=2.36.0"></script>
+<script src="./app.js?v=2.36.1"></script>
 </body>
 </html>
