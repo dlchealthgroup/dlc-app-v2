@@ -807,6 +807,122 @@ body{overflow-x:hidden;width:100%;min-height:100dvh;overscroll-behavior-y:none}
   body > *:not(#girar){visibility:hidden}
 }
 @keyframes girar{0%,20%{transform:rotate(90deg)}60%,100%{transform:rotate(0deg)}}
+/* ============================================================
+   v2.37.0 · Móvil ordenado, fluido y sin desbordes
+   ============================================================ */
+.seldlg{padding:0;border:0;background:transparent;margin:0;position:fixed;overflow:visible;box-shadow:none;max-width:none;max-height:none}
+.seldlg::backdrop{background:rgba(11,58,102,.12);backdrop-filter:none}
+.seldlg .selpop{position:static}
+.seldlg.hoja{left:0;right:0;top:auto;bottom:0;width:100%;margin:0}
+.seldlg.hoja .selpop{width:100%;border-radius:20px 20px 0 0;padding:16px 16px calc(16px + env(safe-area-inset-bottom,0px));box-shadow:0 -12px 40px rgba(11,58,102,.2)}
+.seldlg.hoja .calg button{height:42px}.seldlg.hoja .rjg button{height:40px}
+html:has(dialog[open]){overflow:hidden}
+dialog{overscroll-behavior:contain}
+.vistazo{display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:10px;font-size:14px;color:var(--ink)}
+.vistazo .prox{color:var(--muted)}
+.vistazo .lnk{border:0;background:none;color:var(--sky);font-weight:700;padding:0;cursor:pointer;font:inherit}
+.icoacts{position:absolute;top:14px;right:14px;gap:6px!important}
+.icoacts .btn{width:38px;height:38px;min-height:38px;padding:0!important;display:grid;place-items:center;border-radius:12px;background:rgba(255,255,255,.85)}
+#v-inicio .saludo{padding-right:110px}
+.kico{position:absolute;right:12px;bottom:10px;font-size:18px;opacity:.28;pointer-events:none}
+.kdesc{display:block;font-style:normal;font-size:11.5px;color:var(--muted);margin-top:3px;line-height:1.3}
+.uper{display:grid;grid-template-columns:repeat(6,1fr);gap:6px;margin:4px 0 10px}
+.uper div{background:var(--sky-soft);border-radius:12px;padding:8px 6px;text-align:center}
+.uper b{display:block;font-size:18px;color:var(--navy)}.uper span{font-size:11px;color:var(--muted)}
+.spark{display:flex;align-items:flex-end;gap:3px;height:44px;margin-bottom:6px}
+.spark i{flex:1;background:linear-gradient(180deg,var(--celeste),var(--sky));border-radius:3px 3px 0 0;min-height:2px}
+.tabinfo{display:flex;flex-direction:column;gap:4px;padding:12px 14px;margin-bottom:10px;border-radius:12px;background:var(--sky-soft);font-size:13px}
+.tabinfo b{color:var(--navy)}
+.manres{margin-top:8px;background:#fff;border-radius:14px;box-shadow:0 12px 30px rgba(11,58,102,.18);max-height:360px;overflow:auto;text-align:left}
+.manhit{display:flex;flex-direction:column;gap:2px;width:100%;text-align:left;border:0;border-bottom:1px solid var(--line);background:#fff;padding:10px 14px;font:inherit;color:var(--ink);cursor:pointer}
+.manhit:hover{background:var(--sky-soft)}.manhit .mhm{font-size:11px;font-weight:700;color:var(--sky);text-transform:uppercase;letter-spacing:.04em}
+.manhit mark{background:#FFF1B8;border-radius:3px;padding:0 2px}
+.cfghub{display:grid;grid-template-columns:320px minmax(0,1fr);gap:16px;align-items:start}
+.cfgnav{display:flex;flex-direction:column;gap:14px;position:sticky;top:120px}
+.cfgg h3{font-size:11.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:0 0 6px 4px}
+.cfgg button{display:flex;gap:10px;align-items:flex-start;width:100%;text-align:left;border:1px solid transparent;background:rgba(255,255,255,.7);border-radius:14px;padding:10px 12px;margin-bottom:6px;cursor:pointer;font:inherit;color:var(--ink)}
+.cfgg button:hover{border-color:var(--celeste)}
+.cfgg button.on{background:#fff;border-color:var(--sky);box-shadow:var(--sh)}
+.cfgg .ci{font-size:18px;width:26px;text-align:center}.cfgg b{display:block;color:var(--navy);font-size:14px}.cfgg em{display:block;font-style:normal;font-size:12px;color:var(--muted)}
+.alinfo{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:6px 0 8px}
+.alinfo div{background:var(--sky-soft);border-radius:12px;padding:10px 12px;font-size:13px;display:flex;flex-direction:column;gap:2px}
+.alinfo b{color:var(--navy);font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+.alcards{display:flex;flex-direction:column;gap:8px;margin-top:8px}
+.alcard{border:1px solid var(--line);border-radius:14px;padding:12px 14px;background:#fff;display:flex;flex-direction:column;gap:4px}
+.alc1{display:flex;justify-content:space-between;gap:8px;align-items:flex-start}.alc1 b{color:var(--navy);font-size:14.5px}
+.alcard .btn{align-self:flex-start;min-height:36px;padding:6px 12px;margin-top:4px;font-size:13px}
+.accsheet{display:flex;flex-direction:column;gap:8px;margin-top:8px}.accsheet .btn{justify-content:flex-start;min-height:46px;text-align:left}
+.dgrid .dr > span{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.dgrid .dh > span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bmas{position:fixed;inset:0;z-index:95;background:rgba(11,58,102,0);transition:background .18s}
+.bmas.abierto{background:rgba(11,58,102,.25)}
+.bmasbox{position:absolute;left:0;right:0;bottom:calc(62px + env(safe-area-inset-bottom,0px));background:#fff;border-radius:22px 22px 0 0;padding:10px 14px 14px;
+  transform:translateY(100%);transition:transform .2s ease;box-shadow:0 -12px 40px rgba(11,58,102,.18)}
+.bmas.abierto .bmasbox{transform:translateY(0)}
+.bmasasa{width:40px;height:4px;border-radius:4px;background:var(--line);margin:0 auto 10px}
+.bmasgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.bmasgrid button{display:flex;flex-direction:column;align-items:center;gap:4px;border:0;background:none;padding:10px 4px;border-radius:14px;font:inherit;font-size:11.5px;font-weight:600;color:var(--muted);cursor:pointer}
+.bmasgrid button span{font-size:20px;line-height:1;color:var(--navy)}
+.bmasgrid button.on{background:var(--sky-soft);color:var(--navy)}
+@media (max-width:760px){
+  /* Rendimiento: sin desenfoques en el móvil (hacían lento el desplazamiento) */
+  .card,.kpi,.panel,header,.bnav,.lbox,dialog::backdrop{backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
+  .card,.kpi,.panel{background:#fff}
+  header{background:rgba(255,255,255,.97)}
+  .bnav{background:rgba(255,255,255,.98)}
+  dialog::backdrop{background:rgba(11,58,102,.35)}
+  /* El menú inferior nunca tapa el final de la página */
+  main{padding-bottom:calc(96px + env(safe-area-inset-bottom,0px))!important}
+  /* Ventanas: nada más ancho que la pantalla y márgenes iguales */
+  dialog{width:calc(100% - 16px)!important;max-width:calc(100% - 16px)!important;max-height:calc(100dvh - 24px)}
+  dialog .fbox, #dbody, #dlg2body{padding:16px!important;overflow-x:hidden}
+  dialog *{max-width:100%}
+  dialog .g2,dialog .g3{grid-template-columns:1fr!important}
+  dialog .opciones{grid-template-columns:1fr!important}
+  .fh{display:flex;align-items:flex-start;gap:10px}
+  .fh .x,.x{width:40px!important;height:40px!important;margin:0!important;flex:0 0 40px;border-radius:12px}
+  #ficha{width:100%!important;max-width:100%!important;height:100dvh;max-height:100dvh;margin:0;border-radius:0}
+  #ficha .fh{position:sticky;top:0;z-index:5;background:#fff;padding:14px 16px 10px;margin:0 -16px 8px}
+  .tools .tbox .fh,.tools .fh{padding-right:0}
+  /* Cabeceras de módulo ordenadas */
+  .saludo{flex-direction:column;align-items:stretch!important;gap:10px}
+  .saludo h1{font-size:22px}
+  .saludo .acts.chips{display:flex;flex-wrap:nowrap;overflow-x:auto;gap:6px;margin:0!important;padding:0 0 2px!important;scrollbar-width:none;justify-content:flex-start}
+  .saludo .acts.chips::-webkit-scrollbar{display:none}
+  .chip,.saludo .acts.chips > *{flex:0 0 auto;min-height:38px!important;height:38px;padding:0 12px!important;font-size:13.5px!important;border-radius:11px!important;white-space:nowrap}
+  .saludo .acts.chips select{width:auto;min-width:130px}
+  .segm{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:4px;padding:4px;margin:0 0 8px;background:rgba(255,255,255,.9);border:1px solid var(--line);border-radius:14px}
+  .segm button{border:0;background:none;border-radius:10px;height:36px;font:inherit;font-weight:650;font-size:13.5px;color:var(--muted);cursor:pointer}
+  .segm button.on{background:var(--grad);color:#fff;box-shadow:0 4px 12px rgba(21,82,143,.25)}
+  .agnavm{display:grid;grid-template-columns:44px 1fr 44px;gap:6px;margin:0 0 10px}
+  .agnavm .chip{justify-content:center;border:1px solid var(--line);background:#fff;color:var(--navy);font-weight:700;font-size:15px!important}
+  .subnav{display:flex;flex-wrap:nowrap;overflow-x:auto;gap:6px;scrollbar-width:none;padding-bottom:2px}
+  .subnav::-webkit-scrollbar{display:none}
+  .subnav button{flex:0 0 auto;height:36px;min-height:36px;padding:0 14px;font-size:13.5px;border-radius:11px}
+  .fab{position:fixed!important;right:16px;bottom:calc(76px + env(safe-area-inset-bottom,0px));z-index:60;width:56px;height:56px;min-height:56px!important;
+    border-radius:18px!important;padding:0!important;font-size:28px!important;line-height:1;box-shadow:0 12px 28px rgba(21,82,143,.4)!important}
+  /* Inicio */
+  #v-inicio .saludo{padding:18px 16px;padding-right:100px}
+  .icoacts{top:12px;right:12px;flex-direction:row}
+  .kpis{grid-template-columns:1fr 1fr!important;gap:8px!important}
+  .kpi{padding:12px 12px 12px!important}
+  .kpi b{font-size:22px}
+  .uper{grid-template-columns:repeat(3,1fr)}
+  .alinfo{grid-template-columns:1fr}
+  /* Configuración */
+  .cfghub{grid-template-columns:1fr}
+  .cfgnav{position:static}
+  #v-config .g2,#v-config .g3,#v-facturacion .g2{grid-template-columns:1fr!important}
+  .saludo .acts.chips:empty{display:none}
+  /* Administración */
+  #admcuerpo .lista > .item{flex-wrap:wrap;align-items:center}
+  #admcuerpo .lista > .item .tx{flex:1 1 60%;min-width:0}
+  #admcuerpo .lista > .item .tx b{display:block;white-space:normal}
+  #admcuerpo .umas{min-height:38px;padding:0 14px;margin-left:auto}
+  /* Duplicados */
+  #v-duplicados .card{padding:12px}
+  #v-duplicados .dpar,#v-duplicados .dupgrid{grid-template-columns:1fr!important}
+}
 </style>
 </head>
 <body>
@@ -942,6 +1058,6 @@ body{overflow-x:hidden;width:100%;min-height:100dvh;overscroll-behavior-y:none}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js" defer></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="./config.js"></script>
-<script src="./app.js?v=2.36.1"></script>
+<script src="./app.js?v=2.37.0"></script>
 </body>
 </html>
