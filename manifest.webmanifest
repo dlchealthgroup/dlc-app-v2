@@ -1,6 +1,6 @@
 {
-  "name": "DLC OS",
-  "short_name": "DLC OS",
+  "name": "Plataforma",
+  "short_name": "Plataforma",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

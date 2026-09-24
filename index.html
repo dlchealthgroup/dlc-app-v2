@@ -6,9 +6,9 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="apple-mobile-web-app-title" content="DLC OS">
+<meta name="apple-mobile-web-app-title" content="Plataforma">
 <meta name="format-detection" content="telephone=no">
-<title>DLC OS</title>
+<title>Plataforma</title>
 <meta name="theme-color" content="#EAF5FC">
 <meta name="color-scheme" content="light only">
 <link rel="manifest" href="./manifest.webmanifest">
@@ -1007,6 +1007,47 @@ body.sin-sesion main{padding-bottom:0!important}
 .alacts{display:flex;gap:6px;flex-wrap:wrap;margin-top:4px}
 .alacts .btn{margin-top:0!important}
 .alocmenu{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:6px;padding:8px 10px;border-radius:10px;background:var(--sky-soft)}
+/* v2.41.0 · marca, planes, usuarios, roles */
+.marcaed{display:grid;grid-template-columns:200px 1fr;gap:20px;align-items:start;margin-top:10px}
+.marcaprev{display:flex;flex-direction:column;align-items:center;gap:10px;padding:18px;border-radius:18px;background:var(--grad-suave);border:1px solid var(--line)}
+.marcaprev img{width:110px;height:110px;border-radius:50%;object-fit:cover;background:#fff;box-shadow:0 8px 24px rgba(46,134,201,.2)}
+.marcaprev b{color:var(--navy);text-align:center}
+nav.main button.bloq{opacity:.55}.cand{font-size:11px;margin-left:4px}
+.bmasgrid button.bloq{opacity:.5}
+.planact{display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap;align-items:center}
+.planuso{min-width:220px;display:flex;flex-direction:column;gap:4px}.planuso b{font-size:22px;color:var(--navy)}
+.planes{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:14px 0}
+.plan{position:relative;display:flex;flex-direction:column;gap:6px;padding:18px 16px;border-radius:18px;background:#fff;border:1px solid var(--line)}
+.plan h3{margin:0;color:var(--navy);font-size:18px}.plan .manlist{flex:1;margin:6px 0}
+.plan.dest{border:2px solid var(--sky);box-shadow:0 14px 34px rgba(46,134,201,.18)}.plan.actual{background:var(--sky-soft)}
+.plancinta{position:absolute;top:-11px;left:16px;background:var(--grad);color:#fff;font-size:11px;font-weight:700;border-radius:999px;padding:3px 10px}
+.planprecio b{font-size:30px;color:var(--navy);letter-spacing:-.02em}.planprecio span{color:var(--muted)}
+.usrbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}.usrbar input{flex:1 1 220px}.usrbar select{width:auto;flex:0 0 auto}
+.usrlista{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:10px}
+.usrcard{display:grid;grid-template-columns:auto 1fr auto;gap:12px;align-items:center;text-align:left;border:1px solid var(--line);background:#fff;border-radius:16px;padding:12px 14px;cursor:pointer;font:inherit;color:var(--ink)}
+.usrcard:hover{border-color:var(--sky);box-shadow:var(--sh)}.usrcard.off{opacity:.6}
+.usrav{width:44px;height:44px;border-radius:50%;display:grid;place-items:center;color:#fff;font-weight:800;background:var(--grad)}
+.usrav.grande{width:56px;height:56px;font-size:18px}
+.usrtx{min-width:0}.usrtx b{display:block;color:var(--navy)}.usrtx .sm{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.usrchips{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:4px}
+.usrdat{display:flex;flex-direction:column;align-items:flex-end;gap:2px;font-size:12px;color:var(--muted);white-space:nowrap}.usrdat b{color:var(--navy)}
+.usrcab{display:flex;gap:12px;align-items:center}
+.usrgrid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:10px 0}
+.usrperm{display:grid;grid-template-columns:1fr 1fr;gap:4px 10px;font-size:13px}.usrperm span{display:flex;justify-content:space-between;gap:6px}
+.usrperm em{font-style:normal;font-size:11.5px;color:var(--muted)}.usrperm .no{color:var(--muted)}
+.usracc{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.nivleg{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:12px 0}
+.nivleg span{display:flex;flex-direction:column;gap:2px;padding:10px 12px;border-radius:12px;font-size:12px;color:var(--muted);border:1px solid var(--line)}
+.nivleg b{color:var(--ink);font-size:13px}
+.rolmat{width:100%;border-collapse:separate;border-spacing:0;font-size:13px;min-width:760px}
+.rolmat th{position:sticky;top:0;background:#F2F8FD;color:var(--navy);text-align:left;padding:10px 8px;font-size:12px}
+.rolmat td{padding:6px 8px;border-top:1px solid var(--line);vertical-align:middle}.rolmat td .sm{display:block}
+.nvsel{min-height:34px;padding:4px 28px 4px 10px;font-size:13px;border-radius:10px}
+.nv0{background-color:#F4F6F8}.nv1{background-color:#EAF5FC}.nv2{background-color:#E4F4EC}.nv3{background-color:#FFF4E5}
+body.masabierto .bnav{border-top-color:transparent;box-shadow:none}
+.bmasbox{bottom:calc(60px + env(safe-area-inset-bottom,0px));border-radius:22px 22px 0 0;box-shadow:0 -10px 30px rgba(11,58,102,.12)}
+@media (max-width:1100px){.planes{grid-template-columns:1fr 1fr}}
+@media (max-width:760px){.planes,.marcaed,.usrgrid,.usracc,.nivleg{grid-template-columns:1fr}.usrlista{grid-template-columns:1fr}.usrcard{grid-template-columns:auto 1fr}.usrdat{grid-column:2;align-items:flex-start;flex-direction:row;gap:10px}}
 </style>
 </head>
 <body>
@@ -1015,8 +1056,8 @@ body.sin-sesion main{padding-bottom:0!important}
 
 <section id="login" class="hide">
   <form class="lbox" id="lform">
-    <img src="./logo-circulo.png" alt="DLC Health Group">
-    <h1>DLC OS</h1>
+    <img src="./logo-circulo.png" alt="">
+    <h1>Bienvenido</h1>
     <p class="sub">Entra con tu correo y contraseña.</p>
     <label for="lu">Correo</label>
     <input id="lu" type="email" autocomplete="username" required>
@@ -1027,11 +1068,11 @@ body.sin-sesion main{padding-bottom:0!important}
   </form>
 </section>
 
-<div id="girar" role="alert"><span class="gi">📱</span><b>Gira el móvil</b><span>DLC OS se usa en vertical.</span></div>
+<div id="girar" role="alert"><span class="gi">📱</span><b>Gira el móvil</b><span>Se usa en vertical.</span></div>
 <div id="app" class="hide">
   <header>
     <div class="top">
-      <img class="logo" src="./logo-circulo-120.png" alt="DLC Health Group">
+      <img class="logo" src="./logo-circulo-120.png" alt="">
       <div class="gsearch"><input id="q" type="search" placeholder="Buscar médico, centro o municipio" autocomplete="off"><div class="gsug hide" id="gsug"></div></div>
       <div class="uwrap">
         <button class="ubtn" id="ubtn"><span class="av" id="av"></span><span class="uname" id="uname"></span></button>
@@ -1142,6 +1183,6 @@ body.sin-sesion main{padding-bottom:0!important}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js" defer></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="./config.js"></script>
-<script src="./app.js?v=2.40.0"></script>
+<script src="./app.js?v=2.41.0"></script>
 </body>
 </html>
