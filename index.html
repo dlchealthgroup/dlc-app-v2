@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>DLC OS</title>
-<meta name="theme-color" content="#0E2F52">
+<meta name="theme-color" content="#EAF5FC">
 <meta name="color-scheme" content="light only">
 <link rel="manifest" href="./manifest.webmanifest">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
@@ -657,6 +657,133 @@ input[type=date],input[type=time],input[type=month],input[type=datetime-local]{c
 .dupcmp .fbox{padding:18px}
 .item.sel{background:var(--sky-soft)}
 @media (max-width:900px){.dupgrid{grid-template-columns:1fr}.dupcmp{position:static}}
+/* ============================================================
+   v2.36.0 · Identidad visual: azules suaves, blancos luminosos,
+   difuminados y superficies de cristal
+   ============================================================ */
+:root{
+  --navy:#0B3A66; --navy-2:#15528F; --sky:#2E86C9; --sky-soft:#EAF5FC; --celeste:#7CC3EC; --hielo:#F4FAFE;
+  --bg:#F3F8FC; --ink:#10263D; --muted:#5B7089; --line:#DCE8F2;
+  --r:16px; --sh:0 1px 2px rgba(11,58,102,.04), 0 10px 30px rgba(46,134,201,.08);
+  --grad:linear-gradient(135deg,#0B3A66 0%,#15528F 45%,#2E86C9 100%);
+  --grad-suave:linear-gradient(135deg,#EAF5FC 0%,#F7FBFE 55%,#FFFFFF 100%);
+  --cristal:rgba(255,255,255,.82);
+}
+html,body{background:#F3F8FC}
+body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
+  background:
+    radial-gradient(900px 520px at -8% -10%, rgba(124,195,236,.35), transparent 60%),
+    radial-gradient(700px 480px at 108% 8%, rgba(46,134,201,.14), transparent 62%),
+    radial-gradient(900px 600px at 30% 115%, rgba(124,195,236,.22), transparent 60%),
+    linear-gradient(180deg,#EEF6FC 0%,#F7FBFE 40%,#FFFFFF 100%)}
+/* Cabecera y menú de cristal */
+header{background:rgba(255,255,255,.72);backdrop-filter:blur(14px) saturate(1.3);-webkit-backdrop-filter:blur(14px) saturate(1.3);border-bottom:1px solid rgba(220,232,242,.8)}
+header .logo{height:46px!important;width:46px!important;max-width:none;border-radius:50%;object-fit:cover;background:#fff;box-shadow:0 4px 14px rgba(46,134,201,.2)}
+nav.main{background:transparent;border-bottom:0}
+nav.main button{border-radius:10px;margin:4px 0;transition:background .15s,color .15s}
+nav.main button:hover{background:rgba(46,134,201,.08);color:var(--navy)}
+nav.main button[aria-selected=true]{color:var(--navy);background:rgba(46,134,201,.10)}
+nav.main button[aria-selected=true]::after{height:3px;bottom:-4px;background:var(--grad);left:14px;right:14px}
+/* Superficies */
+.card,.kpi,.panel{background:var(--cristal);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,.9);
+  box-shadow:0 1px 0 rgba(255,255,255,.9) inset, var(--sh)}
+.card{border-radius:18px}
+.kpi{border-radius:16px;overflow:hidden}
+.kpi::before{content:"";position:absolute;left:0;right:0;top:0;height:3px;background:linear-gradient(90deg,var(--celeste),var(--sky));opacity:.55}
+.kpi.warn::before{background:linear-gradient(90deg,#F4B266,#B45309)}
+.kpi.ok::before{background:linear-gradient(90deg,#7ED3AE,#12805C)}
+.kpi b{color:var(--navy);letter-spacing:-.01em}
+.saludo h1,h1{color:var(--navy);letter-spacing:-.015em}
+.card h2{color:var(--navy)}
+/* Botones */
+.btn{background:var(--grad);border:0;border-radius:12px;box-shadow:0 6px 16px rgba(21,82,143,.22);transition:transform .08s,box-shadow .15s,filter .15s}
+.btn:hover{filter:brightness(1.06);box-shadow:0 8px 22px rgba(21,82,143,.28)}
+.btn:active{transform:translateY(1px)}
+.btn.sec{background:rgba(255,255,255,.9);color:var(--navy);border:1px solid #CFE1F0;box-shadow:0 1px 2px rgba(11,58,102,.05)}
+.btn.sec:hover{background:#fff;border-color:var(--celeste)}
+.btn.dang{background:linear-gradient(135deg,#9B2C2C,#C24141);box-shadow:0 6px 16px rgba(155,44,44,.22)}
+.btn.sec.dang{background:#fff;color:var(--dang);border-color:#F1C9C9;box-shadow:none}
+.subnav button{border-color:#D6E6F3;background:rgba(255,255,255,.85)}
+.subnav button[aria-pressed=true]{background:var(--grad);border-color:transparent;box-shadow:0 4px 12px rgba(21,82,143,.2)}
+/* Campos */
+input,select,textarea{background:rgba(255,255,255,.95);border:1px solid #D3E3F0;border-radius:12px;transition:border-color .15s, box-shadow .15s}
+input:focus,select:focus,textarea:focus{outline:0;border-color:var(--celeste);box-shadow:0 0 0 4px rgba(124,195,236,.25)}
+select{appearance:none;-webkit-appearance:none;padding-right:34px;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%232E86C9' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:right 12px center}
+input[type=checkbox],input[type=radio]{accent-color:var(--sky)}
+/* Tablas */
+.dgrid .dh{background:linear-gradient(180deg,#F2F8FD,#EAF4FB);color:var(--navy-2)}
+.dgrid .dr:hover{background:rgba(124,195,236,.10)}
+.pill{border-radius:999px}
+/* Ventanas */
+dialog{border-radius:20px;box-shadow:0 30px 80px rgba(11,58,102,.28);background:linear-gradient(180deg,#FFFFFF 0%,#FAFDFF 100%)}
+dialog::backdrop{background:rgba(11,58,102,.28);backdrop-filter:blur(3px)}
+.x{background:var(--sky-soft);color:var(--navy)}
+/* Acceso */
+#login{background:url('./fondo.jpg') left top/cover no-repeat, #F3F8FC;position:relative;overflow:hidden}
+#login::after{content:"";position:absolute;left:-10%;right:-10%;bottom:-6%;height:46%;background:url('./ola.jpg') center/cover no-repeat;opacity:.55;
+  -webkit-mask-image:linear-gradient(180deg,transparent,#000 45%);mask-image:linear-gradient(180deg,transparent,#000 45%);pointer-events:none}
+.lbox{position:relative;z-index:1;background:rgba(255,255,255,.8);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border:1px solid rgba(255,255,255,.95);
+  border-radius:24px;box-shadow:0 30px 70px rgba(11,58,102,.18);text-align:center}
+.lbox img{height:96px;width:96px;border-radius:50%;margin:0 auto 14px;display:block;box-shadow:0 10px 30px rgba(46,134,201,.25)}
+.lbox label{text-align:left}
+.lbox h1{font-size:24px}
+/* Barra inferior del móvil */
+.bnav{background:rgba(255,255,255,.86);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border-top:1px solid rgba(220,232,242,.9)}
+.bnav button[aria-selected=true]{color:var(--sky)}
+/* Resumen de Inicio con la ola */
+#v-inicio .saludo{position:relative;border-radius:22px;padding:22px 22px;margin-bottom:16px;overflow:hidden;
+  background:linear-gradient(100deg,rgba(255,255,255,.92) 0%,rgba(255,255,255,.75) 45%,rgba(255,255,255,.1) 100%), url('./ola.jpg') right center/cover no-repeat;
+  box-shadow:var(--sh);border:1px solid rgba(255,255,255,.9)}
+@media (max-width:760px){#v-inicio .saludo{background:linear-gradient(180deg,rgba(255,255,255,.9),rgba(255,255,255,.7)), url('./ola.jpg') 70% center/cover no-repeat}}
+/* Selectores propios */
+.selw{position:relative;display:block}
+.selw input{cursor:pointer;padding-right:40px;caret-color:transparent}
+.selw input::-webkit-calendar-picker-indicator{display:none;-webkit-appearance:none}
+.selw .selico{position:absolute;right:12px;top:50%;transform:translateY(-50%);pointer-events:none;font-size:15px;opacity:.8}
+.numw{display:flex;align-items:stretch;border:1px solid #D3E3F0;border-radius:12px;background:#fff;overflow:hidden}
+.numw:focus-within{border-color:var(--celeste);box-shadow:0 0 0 4px rgba(124,195,236,.25)}
+.numw input{border:0!important;box-shadow:none!important;text-align:center;border-radius:0;min-width:0;flex:1;-moz-appearance:textfield}
+.numw input::-webkit-outer-spin-button,.numw input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+.numw .nb{border:0;background:var(--sky-soft);color:var(--navy);font-size:18px;font-weight:700;width:40px;cursor:pointer;flex:0 0 auto}
+.numw .nb:hover{background:#D9ECF8}
+.numw.dis{opacity:.6}.numw.dis .nb{cursor:default}
+.selpop{position:fixed;z-index:400;background:#fff;border:1px solid #D6E6F3;border-radius:16px;box-shadow:0 20px 50px rgba(11,58,102,.22);padding:12px;width:290px}
+.calh{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.calh b{text-transform:capitalize;color:var(--navy)}
+.calh button,.calp button{border:0;background:var(--sky-soft);color:var(--navy);border-radius:10px;min-width:36px;height:34px;cursor:pointer;font:inherit;font-weight:700;padding:0 12px}
+.calg{display:grid;grid-template-columns:repeat(7,1fr);gap:3px;text-align:center}
+.calg i{font-style:normal;font-size:11px;font-weight:700;color:var(--muted);padding:4px 0}
+.calg button{border:0;background:transparent;border-radius:10px;height:34px;cursor:pointer;font:inherit;color:var(--ink)}
+.calg button:hover{background:var(--sky-soft)}
+.calg button.hoy{box-shadow:inset 0 0 0 1.5px var(--celeste)}
+.calg button.sel{background:var(--grad);color:#fff}
+.calg button:disabled{opacity:.3;cursor:default}
+.calp{display:flex;gap:8px;justify-content:space-between;margin-top:10px}
+.calp .okb{background:var(--grad);color:#fff;flex:1}
+.reloj{width:300px}.rjh{text-align:center;font-size:26px;color:var(--navy);margin-bottom:6px}
+.rjt{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin:6px 0 4px}
+.rjg{display:grid;grid-template-columns:repeat(6,1fr);gap:4px}
+.rjg button{border:0;background:#F4F9FD;border-radius:9px;height:32px;cursor:pointer;font:inherit}
+.rjg button:hover{background:var(--sky-soft)}.rjg button.sel{background:var(--grad);color:#fff}
+/* Espacio del médico */
+.medhero{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap;padding:24px;border-radius:22px;margin-bottom:16px;color:#fff;
+  background:linear-gradient(110deg,rgba(11,58,102,.94),rgba(21,82,143,.82) 55%,rgba(46,134,201,.55)), url('./ola.jpg') center/cover no-repeat;box-shadow:0 20px 50px rgba(11,58,102,.25)}
+.medhero h1{color:#fff;margin:4px 0}
+.medper{min-width:240px}.medper select,.medper input{color:var(--ink)}
+.selval{position:absolute;left:14px;right:40px;top:50%;transform:translateY(-50%);pointer-events:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--ink)}
+.selval.vacio{color:var(--muted)}
+.selw input{color:transparent!important}
+.selw input::-webkit-datetime-edit{color:transparent}
+.top{align-items:center}.uwrap{display:flex;align-items:center}.medper label{color:rgba(255,255,255,.85)}.medper .sm{color:rgba(255,255,255,.8)}
+.mdk .kpi b{font-size:26px}
+.mdavisos{position:relative;border:1px solid #D6E6F3;background:#fff;border-radius:12px;width:42px;height:42px;font-size:18px;cursor:pointer;margin-right:8px}
+.mdavisos .nb2{position:absolute;top:-6px;right:-6px;background:#C24141;color:#fff;border-radius:999px;font-size:11px;font-weight:700;padding:1px 6px}
+.item.nuevo{background:rgba(124,195,236,.12)}
+body.modo-medico .gsearch{visibility:hidden}
+.dgrid.asigs{--cols:minmax(160px,1.4fr) minmax(140px,1.2fr) 130px 100px 100px;min-width:680px}
+.alertlist .item{border-radius:10px}
 </style>
 </head>
 <body>
@@ -665,7 +792,7 @@ input[type=date],input[type=time],input[type=month],input[type=datetime-local]{c
 
 <section id="login" class="hide">
   <form class="lbox" id="lform">
-    <img src="./logo.png" alt="DLC Health Group">
+    <img src="./logo-circulo.png" alt="DLC Health Group">
     <h1>DLC OS</h1>
     <p class="sub">Entra con tu correo y contraseña.</p>
     <label for="lu">Correo</label>
@@ -680,7 +807,7 @@ input[type=date],input[type=time],input[type=month],input[type=datetime-local]{c
 <div id="app" class="hide">
   <header>
     <div class="top">
-      <img class="logo" src="./logo.png" alt="DLC">
+      <img class="logo" src="./logo-circulo-120.png" alt="DLC Health Group">
       <div class="gsearch"><input id="q" type="search" placeholder="Buscar médico, centro o municipio" autocomplete="off"><div class="gsug hide" id="gsug"></div></div>
       <div class="uwrap">
         <button class="ubtn" id="ubtn"><span class="av" id="av"></span><span class="uname" id="uname"></span></button>
@@ -758,6 +885,7 @@ input[type=date],input[type=time],input[type=month],input[type=datetime-local]{c
     <section id="v-duplicados" class="hide"></section>
     <section id="v-manual" class="hide"></section>
     <section id="v-facturacion" class="hide"></section>
+    <section id="v-informe" class="hide"></section>
     <section id="v-pacientes" class="hide"></section>
     <section id="v-productos" class="hide"></section>
     <section id="v-agenda" class="hide"></section>
@@ -790,6 +918,6 @@ input[type=date],input[type=time],input[type=month],input[type=datetime-local]{c
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js" defer></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="./config.js"></script>
-<script src="./app.js?v=2.35.0"></script>
+<script src="./app.js?v=2.36.0"></script>
 </body>
 </html>

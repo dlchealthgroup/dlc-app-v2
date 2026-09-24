@@ -10646,9 +10646,9 @@ async function facturaPDF(f, rectificaNum) {
   const eur = v => (Math.round((+v || 0) * 100) / 100).toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '€';
   const fecha = x => x ? x.split('-').reverse().join('/') : '';
   // Logo en su círculo
-  doc.setFillColor(236, 240, 245); doc.circle(34, 36, 15, 'F');
   const logo = await logoData();
-  if (logo) doc.addImage(logo, 'PNG', 22.5, 31.5, 23, 9.2);
+  if (logo && LOGO_CIRC) doc.addImage(logo, 'PNG', 17, 19, 34, 34);
+  else { doc.setFillColor(236, 240, 245); doc.circle(34, 36, 15, 'F'); if (logo) doc.addImage(logo, 'PNG', 22.5, 31.5, 23, 9.2); }
   // Título y número
   doc.setFont('helvetica', 'normal'); doc.setTextColor(...negro); doc.setFontSize(f.rectifica_id ? 22 : 28);
   doc.text(f.rectifica_id ? 'FACTURA RECTIFICATIVA' : 'FACTURA', 192, 36, { align: 'right' });
@@ -10889,6 +10889,373 @@ AYUDA.ventas[2].push('El listado va por páginas y se guarda en el dispositivo: 
 // Aviso de punto de salida en el plan y en «Tu día»
 pintarPlan = (orig => function () { orig(); if (PLAN && $('rplan')) avisoSinSalida($('rplan').querySelector('.card')); })(pintarPlan);
 cargarAgenda = (orig => async function () { await orig(); if (TAB === 'agenda' && AG_MODO === 'dia' && !AG_VISTA) avisoSinSalida($('agcuerpo')); })(cargarAgenda);
+
+
+/* ============================================================
+   DLC OS 2.0 · v2.36.0 · Identidad visual, selectores propios de fecha,
+   hora y número, espacio del médico con avisos, alertas en ventana,
+   asignación de comisiones con fecha desde Comisiones y restablecer
+   pruebas solo para la persona responsable
+   ============================================================ */
+
+Object.assign(RPC_TTL, { informe_medico: 60, mis_notificaciones: 20, asignaciones_esquema_lista: 30 });
+
+/* ---------------- selectores propios: fecha, hora y número ---------------- */
+
+const MESES_L = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+let SELPOP = null, LOGO_CIRC = false;
+function cerrarSelector() { if (SELPOP) { SELPOP.remove(); SELPOP = null; } }
+function colocarPop(pop, ref) {
+  const r = ref.getBoundingClientRect(), alto = pop.offsetHeight, ancho = pop.offsetWidth;
+  const abajo = window.innerHeight - r.bottom > alto + 12 || r.top < alto + 12;
+  pop.style.top = (abajo ? r.bottom + 6 : r.top - alto - 6) + 'px';
+  pop.style.left = Math.max(8, Math.min(window.innerWidth - ancho - 8, r.left)) + 'px';
+}
+// Con una ventana abierta, solo se puede pulsar lo que está dentro: el selector se coloca en ella
+const capaSelector = inp => inp.closest('dialog[open]') || [...document.querySelectorAll('dialog[open]')].pop() || document.body;
+function emitir(inp) { inp.dispatchEvent(new Event('input', { bubbles: true })); inp.dispatchEvent(new Event('change', { bubbles: true })); }
+
+function abrirCalendario(inp) {
+  cerrarSelector();
+  let ver = inp.value ? new Date(inp.value + 'T12:00:00') : new Date();
+  const min = inp.min || null, max = inp.max || null;
+  const pop = document.createElement('div'); pop.className = 'selpop cal'; SELPOP = pop; pop.__t = Date.now();
+  const pinta = () => {
+    const y = ver.getFullYear(), m = ver.getMonth(), primero = new Date(y, m, 1), hueco = (primero.getDay() + 6) % 7, dias = new Date(y, m + 1, 0).getDate();
+    const hoy = hoyISO();
+    let celdas = '';
+    for (let i = 0; i < hueco; i++) celdas += '<span></span>';
+    for (let d = 1; d <= dias; d++) {
+      const f = `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+      const fuera = (min && f < min) || (max && f > max);
+      celdas += `<button type="button" data-cd="${f}" class="${f === inp.value ? 'sel' : ''} ${f === hoy ? 'hoy' : ''}" ${fuera ? 'disabled' : ''}>${d}</button>`;
+    }
+    pop.innerHTML = `<div class="calh"><button type="button" data-cm="-1" aria-label="Mes anterior">‹</button><b>${MESES_L[m]} ${y}</b><button type="button" data-cm="1" aria-label="Mes siguiente">›</button></div>
+      <div class="calg">${['L', 'M', 'X', 'J', 'V', 'S', 'D'].map(x => `<i>${x}</i>`).join('')}${celdas}</div>
+      <div class="calp"><button type="button" data-cq="hoy">Hoy</button>${inp.required ? '' : '<button type="button" data-cq="borrar">Borrar</button>'}</div>`;
+    colocarPop(pop, inp.closest('.selw') || inp);
+  };
+  pop.addEventListener('pointerdown', () => { pop.__t = Date.now(); });
+  pop.addEventListener('click', e => {
+    e.stopPropagation();
+    const d = e.target.closest('[data-cd]'), mv = e.target.closest('[data-cm]'), q = e.target.closest('[data-cq]');
+    if (d) { inp.value = d.dataset.cd; emitir(inp); cerrarSelector(); }
+    if (mv) { ver = new Date(ver.getFullYear(), ver.getMonth() + +mv.dataset.cm, 1); pinta(); }
+    if (q) { inp.value = q.dataset.cq === 'hoy' ? hoyISO() : ''; emitir(inp); cerrarSelector(); }
+  });
+  capaSelector(inp).appendChild(pop); pinta();
+}
+
+function abrirReloj(inp) {
+  cerrarSelector();
+  const [h0, m0] = (inp.value || '09:00').split(':').map(Number);
+  let h = isNaN(h0) ? 9 : h0, m = isNaN(m0) ? 0 : m0;
+  const pop = document.createElement('div'); pop.className = 'selpop reloj'; SELPOP = pop; pop.__t = Date.now();
+  const pinta = () => {
+    pop.innerHTML = `<div class="rjh"><b>${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}</b></div>
+      <div class="rjt">Hora</div><div class="rjg">${Array.from({ length: 24 }, (_, i) => `<button type="button" data-rh="${i}" class="${i === h ? 'sel' : ''}">${String(i).padStart(2, '0')}</button>`).join('')}</div>
+      <div class="rjt">Minutos</div><div class="rjg m">${[0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55].map(i => `<button type="button" data-rm="${i}" class="${i === m ? 'sel' : ''}">${String(i).padStart(2, '0')}</button>`).join('')}</div>
+      <div class="calp"><button type="button" data-rq="ok" class="okb">Aceptar</button>${inp.required ? '' : '<button type="button" data-rq="borrar">Borrar</button>'}</div>`;
+    colocarPop(pop, inp.closest('.selw') || inp);
+  };
+  pop.addEventListener('click', e => {
+    e.stopPropagation();
+    const a = e.target.closest('[data-rh]'), b = e.target.closest('[data-rm]'), q = e.target.closest('[data-rq]');
+    if (a) { h = +a.dataset.rh; pinta(); }
+    if (b) { m = +b.dataset.rm; pinta(); }
+    if (q) { inp.value = q.dataset.rq === 'ok' ? `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}` : ''; emitir(inp); cerrarSelector(); }
+  });
+  capaSelector(inp).appendChild(pop); pinta();
+}
+
+function valorVisible(inp) {
+  const w = inp.closest('.selw'), sp = w && w.querySelector('.selval'); if (!sp) return;
+  const v = inp.value;
+  if (!v) { sp.textContent = inp.type === 'date' ? 'Elige una fecha' : 'Elige una hora'; sp.classList.add('vacio'); return; }
+  sp.classList.remove('vacio');
+  if (inp.type === 'time') { sp.textContent = v.slice(0, 5); return; }
+  const d = new Date(v + 'T12:00:00');
+  sp.textContent = isNaN(d) ? v : d.toLocaleDateString('es-ES', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+}
+// Cada campo de fecha, hora o número se mejora al aparecer en pantalla
+function mejorarCampos(raiz) {
+  (raiz || document).querySelectorAll('input[type=date]:not([data-sel]), input[type=time]:not([data-sel]), input[type=number]:not([data-sel])').forEach(inp => {
+    inp.dataset.sel = '1';
+    if (inp.closest('.selpop')) return;
+    if (inp.type === 'number') {
+      if (inp.closest('.lrow') && inp.offsetWidth && inp.offsetWidth < 70) return;
+      const w = document.createElement('span'); w.className = 'numw';
+      inp.parentNode.insertBefore(w, inp); w.appendChild(inp);
+      w.insertAdjacentHTML('afterbegin', '<button type="button" class="nb" data-nd="-1" aria-label="Menos" tabindex="-1">−</button>');
+      w.insertAdjacentHTML('beforeend', '<button type="button" class="nb" data-nd="1" aria-label="Más" tabindex="-1">+</button>');
+      if (inp.disabled) w.classList.add('dis');
+      return;
+    }
+    const w = document.createElement('span'); w.className = 'selw ' + (inp.type === 'date' ? 'fecha' : 'hora');
+    inp.parentNode.insertBefore(w, inp); w.appendChild(inp);
+    w.insertAdjacentHTML('beforeend', `<span class="selico" aria-hidden="true">${inp.type === 'date' ? '📅' : '🕒'}</span>`);
+    inp.dataset.ro = inp.readOnly ? '1' : '';
+    inp.readOnly = true; inp.setAttribute('inputmode', 'none');
+    // Se muestra el valor en formato español, sin depender del idioma del navegador
+    w.insertAdjacentHTML('afterbegin', '<span class="selval"></span>');
+    const desc = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+    Object.defineProperty(inp, 'value', { configurable: true, get() { return desc.get.call(this); }, set(v) { desc.set.call(this, v); valorVisible(this); } });
+    inp.addEventListener('change', () => valorVisible(inp)); inp.addEventListener('input', () => valorVisible(inp));
+    valorVisible(inp);
+  });
+}
+document.addEventListener('click', e => {
+  const nb = e.target.closest('.numw .nb');
+  if (nb) {
+    const inp = nb.parentNode.querySelector('input'); if (inp.disabled || inp.readOnly) return;
+    const paso = +inp.step || 1, v = (+inp.value || 0) + paso * +nb.dataset.nd;
+    let n = v; if (inp.min !== '' && n < +inp.min) n = +inp.min; if (inp.max !== '' && n > +inp.max) n = +inp.max;
+    inp.value = paso < 1 ? n.toFixed(String(paso).split('.')[1].length) : n; emitir(inp); return;
+  }
+  const s = e.target.closest('.selw');
+  if (s) {
+    const inp = s.querySelector('input'); if (inp.disabled || inp.dataset.ro === '1') return;
+    e.preventDefault(); inp.type === 'date' ? abrirCalendario(inp) : abrirReloj(inp); return;
+  }
+  if (!e.target.closest('.selpop')) cerrarSelector();
+}, true);
+// El calendario del sistema no se abre: se usa el propio
+document.addEventListener('mousedown', e => { const i = e.target.closest('.selw input'); if (i) e.preventDefault(); }, true);
+document.addEventListener('keydown', e => {
+  const i = e.target.closest && e.target.closest('.selw input');
+  if (i && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); i.type === 'date' ? abrirCalendario(i) : abrirReloj(i); }
+  if (e.key === 'Escape') cerrarSelector();
+});
+document.addEventListener('scroll', e => { if (SELPOP && Date.now() - (SELPOP.__t || 0) > 500 && !(e.target.closest && e.target.closest('.selpop'))) cerrarSelector(); }, true);
+new MutationObserver(ms => { for (const m of ms) for (const n of m.addedNodes) if (n.nodeType === 1) mejorarCampos(n); })
+  .observe(document.body, { childList: true, subtree: true });
+['dlg', 'dlg2', 'ficha', 'mini'].forEach(id => { const d = $(id); if (d) d.addEventListener('close', cerrarSelector); });
+mejorarCampos(document);
+
+/* ---------------- alertas: el detalle se abre en una ventana ---------------- */
+
+document.addEventListener('click', e => {
+  const s = e.target.closest('#iniextra details.alerta2 > summary');
+  if (!s) return;
+  e.preventDefault(); e.stopPropagation();
+  const det = s.parentElement, items = [...det.querySelectorAll(':scope > div > .item')];
+  const titulo = s.textContent.replace(/\s+/g, ' ').trim();
+  $('dbody').innerHTML = `<div class="fh"><div><h2>${esc(titulo.replace(/^\d+\s*/, ''))}</h2><div class="sm">${num(items.length)} ${items.length === 1 ? 'caso' : 'casos'}${det.querySelector('.sm:last-child') && /más/.test(det.lastElementChild.textContent) ? ' · ' + esc(det.lastElementChild.textContent) : ''}</div></div>
+    <button class="x" data-cerrar aria-label="Cerrar">✕</button></div>
+    <input id="alq" type="search" placeholder="Buscar en la lista" style="margin:6px 0 8px">
+    <div class="lista alertlist" id="allista"></div><div id="alpag"></div>`;
+  let pag = 0;
+  const pinta = () => {
+    const q = $('alq').value.trim().toLowerCase(), f = items.filter(x => !q || x.textContent.toLowerCase().includes(q)), tam = 12;
+    $('allista').innerHTML = ''; f.slice(pag * tam, pag * tam + tam).forEach(x => $('allista').appendChild(x.cloneNode(true)));
+    $('allista').querySelectorAll('[data-inificha]').forEach(b => b.onclick = () => { $('dlg').close(); abrirFicha(b.dataset.inificha); });
+    $('allista').querySelectorAll('[data-iniped]').forEach(b => b.onclick = () => verPedido(b.dataset.iniped));
+    $('allista').querySelectorAll('[data-inistock]').forEach(b => b.onclick = () => { $('dlg').close(); PSEC = 'stock'; ir('productos'); });
+    $('allista').querySelectorAll('[data-inicomp]').forEach(b => b.onclick = () => editorCompra(b.dataset.inicomp));
+    paginador($('alpag'), f.length, pag, p => { pag = p; pinta(); }, () => { pag = 0; pinta(); });
+  };
+  $('alq').oninput = () => { pag = 0; pinta(); };
+  pinta(); $('dlg').showModal();
+}, true);
+
+/* ---------------- comisiones: asignar esquema con fecha desde Comisiones ---------------- */
+
+pintarComisiones = (orig => async function () {
+  await orig();
+  const c = $('admcuerpo'); if (!c || $('asigesq')) return;
+  const { data } = await RPC_ORIG('asignaciones_esquema_lista', {});
+  const l = data || [];
+  c.insertAdjacentHTML('afterbegin', `<div class="card" id="asigesq" style="padding:16px 18px">
+    <div class="manh"><h2 style="padding:0">Quién cobra con cada esquema</h2><button class="btn" id="asignueva">+ Asignar esquema</button></div>
+    <p class="sm">Al asignar eliges desde cuándo se aplica: a partir de hoy, a todo el histórico de esa persona o desde una fecha concreta, pasada o futura. Cada liquidación usa el esquema vigente en ese mes.</p>
+    ${l.length ? `<div class="dgrid-wrap"><div class="dgrid asigs"><div class="dh"><span>Persona</span><span>Esquema</span><span>Desde</span><span>Hasta</span><span>Estado</span></div>
+      ${l.map(x => `<div class="dr" style="cursor:default"><span><b>${esc(x.persona)}</b><span class="sm">${esc(x.rol)}</span></span><span>${esc(x.esquema)}</span>
+        <span>${x.desde <= '2000-01-01' ? 'Todo el histórico' : fechaCorta(x.desde)}</span><span>${x.hasta ? fechaCorta(x.hasta) : '—'}</span>
+        <span><span class="pill ${x.vigente ? 'p-est' : x.desde > hoyISO() ? 'p-per' : 'p-anu'}">${x.vigente ? 'Vigente' : x.desde > hoyISO() ? 'Programado' : 'Terminado'}</span></span></div>`).join('')}</div></div>`
+      : '<div class="vacio">Nadie tiene todavía un esquema asignado.</div>'}</div>`);
+  $('asignueva').onclick = async () => {
+    if (!COMS.length) await cargarComerciales();
+    if (!ESQUEMAS.length) { const { data: e } = await db.rpc('esquemas_lista'); ESQUEMAS = e || []; }
+    $('dbody').innerHTML = `<div class="fh"><div><h2>Asignar esquema de comisión</h2><div class="sm">Sustituye al que tuviera esa persona desde la fecha elegida</div></div>
+        <button class="x" data-cerrar aria-label="Cerrar">✕</button></div>
+      <div class="g2"><div><label for="aep">Persona</label><select id="aep">${COMS.map(u => `<option value="${u.id}">${esc(u.nombre)} · ${esc(u.rol)}</option>`).join('')}</select></div>
+        <div><label for="aee">Esquema</label><select id="aee"><option value="">Sin comisión</option>${ESQUEMAS.map(e => `<option value="${e.id}">${esc(e.nombre)}</option>`).join('')}</select></div></div>
+      <label>Se aplica</label>
+      <div class="opciones" style="grid-template-columns:repeat(3,1fr)">
+        <label class="opt"><input type="radio" name="aem" value="hoy" checked> A partir de hoy</label>
+        <label class="opt"><input type="radio" name="aem" value="todo"> A todo el histórico</label>
+        <label class="opt"><input type="radio" name="aem" value="fecha"> Desde una fecha</label></div>
+      <div id="aefw" class="hide"><label for="aef">Fecha (puede ser pasada o futura)</label><input id="aef" type="date" value="${hoyISO()}"></div>
+      <div class="avisoh" id="aeinfo"><span>Las ventas desde hoy se liquidarán con este esquema.</span></div>
+      <div class="acts" style="justify-content:flex-end"><button class="btn sec" data-cerrar>Cancelar</button><button class="btn" id="aeok">Asignar</button></div>`;
+    $('dlg').showModal();
+    const info = () => {
+      const m = $('dbody').querySelector('[name=aem]:checked').value;
+      $('aefw').classList.toggle('hide', m !== 'fecha');
+      $('aeinfo').querySelector('span').textContent = m === 'todo' ? 'Todas sus ventas, también las pasadas, se liquidarán con este esquema. Las liquidaciones ya cerradas no cambian.'
+        : m === 'fecha' ? ($('aef').value < hoyISO() ? 'Las ventas desde esa fecha (pasada) se recalcularán con este esquema en las liquidaciones abiertas.' : 'Se aplicará automáticamente a partir de esa fecha; hasta entonces sigue el esquema actual.')
+        : 'Las ventas desde hoy se liquidarán con este esquema.';
+    };
+    $('dbody').querySelectorAll('[name=aem]').forEach(r => r.onchange = info); $('aef').onchange = info;
+    $('aeok').onclick = async () => {
+      const m = $('dbody').querySelector('[name=aem]:checked').value;
+      const desde = m === 'todo' ? '2000-01-01' : m === 'fecha' ? $('aef').value : hoyISO();
+      const { data: r, error } = await db.rpc('asignar_esquema', { p_usuario: $('aep').value, p_esquema: $('aee').value || null, p_quitar: !$('aee').value, p_desde: desde });
+      if (error || (r && r.ok === false)) { toast('No se ha podido asignar', true); return; }
+      $('dlg').close(); toast('Esquema asignado'); ESQUEMAS = []; pintarComisiones();
+    };
+  };
+})(pintarComisiones);
+
+/* ---------------- entorno de pruebas: solo restablece la persona responsable ---------------- */
+
+if (EN_PRUEBAS) {
+  pintarFranjaPruebas = (orig => async function () {
+    orig();
+    const b = $('prreset'); if (!b) return;
+    const { data: puede, error } = await RPC_ORIG('pruebas_puede_restablecer', {});
+    if (error) return;               // proyecto sin el ajuste: se mantiene como estaba
+    if (!puede) { b.remove(); return; }
+    b.onclick = async () => {
+      const txt = await pedirTexto('Se borrará todo lo creado o cambiado en pruebas y los datos quedarán como se copiaron de producción.\n\nEscribe VOLVER para confirmar.', '', { titulo: '¿Volver a los datos de partida?', ok: 'Volver a los datos de partida' });
+      if (txt === null) return;
+      if (txt.trim().toUpperCase() !== 'VOLVER') { toast('No se ha hecho nada: no coincide la palabra', true); return; }
+      pantallaCarga('Volviendo a los datos de partida…');
+      const { data: r, error: e2 } = await RPC_ORIG('pruebas_resetear_responsable', { p_confirmacion: 'RESTABLECER' });
+      if (e2 || !r || !r.ok) { quitarCarga(); toast('No se ha podido: ' + ((e2 && e2.message) || (r && r.error) || ''), true); return; }
+      limpiarDatosLocales(); location.reload();
+    };
+  })(pintarFranjaPruebas);
+}
+
+/* ---------------- espacio del médico ---------------- */
+
+const ES_MEDICO = () => PERFIL && PERFIL.rol === 'Medico';
+
+async function cargarInforme() {
+  const v = $('v-informe');
+  v.innerHTML = `<div class="medhero"><div><div class="sm" style="color:rgba(255,255,255,.8)">Tu informe de prescripción</div><h1 id="mdnom">…</h1><div id="mdesp" class="sm" style="color:rgba(255,255,255,.85)"></div></div>
+      <div class="medper"><div id="mdper"></div></div></div>
+    <div id="mdcuerpo"><div class="card">${skelCard('Cargando tu informe…')}</div></div>`;
+  const pinta = async () => {
+    const r = $('mdper').__rango();
+    const { data: d } = await RPC_ORIG('informe_medico', { p_desde: r.desde, p_hasta: r.hasta });
+    if (!d || !d.ok) { $('mdcuerpo').innerHTML = `<div class="card"><div class="vacio">Tu usuario todavía no está vinculado a tu ficha de médico. Avisa a DLC Health Group para activarlo.</div></div>`; return; }
+    $('mdnom').textContent = d.medico.nombre; $('mdesp').textContent = d.medico.especialidad || '';
+    const top = d.posicion && d.posicion <= 3 ? 'Top 3' : d.posicion && d.posicion <= 5 ? 'Top 5' : d.posicion && d.posicion <= 10 ? 'Top 10' : null;
+    const ll = d.llamadas || {}, conv = ll.total ? Math.round(ll.con_pedido / ll.total * 100) : null;
+    const meses = mesesEntre(d.desde, d.hasta), serie = {}; (d.serie || []).forEach(s => serie[s.mes] = s);
+    $('mdcuerpo').innerHTML = `
+      <div class="kpis vtot mdk">
+        <div class="kpi"><b>${num(d.unidades)}</b><span>unidades pautadas</span></div>
+        <div class="kpi"><b>${num(d.pautas)}</b><span>pautas (pedidos)</span></div>
+        <div class="kpi"><b>${num(d.pacientes)}</b><span>pacientes</span></div>
+        <div class="kpi"><b>${num(d.repiten)}</b><span>pacientes que repiten</span></div>
+        <div class="kpi ${top ? 'ok' : ''}"><b>${top ? '🏆 ' + top : d.posicion ? 'Nº ' + d.posicion : '—'}</b><span>${d.posicion ? `de ${num(d.prescriptores)} prescriptores` : 'sin pautas en el periodo'}</span></div>
+      </div>
+      <div class="angrid">
+        <div class="card ancard ancha"><h2>Tus pautas mes a mes</h2>
+          ${d.unidades ? svgBarras(meses, meses.map(m => (serie[m] || {}).unidades || 0), meses.map(m => (serie[m] || {}).pautas || 0), ['Unidades', 'Pautas'])
+            : vacioGrafico('Cuando tus pacientes hagan su pedido, verás aquí la evolución.')}
+          <p class="leer">Cada barra son las unidades pautadas en el mes y la línea, el número de pautas.${d.ultima_pauta ? ' Última pauta: ' + fechaCorta(d.ultima_pauta) + '.' : ''}</p></div>
+        <div class="card ancard"><h2>Qué pautas</h2>
+          ${(d.productos || []).length ? svgDonut(d.productos.map(x => ({ n: x.nombre, v: x.unidades }))) : vacioGrafico('Aparecerá el reparto por producto.')}</div>
+        <div class="card ancard"><h2>Llamadas de tus pacientes</h2>
+          <div class="minis"><div><b>${num(ll.total || 0)}</b><span>llamadas</span></div><div><b>${conv == null ? '—' : conv + '%'}</b><span>acaban en pedido</span></div></div>
+          ${(ll.por_resultado || []).length ? barrasH(ll.por_resultado.map(x => ({ n: x.resultado, v: x.n })), num) : '<p class="sm" style="padding:0 16px">Todavía no hay llamadas registradas de pacientes que vengan de tu parte.</p>'}
+          <p class="leer">Pacientes que llaman a DLC Health Group de tu parte. Si muchos llaman por dudas o por precio, podemos darte material para explicarlo en consulta.</p></div>
+      </div>
+      <p class="sm" style="text-align:center;margin:18px 0">Por confidencialidad no se muestran datos de tus pacientes ni importes.</p>`;
+  };
+  montarPeriodo($('mdper'), { id: 'informe', valor: 'anio', alCambiar: pinta });
+  pinta();
+}
+
+async function pintarAvisos() {
+  const b = $('mdavisos'); if (!b) return;
+  const { data } = await RPC_ORIG('mis_notificaciones', { lim: 30 });
+  const n = (data && data.sin_leer) || 0;
+  b.innerHTML = `🔔${n ? `<span class="nb2">${n > 9 ? '9+' : n}</span>` : ''}`;
+  b.onclick = async () => {
+    const l = (data && data.lista) || [];
+    $('dbody').innerHTML = `<div class="fh"><div><h2>Avisos</h2><div class="sm">Cada vez que se registra una pauta a tu nombre</div></div><button class="x" data-cerrar aria-label="Cerrar">✕</button></div>
+      <div class="lista">${l.map(x => `<div class="item ${x.leida_en ? '' : 'nuevo'}" style="cursor:default"><span class="ic">💊</span>
+        <span class="tx"><b>${esc(x.titulo)}</b><span class="sm">${esc(x.cuerpo || '')} · ${new Date(x.creado_en).toLocaleString('es-ES', { dateStyle: 'short', timeStyle: 'short' })}</span></span></div>`).join('') || '<div class="vacio">Sin avisos todavía.</div>'}</div>`;
+    $('dlg').showModal();
+    if (n) { await db.rpc('leer_notificaciones'); pintarAvisos(); }
+  };
+}
+
+const mostrarAppV2350 = mostrarApp;
+mostrarApp = function (perfil) {
+  mostrarAppV2350(perfil);
+  document.body.classList.toggle('modo-medico', perfil.rol === 'Medico');
+  if (perfil.rol !== 'Medico') return;
+  document.querySelectorAll('nav.main [data-t]').forEach(b => b.classList.add('hide'));
+  let bi = document.querySelector('nav.main [data-t="informe"]');
+  if (!bi) { document.querySelector('nav.main .in').insertAdjacentHTML('afterbegin', '<button data-t="informe" aria-selected="true">Mi informe</button>'); bi = document.querySelector('nav.main [data-t="informe"]'); bi.onclick = () => ir('informe'); }
+  bi.classList.remove('hide');
+  if (!$('mdavisos')) $('ubtn').insertAdjacentHTML('beforebegin', '<button class="mdavisos" id="mdavisos" aria-label="Avisos"></button>');
+  pintarAvisos();
+  if ($('q')) $('q').closest('.gsearch').classList.add('hide');
+  setTimeout(() => ir('informe'), 0);
+};
+const irV2350 = ir;
+ir = function (t) {
+  if (ES_MEDICO() && !['informe', 'manual', 'config'].includes(t)) t = 'informe';
+  if (t === 'informe') {
+    irV2350('informe');
+    document.querySelectorAll('main > section').forEach(s => s.classList.toggle('hide', s.id !== 'v-informe'));
+    document.querySelectorAll('nav.main [data-t]').forEach(b => b.setAttribute('aria-selected', String(b.dataset.t === 'informe')));
+    cargarInforme();
+    return;
+  }
+  if ($('v-informe')) $('v-informe').classList.add('hide');
+  irV2350(t);
+};
+if (typeof pintarBnav === 'function') pintarBnav = (orig => function () {
+  if (ES_MEDICO()) { const b = $('bnav'); if (b) b.innerHTML = '<button data-t="informe" aria-selected="true"><span>◉</span>Mi informe</button>'; if (b) b.firstChild.onclick = () => ir('informe'); return; }
+  orig();
+})(pintarBnav);
+
+// Vincular un usuario de tipo Médico con su ficha (Administración → Usuarios → Editar)
+editarUsuario = (orig => async function (id) {
+  await orig(id);
+  const u = (USUARIOS || []).find(x => x.id === id);
+  if (!u || u.rol !== 'Medico' || !$('dlg').open || $('umedw')) return;
+  const { data: pf } = await db.from('perfiles').select('medico_id').eq('id', id).single();
+  let medico = null;
+  if (pf && pf.medico_id) { const { data: fm } = await db.rpc('ficha_medico', { p_id: pf.medico_id }); if (fm && fm.medico) medico = { id: fm.medico.id, nombre: fm.medico.nombre }; }
+  const ref = $('dbody').querySelector('.acts:last-of-type');
+  ref.insertAdjacentHTML('beforebegin', `<div class="blk" id="umedw"><h3>Ficha de médico vinculada</h3>
+    <p class="sm">Este usuario verá solo el informe de este médico y recibirá un aviso con cada pauta a su nombre. Sin importes ni datos de pacientes.</p>
+    <div id="umedsel"></div><div class="acts" style="margin-top:8px"><button class="btn sec" id="umedok">Guardar vínculo</button>
+    ${medico ? `<button class="btn sec" id="umedver">Ver su informe</button>` : ''}</div></div>`);
+  selectorMedico($('umedsel'), { valor: medico, placeholder: 'Busca su ficha', alElegir: m => { medico = m; } });
+  $('umedok').onclick = async () => {
+    const { data: r, error } = await db.rpc('vincular_medico', { p_usuario: id, p_medico: medico ? medico.id : null });
+    if (error || (r && r.ok === false)) { toast('No se ha podido guardar', true); return; }
+    toast(medico ? 'Vinculado con ' + medico.nombre : 'Vínculo quitado');
+  };
+  if ($('umedver')) $('umedver').onclick = async () => {
+    const { data: d } = await RPC_ORIG('informe_medico', { p_medico: medico.id });
+    toast(`${medico.nombre}: ${num(d.unidades)} unidades, ${num(d.pautas)} pautas este año${d.posicion ? ' · Nº ' + d.posicion : ''}`);
+  };
+})(editarUsuario);
+
+MANUAL.push({ id: 'medico', t: 'Espacio del médico', a: null, para: 'Los médicos con usuario ven su informe de prescripción y reciben un aviso con cada pauta a su nombre.',
+  hacer: [[3, 'Crear el usuario con el rol «Medico» y vincularlo a su ficha (Administración → Usuarios → Editar)']],
+  config: ['El médico ve unidades, pautas, pacientes (solo el número), su posición entre los prescriptores y las llamadas de sus pacientes. Nunca importes ni nombres.'] });
+ICONOS_MANUAL.medico = '🩺';
+
+/* ---------------- factura en PDF con el logo circular ---------------- */
+
+logoData = (orig => async function () {
+  if (LOGO_DATA) return LOGO_DATA;
+  const x = await imagenData(new URL('logo-circulo.png', location.href).href);
+  if (x && x.startsWith('data:image')) { LOGO_DATA = x; LOGO_CIRC = true; return x; }
+  return orig();
+})(logoData);
 
 
 // Barra inferior del móvil y barra de «Entrar como» desde el primer momento
