@@ -949,6 +949,47 @@ dialog{overscroll-behavior:contain}
 .candado{font-size:13px;opacity:.6}
 .esqadd{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
 .esqadd select{width:auto;min-width:150px;flex:1 1 150px}.esqadd #eadfw{flex:1 1 160px}
+
+/* v2.39.0 */
+.lnkmed{border:0;background:none;padding:0;margin:0 8px 0 0;font:inherit;color:var(--sky);font-weight:600;cursor:pointer;text-decoration:underline;text-decoration-color:rgba(46,134,201,.35);text-underline-offset:2px}
+.notapar{display:block;margin-top:3px;color:var(--navy)!important}
+.cfgpanel.card{padding:18px 20px}
+.cfgpanel [data-cerrar]{display:none!important}
+.cfgpanel > .fh{margin-bottom:10px}
+.cfgmod > .saludo{display:none}
+.manbusca{position:relative}
+.manbusca input{color:var(--ink)!important}
+.manres{position:absolute;left:0;right:0;top:calc(100% + 6px);z-index:30;max-height:320px;overflow:auto;margin:0}
+.mansub{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin:14px 0 6px}
+.miperfil{padding:18px 20px;margin-bottom:14px;background:linear-gradient(120deg,#fff 0%,#F2F9FE 100%)}
+.mpcab{display:flex;gap:14px;align-items:center}
+.mpav{width:58px;height:58px;border-radius:50%;background:var(--grad);color:#fff;display:grid;place-items:center;font-weight:800;font-size:20px;flex:0 0 58px;box-shadow:0 8px 20px rgba(21,82,143,.25)}
+.mpchips{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+.mpgrid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:14px}
+.mpgrid > div > b{display:block;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:6px}
+.mpmods{display:flex;flex-wrap:wrap;gap:6px}.mpmods span{background:#fff;border:1px solid var(--line);border-radius:999px;padding:4px 10px;font-size:12.5px}
+.mplist{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:4px;font-size:13.5px}
+.vfhero{display:flex;gap:16px;align-items:flex-start;padding:20px 22px;border-radius:20px;margin-bottom:14px;color:#fff;
+  background:linear-gradient(115deg,rgba(11,58,102,.95),rgba(21,82,143,.85) 60%,rgba(46,134,201,.6)),url('./gel.jpg') center/cover no-repeat;box-shadow:0 16px 40px rgba(11,58,102,.22)}
+.vfhero h2{color:#fff;padding:0;margin:0 0 6px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}.vfhero p{margin:0;opacity:.92;max-width:640px}
+.vfico{font-size:34px;width:60px;height:60px;border-radius:18px;background:rgba(255,255,255,.16);display:grid;place-items:center;flex:0 0 60px}
+.vfpasos{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px}
+.vfpaso{background:#fff;border:1px solid var(--line);border-radius:16px;padding:14px;display:flex;flex-direction:column;gap:4px;position:relative}
+.vfpaso > span{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;font-weight:800;background:var(--sky-soft);color:var(--navy)}
+.vfpaso.hecho > span{background:#E4F4EC;color:#12805C}.vfpaso.pend > span{background:#FFF4E5}
+.vfpaso b{color:var(--navy);font-size:14px}.vfpaso em{font-style:normal;font-size:12.5px;color:var(--muted)}
+.vfgrid{display:grid;grid-template-columns:1.1fr 1fr;gap:14px}
+.vfcard{padding:18px 20px}.vfcard h3{margin:0 0 10px;color:var(--navy)}
+.vfswitch{display:flex;gap:12px;align-items:flex-start;cursor:pointer;margin-bottom:12px;color:var(--ink)}
+.vfswitch input{position:absolute;opacity:0;pointer-events:none}
+.vfswitch .sw{width:46px;height:26px;border-radius:999px;background:#CBD8E4;position:relative;flex:0 0 46px;transition:background .15s;margin-top:2px}
+.vfswitch .sw::after{content:"";position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.2);transition:left .15s}
+.vfswitch input:checked + .sw{background:linear-gradient(135deg,#0F6E4C,#12805C)}.vfswitch input:checked + .sw::after{left:23px}
+.vfmodos{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:6px}
+.vfmodo{display:flex;flex-direction:column;gap:3px;border:1px solid var(--line);border-radius:14px;padding:10px 12px;cursor:pointer;margin:0;color:var(--ink)}
+.vfmodo input{width:16px;height:16px;min-height:0}.vfmodo b{color:var(--navy)}.vfmodo span{font-size:12.5px;color:var(--muted)}
+.vfmodo:has(input:checked){border-color:var(--sky);background:var(--sky-soft)}
+@media (max-width:760px){.vfpasos{grid-template-columns:1fr 1fr}.vfgrid,.vfmodos,.mpgrid{grid-template-columns:1fr}.vfhero{flex-direction:column}}
 </style>
 </head>
 <body>
@@ -1084,6 +1125,6 @@ dialog{overscroll-behavior:contain}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js" defer></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="./config.js"></script>
-<script src="./app.js?v=2.38.0"></script>
+<script src="./app.js?v=2.39.0"></script>
 </body>
 </html>
