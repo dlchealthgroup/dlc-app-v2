@@ -1037,7 +1037,7 @@ document.addEventListener('click', async e => {
 let CFG_SEC = 'prefs', ADM_SEC = 'usuarios', USUARIOS = [], CATS = [];
 const AREAS = [['H', 'Inicio'], ['G', 'Agenda'], ['R', 'Rutas'], ['M', 'Directorio (médicos)'], ['C', 'Centros'], ['S', 'Visitas'], ['V', 'Ventas y pacientes'], ['K', 'Configuración']];
 const NIVELES = ['Sin acceso', 'Ver', 'Editar', 'Completo'];
-const ROLES = ['Administrador', 'Comercial', 'Televenta', 'Solo consulta', 'Medico'];
+const ROLES = ['Administrador', 'Dirección', 'Comercial', 'Televenta', 'Solo consulta', 'Medico'];
 const puedeCatalogos = () => PERFIL && (PERFIL.rol === 'Administrador' || ((PERFIL.areas || {}).K || 0) >= 2);
 
 /* ---------------- configuración ---------------- */
@@ -1283,6 +1283,7 @@ function editarUsuario(id) {
       'Administrador': { H: 3, G: 3, R: 3, M: 3, C: 3, S: 3, V: 3, K: 3, U: 3 },
       'Comercial': { H: 2, G: 2, R: 2, M: 2, C: 2, S: 2, V: 1, K: 0 },
       'Televenta': { H: 2, G: 1, R: 1, M: 2, C: 2, S: 1, V: 3, K: 0 },
+      'Dirección': { H: 2, G: 2, R: 1, M: 1, C: 1, S: 1, V: 1, K: 1, U: 0 },
       'Solo consulta': { H: 1, G: 1, R: 1, M: 1, C: 1, S: 1, V: 1, K: 0 },
       'Medico': { H: 1, G: 0, R: 0, M: 0, C: 0, S: 0, V: 0, K: 0 }
     }[$('ur').value] || {};
@@ -5536,7 +5537,7 @@ ANCLAS_AYUDA.push(['#agsug > h2', 'agenda']);
    cambios sin guardar y protección de datos
    ============================================================ */
 
-const VE_TODO = () => PERFIL && ['Administrador', 'Televenta'].includes(PERFIL.rol);
+const VE_TODO = () => PERFIL && ['Administrador', 'Dirección', 'Televenta'].includes(PERFIL.rol);
 
 /* ---------------- fechas y horas: todo el campo abre el selector ---------------- */
 
@@ -5916,7 +5917,8 @@ mostrarApp = function (perfil) {
 let COMS = [];
 async function cargarComerciales() {
   const { data } = await db.from('perfiles').select('id,nombre,rol,activo').order('nombre');
-  COMS = (data || []).filter(u => u.activo && u.rol !== 'Medico');
+  // Solo quien lleva cartera o agenda comercial (no Dirección, Solo consulta ni médicos)
+  COMS = (data || []).filter(u => u.activo && !['Medico', 'Dirección', 'Solo consulta'].includes(u.rol));
   $('fcom').innerHTML = '<option value="">Todos</option><option value="ninguno">Sin comercial</option>' +
     COMS.map(u => `<option value="${u.id}" ${F.com === u.id ? 'selected' : ''}>${esc(u.nombre)}</option>`).join('');
 }
@@ -10134,6 +10136,18 @@ function pintarCerca() {
     () => { CERCA.pagina = 0; pintarCerca(); });
   $('cercacerrar').onclick = () => { CERCA = null; buscar(true); };
 }
+
+
+/* ============================================================
+   DLC OS 2.0 · v2.33.0 · Rol «Dirección»
+   ============================================================ */
+
+MANUAL.unshift({ id: 'roles', t: 'Roles del equipo', a: null, para: 'Qué ve y qué puede hacer cada rol. Los permisos de cada persona se pueden ajustar en Administración → Usuarios.',
+  hacer: [[0, 'Administrador: todo, incluida la gestión de usuarios, permisos, configuración, facturación y VeriFactu'],
+    [0, 'Dirección: ve toda la actividad del equipo (agendas, cumplimiento, ventas, facturación, analítica); por defecto consulta sin modificar'],
+    [0, 'Televenta: ve toda la base, crea y valida pedidos, da de alta clientes, emite facturas y registra cobros'],
+    [0, 'Comercial: su cartera, su agenda y rutas, sus visitas y las ventas y clientes de sus médicos'],
+    [0, 'Solo consulta: ve sin modificar lo que le permitan sus permisos']], config: ['Permisos por persona: Administración → Usuarios → Editar'] });
 
 
 // Barra inferior del móvil y barra de «Entrar como» desde el primer momento
