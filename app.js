@@ -2697,6 +2697,7 @@ function editorEsquema(id) {
       pinta();
     };
     $('dbody').querySelectorAll('[data-tx]').forEach(b => b.onclick = () => { leer(); tramos.splice(+b.dataset.tx, 1); pinta(); });
+    personasEsquema(id);
 
     $('eguardaresq').onclick = async ev => {
       leer();
@@ -5007,11 +5008,11 @@ async function editorPedido(pedido) {
   if (ped && ped.estado !== 'Borrador') { toast('Un pedido validado no se puede editar. Anúlalo si hace falta.', true); return; }
   const prod = id => PRODUCTOS.find(p => p.id === id) || {};
   let lineas = pedido && pedido.lineas && pedido.lineas.length
-    ? pedido.lineas.map(l => ({ producto_id: l.producto_id, unidades: l.unidades, importe: l.importe,
+    ? pedido.lineas.map(l => ({ producto_id: l.producto_id, producto: l.producto, unidades: l.unidades, importe: l.importe,
         descuento: l.descuento || 0, iva: l.iva != null ? +l.iva : prod(l.producto_id).iva,
         // Solo es manual si el importe no coincide con precio × unidades
         manual: prod(l.producto_id).precio == null || r2(prod(l.producto_id).precio * l.unidades) !== r2(l.importe) }))
-    : [{ producto_id: (PRODUCTOS[0] || {}).id || '', unidades: 1, descuento: 0 }];
+    : [{ producto_id: productoPorDefecto(), unidades: 1, descuento: 0 }];
   let medico = pedido && pedido.medico ? pedido.medico
     : (pedido && pedido.lineas && pedido.lineas[0] && pedido.lineas[0].medico_id ? { id: pedido.lineas[0].medico_id, nombre: pedido.lineas[0].medico } : null);
   let contacto = pedido && pedido.contacto ? pedido.contacto : null;
@@ -5054,9 +5055,7 @@ async function editorPedido(pedido) {
       <label>Líneas</label>
       <div id="plineas">${lineas.map((l, i) => `<div class="lin" data-li="${i}">
         <div class="lrow">
-          <div><label>Producto</label><select data-f="producto_id">${PRODUCTOS.map(p =>
-            `<option value="${p.id}" ${l.producto_id === p.id ? 'selected' : ''}>${esc(p.nombre)}</option>`).join('')
-            || '<option value="">Sin productos: créalos primero</option>'}</select></div>
+          <div><label>Producto</label><select data-f="producto_id">${opcionesProducto(l.producto_id, l.producto)}</select></div>
           <div><label>Unidades</label><input data-f="unidades" type="number" min="1" value="${l.unidades}"></div>
           <div><label>Importe con IVA</label><input data-f="importeiva" type="number" step="0.01" min="0" value="${l.importe != null ? r2(l.importe * (1 + (+l.iva || 0) / 100)) : ''}"></div>
           <div><label>% dto.</label><input data-f="descuento" type="number" step="1" min="0" max="100" value="${l.descuento || 0}"></div>
@@ -5113,7 +5112,7 @@ async function editorPedido(pedido) {
       }
       desglose();
     };
-    $('plmas').onclick = () => { lineas.push({ producto_id: (PRODUCTOS[0] || {}).id || '', unidades: 1, descuento: 0 }); autoImporte(lineas[lineas.length - 1]); pinta(); };
+    $('plmas').onclick = () => { lineas.push({ producto_id: productoPorDefecto(), unidades: 1, descuento: 0 }); autoImporte(lineas[lineas.length - 1]); pinta(); };
     $('plineas').querySelectorAll('[data-lx]').forEach(b => b.onclick = () => { lineas.splice(+b.dataset.lx, 1); pinta(); });
     $('pcan').onchange = () => $('zonapac').classList.toggle('hide', $('pcan').value === 'centro');
     ['pdto', 'pdtot', 'penv', 'penvi', 'penvv'].forEach(id => $(id).oninput = $(id).onchange = desglose);
@@ -11690,6 +11689,280 @@ new MutationObserver(() => {
     };
   });
 }).observe(document.querySelector('main'), { childList: true, subtree: true });
+
+
+/* ============================================================
+   DLC OS 2.0 · v2.38.0 · Llamada → cliente → pedido en un solo flujo,
+   seguimientos de quien no compra, análisis por comercial, personas
+   del esquema de comisión dentro del propio esquema, producto habitual
+   en los pedidos nuevos y selector de fecha junto a su campo
+   ============================================================ */
+
+Object.assign(RPC_TTL, { llamadas_seguimiento: 20 });
+
+/* ---------------- pedidos: producto habitual y líneas siempre con su producto ---------------- */
+
+function productoPorDefecto() {
+  const lista = PRODUCTOS.filter(p => p.tipo !== 'servicio');
+  const hab = localStorage.getItem('dlc-prod-habitual');
+  return (lista.find(p => p.id === hab) || lista.find(p => /^dolner/i.test(p.nombre || '')) || lista[0] || {}).id || '';
+}
+function opcionesProducto(id, nombre) {
+  const lista = PRODUCTOS.filter(p => p.tipo !== 'servicio' || p.id === id);
+  const falta = id && !lista.some(p => p.id === id);
+  return (falta ? `<option value="${id}" selected>${esc(nombre || 'Producto del pedido')}</option>` : '') +
+    lista.map(p => `<option value="${p.id}" ${p.id === id ? 'selected' : ''}>${esc(p.nombre)}</option>`).join('')
+    || '<option value="">Sin productos: créalos primero</option>';
+}
+// Se recuerda el producto del último pedido guardado para proponerlo en el siguiente
+const RPC_V2370 = db.rpc;
+db.rpc = function (fn, params, opts) {
+  const b = RPC_V2370.call(db, fn, params, opts);
+  if (fn !== 'guardar_pedido') return b;
+  try { const l = ((params || {}).p || {}).lineas || []; if (l[0] && l[0].producto_id) localStorage.setItem('dlc-prod-habitual', l[0].producto_id); } catch (e) {}
+  if (!LLAMADA_PEND) return b;
+  // Pedido creado desde una llamada: queda enlazado con ella
+  return conCatch(Promise.resolve(b).then(async res => {
+    if (!res.error && res.data && res.data.ok && res.data.id && LLAMADA_PEND) {
+      await RPC_ORIG('vincular_llamada_pedido', { p_llamada: LLAMADA_PEND, p_pedido: res.data.id });
+      LLAMADA_PEND = null; toast('Pedido enlazado con la llamada');
+    }
+    return res;
+  }));
+};
+let LLAMADA_PEND = null;
+
+/* ---------------- selector de fecha: siempre junto a su campo ---------------- */
+
+colocarPop = (orig => function (pop, ref) {
+  const d = $('seldlg');
+  d.style.right = 'auto'; d.style.bottom = 'auto';
+  orig(pop, ref);
+})(colocarPop);
+
+/* ---------------- llamadas: cliente, médico, resultado y pedido en un flujo ---------------- */
+
+async function buscarClientes(q) {
+  const t = q.trim().replace(/[,()]/g, ' ');
+  if (t.length < 2) return [];
+  const { data } = await db.from('contactos').select('id,nombre,telefono,movil,email,nif,medico_id')
+    .or(`nombre.ilike.%${t}%,telefono.ilike.%${t}%,movil.ilike.%${t}%,nif.ilike.%${t}%`).limit(8);
+  return data || [];
+}
+
+editorLlamada = async function (l, previa) {
+  await catLlamadas();
+  l = l || { direccion: 'Entrante', fecha: new Date().toISOString() };
+  let cliente = l.contacto_id ? { id: l.contacto_id, nombre: l.cliente || l.nombre } : null, nuevo = !cliente && !l.id;
+  let medico = l.medico_id ? { id: l.medico_id, nombre: l.medico } : null;
+  const f = new Date(l.fecha), local = new Date(f.getTime() - f.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+  const chips = (cat, v, attr) => (CAT[cat] || []).map(x => `<button type="button" class="chipsel ${x.valor === v ? 'on' : ''} ${x.extra === 'neg' ? 'neg' : x.extra === 'pos' ? 'pos' : ''}" ${attr}="${esc(x.valor)}">${esc(x.valor)}</button>`).join('');
+  $('dbody').innerHTML = `
+    <div class="fh"><div><h2>${l.id ? 'Llamada' : previa ? 'Seguimiento de la llamada' : 'Registrar llamada'}</h2>
+      <div class="sm">${previa ? 'Vuelves a llamar a ' + esc(previa.cliente || previa.nombre || '') : 'Aunque no acabe en pedido: así se ve por qué no compran'}</div></div>
+      <button class="x" data-cerrar aria-label="Cerrar">✕</button></div>
+    <div class="llpaso"><span class="lln">1</span><b>Quién llama</b>
+      <div class="segm2"><button type="button" data-lmodo="exist" class="${nuevo ? '' : 'on'}">Cliente existente</button><button type="button" data-lmodo="nuevo" class="${nuevo ? 'on' : ''}">Cliente nuevo</button></div>
+      <div id="llcli"></div></div>
+    <div class="llpaso"><span class="lln">2</span><b>Médico que lo recomienda</b><div id="llmed"></div>
+      <div class="sm" style="margin-top:4px">Si no está en la base, escribe su nombre: se guarda igualmente para las métricas.</div></div>
+    <div class="llpaso"><span class="lln">3</span><b>Motivo</b><div class="chipsw" id="llmot">${chips('MOTIVO_LLAMADA', l.motivo, 'data-lm')}</div></div>
+    <div class="llpaso"><span class="lln">4</span><b>Resultado</b><div class="chipsw" id="llres">${chips('RESULTADO_LLAMADA', l.resultado, 'data-lr')}</div>
+      <div id="llseg" class="${!l.resultado || l.resultado === 'Pedido hecho' ? 'hide' : ''}">
+        <div class="sm" style="margin:8px 0 4px">¿Cuándo volver a llamar?</div>
+        <div class="chipsw">${[['Mañana', 1], ['En 3 días', 3], ['En una semana', 7], ['En un mes', 30]].map(([t, d]) => `<button type="button" class="chipsel" data-ld="${d}">${t}</button>`).join('')}</div>
+        <div class="g2" style="margin-top:6px"><div><input id="llpf" type="date" value="${esc(l.proxima_fecha || '')}"></div>
+          <div><input id="llpa" value="${esc(l.proxima_accion || '')}" placeholder="p. ej. Enviarle el precio por WhatsApp"></div></div></div></div>
+    <details class="llmas"><summary>Más detalles</summary>
+      <div class="g2"><div><label for="llf">Fecha y hora</label><input id="llf" type="datetime-local" value="${local}"></div>
+        <div><label for="lld">Tipo</label><select id="lld"><option ${l.direccion === 'Entrante' ? 'selected' : ''}>Entrante</option><option ${l.direccion === 'Saliente' || previa ? 'selected' : ''}>Saliente</option></select></div></div>
+      <label for="llno">Nota</label><textarea id="llno" rows="2">${esc(l.nota || '')}</textarea></details>
+    <div class="acts" style="justify-content:flex-end;flex-wrap:wrap"><button class="btn sec" data-cerrar>Cancelar</button>
+      <button class="btn sec" id="llok">Guardar</button>${l.pedido_id ? '' : '<button class="btn" id="llped">🛒 Guardar y crear pedido</button>'}</div>`;
+  $('dlg').showModal();
+  let motivo = l.motivo || '', resultado = l.resultado || '';
+  const pintaCli = () => {
+    const c = $('llcli');
+    if (nuevo) {
+      c.innerHTML = `<div class="g2"><div><input id="lcn" placeholder="Nombre y apellidos" value="${esc(l.nombre || '')}"></div>
+        <div><input id="lct" placeholder="Teléfono" inputmode="tel" value="${esc(l.telefono || '')}"></div></div>
+        <div class="g2"><div><input id="lce" type="email" placeholder="Email (para la factura)"></div><div><input id="lcd" placeholder="DNI (opcional)"></div></div>
+        <div class="sm">Si hace el pedido, se da de alta como cliente con su médico.</div>`;
+    } else if (cliente) {
+      c.innerHTML = `<div class="clisel"><span><b>${esc(cliente.nombre)}</b><span class="sm">${esc(cliente.tel || cliente.telefono || '')}</span></span><button type="button" class="btn sec" id="lccambia">Cambiar</button></div>`;
+      $('lccambia').onclick = () => { cliente = null; pintaCli(); };
+    } else {
+      c.innerHTML = `<input id="lcq" type="search" placeholder="Nombre, teléfono o DNI" autocomplete="off"><div class="lista" id="lcres"></div>`;
+      let tq;
+      $('lcq').oninput = () => { clearTimeout(tq); tq = setTimeout(async () => {
+        const r = await buscarClientes($('lcq').value);
+        $('lcres').innerHTML = r.map(x => `<button type="button" class="item" data-lcid="${x.id}"><span class="tx"><b>${esc(x.nombre)}</b><span class="sm">${esc([x.movil || x.telefono, x.nif].filter(Boolean).join(' · '))}</span></span></button>`).join('')
+          || ($('lcq').value.trim().length > 1 ? '<div class="sm" style="padding:6px">No existe: usa «Cliente nuevo».</div>' : '');
+        $('lcres').querySelectorAll('[data-lcid]').forEach(b => b.onclick = async () => {
+          const x = r.find(y => y.id === b.dataset.lcid); cliente = { id: x.id, nombre: x.nombre, tel: x.movil || x.telefono };
+          if (x.medico_id && !medico) { const { data: m } = await db.from('medicos').select('id,nombre').eq('id', x.medico_id).single(); if (m) { medico = m; pintaMed(); } }
+          pintaCli();
+        });
+      }, 250); };
+    }
+  };
+  const pintaMed = () => { $('llmed').innerHTML = ''; $('llmed').__texto = medico ? '' : (l.medico_texto || ''); selectorMedico($('llmed'), { valor: medico, placeholder: 'Nombre, código, centro o municipio', alElegir: m => { medico = m; } }); };
+  pintaCli(); pintaMed();
+  $('dbody').querySelectorAll('[data-lmodo]').forEach(b => b.onclick = () => { nuevo = b.dataset.lmodo === 'nuevo'; if (!nuevo) cliente = null;
+    $('dbody').querySelectorAll('[data-lmodo]').forEach(x => x.classList.toggle('on', x === b)); pintaCli(); });
+  $('llmot').onclick = e => { const b = e.target.closest('[data-lm]'); if (!b) return; motivo = motivo === b.dataset.lm ? '' : b.dataset.lm;
+    $('llmot').querySelectorAll('[data-lm]').forEach(x => x.classList.toggle('on', x.dataset.lm === motivo)); };
+  const pasoRes = $('llres').closest('.llpaso');
+  pasoRes.onclick = e => {
+    const d = e.target.closest('[data-ld]');
+    if (d) { const f2 = new Date(); f2.setDate(f2.getDate() + +d.dataset.ld); $('llpf').value = fechaLocal(f2); pasoRes.querySelectorAll('[data-ld]').forEach(x => x.classList.toggle('on', x === d)); return; }
+    const b = e.target.closest('[data-lr]'); if (!b) return; resultado = resultado === b.dataset.lr ? '' : b.dataset.lr;
+    $('llres').querySelectorAll('[data-lr]').forEach(x => x.classList.toggle('on', x.dataset.lr === resultado));
+    $('llseg').classList.toggle('hide', !resultado || resultado === 'Pedido hecho');
+  };
+  const guardar = async conPedido => {
+    const datosNuevo = nuevo && $('lcn') ? { nombre: $('lcn').value.trim(), telefono: $('lct').value.trim(), email: $('lce').value.trim(), nif: $('lcd').value.trim() } : null;
+    if (conPedido && !cliente && !(datosNuevo && datosNuevo.nombre)) { toast('Indica el cliente: búscalo o escribe su nombre', true); return null; }
+    const { data: r, error } = await db.rpc('guardar_llamada', { p: { id: l.id || null, fecha: $('llf').value ? new Date($('llf').value).toISOString() : null,
+      direccion: $('lld').value, nombre: datosNuevo ? datosNuevo.nombre : (cliente ? cliente.nombre : l.nombre || ''), telefono: datosNuevo ? datosNuevo.telefono : (cliente ? cliente.tel || '' : l.telefono || ''),
+      contacto_id: cliente ? cliente.id : null, cliente_nuevo: conPedido ? datosNuevo : null, medico_id: medico ? medico.id : null,
+      medico_texto: medico ? '' : ($('llmed').__texto || '').trim(), motivo, resultado: conPedido ? (resultado || 'Pedido hecho') : resultado,
+      proxima_accion: $('llpa') ? $('llpa').value.trim() : '', proxima_fecha: resultado && resultado !== 'Pedido hecho' && !conPedido ? ($('llpf').value || '') : '',
+      nota: $('llno').value.trim(), pedido_id: l.pedido_id || null, llamada_origen: previa ? previa.id : null } });
+    if (error || (r && r.ok === false)) { toast('No se ha podido guardar' + (error ? ': ' + error.message : ''), true); return null; }
+    return r;
+  };
+  $('llok').onclick = async () => { const r = await guardar(false); if (!r) return; $('dlg').close(); toast('Llamada registrada'); if (TAB === 'ventas' && PEDSEC === 'llamadas') pintarLlamadas(); };
+  if ($('llped')) $('llped').onclick = async () => {
+    const r = await guardar(true); if (!r) return;
+    LLAMADA_PEND = r.id;
+    let cli = null;
+    if (r.contacto_id) { const { data: c } = await db.from('contactos').select('id,nombre,nif,email,telefono,movil,medico_id').eq('id', r.contacto_id).single(); cli = c; }
+    $('dlg').close();
+    await editorPedido({ contacto: cli ? Object.assign(cli, { medico: medico ? medico.nombre : '' }) : null, medico: medico ? { id: medico.id, nombre: medico.nombre } : null });
+  };
+};
+
+// Pestaña Llamadas: seguimientos pendientes arriba y análisis ampliado
+pintarLlamadas = (orig => async function () {
+  await orig();
+  const { data: seg } = await RPC_ORIG('llamadas_seguimiento', {});
+  const l = seg || [], hoy = hoyISO();
+  if (!$('lltot')) return;
+  if (l.length && !$('llsegs')) {
+    $('lltot').insertAdjacentHTML('beforebegin', `<div class="card" id="llsegs"><h2>Llamadas por hacer<span class="n">${l.length}</span></h2>
+      <p class="sm" style="padding:0 16px">Clientes que no compraron y a los que quedaste en volver a llamar.</p>
+      <div class="lista">${l.slice(0, 20).map(x => `<div class="item" style="cursor:default">
+        <span class="ic" style="${x.proxima_fecha < hoy ? 'background:#FDECEC;color:var(--dang)' : x.proxima_fecha === hoy ? 'background:#FFF4E5;color:var(--warn)' : ''}">📞</span>
+        <span class="tx"><b>${esc(x.cliente || x.nombre || 'Sin nombre')}</b>
+          <span class="sm">${x.proxima_fecha < hoy ? '<b style="color:var(--dang)">Atrasada · </b>' : x.proxima_fecha === hoy ? '<b style="color:var(--warn)">Hoy · </b>' : fechaCorta(x.proxima_fecha) + ' · '}${esc(x.resultado || '')}${x.proxima_accion ? ' · ' + esc(x.proxima_accion) : ''}${x.medico ? ' · de ' + esc(x.medico) : ''}</span></span>
+        <span class="acts" style="margin:0;flex-wrap:nowrap">${(x.tel_cliente || x.telefono) ? `<a class="btn sec" href="tel:${esc(x.tel_cliente || x.telefono)}">Llamar</a>` : ''}
+          <button class="btn" data-llseg="${x.id}">Registrar</button><button class="btn sec" data-llok="${x.id}" title="Ya no hace falta">✓</button></span></div>`).join('')}</div></div>`);
+    $('llsegs').querySelectorAll('[data-llseg]').forEach(b => b.onclick = () => { const x = l.find(y => y.id === b.dataset.llseg);
+      editorLlamada({ direccion: 'Saliente', fecha: new Date().toISOString(), contacto_id: x.contacto_id, cliente: x.cliente, nombre: x.nombre, telefono: x.telefono, medico_id: x.medico_id, medico: x.medico, motivo: 'Seguimiento de televenta' }, x); });
+    $('llsegs').querySelectorAll('[data-llok]').forEach(b => b.onclick = async () => { await db.rpc('marcar_seguimiento', { p_id: b.dataset.llok, p_hecho: true }); toast('Seguimiento cerrado'); pintarLlamadas(); });
+  }
+  // Se espera a que la pestaña termine de pintar su análisis para añadir el resto
+  for (let i = 0; i < 40 && $('llres2') && $('llres2').children.length < 2; i++) await new Promise(r => setTimeout(r, 100));
+  const r = $('llper').__rango();
+  const { data: s } = await RPC_ORIG('llamadas_resumen', { p_desde: r.desde, p_hasta: r.hasta });
+  if (!s || !$('llres2') || $('llcom')) return;
+  $('llres2').insertAdjacentHTML('beforeend', `
+    <div class="card ancard" id="llcom"><h2>Por comercial del médico</h2>${(s.por_comercial || []).length ? `<div class="barrash">${s.por_comercial.map(x => `<div class="bh"><span class="bhn">${esc(x.comercial)}</span>
+        <span class="bhb"><i style="width:${Math.max(3, x.n / s.por_comercial[0].n * 100)}%"></i></span><b>${num(x.pedidos)}/${num(x.n)}</b></div>`).join('')}</div>` : vacioGrafico('Aparecerá cuando haya llamadas con médico.')}
+      <p class="leer"><b>Cómo leerlo:</b> pedidos sobre llamadas de pacientes que vienen de médicos de cada comercial. Mide el volumen que genera el trabajo de cada zona.</p></div>
+    <div class="card ancard"><h2>Por qué no compran</h2>${(s.no_compra || []).length ? barrasH(s.no_compra.map(x => ({ n: x.resultado, v: x.n })), num) : vacioGrafico('Sin llamadas sin compra en el periodo.')}
+      <p class="leer"><b>Qué hacer:</b> «Precio» pide revisar condiciones o argumentario; «Se lo piensa» y «Pagará más tarde» deben tener seguimiento programado (${num(s.seguimientos || 0)} pendientes).</p></div>`);
+})(pintarLlamadas);
+
+// Accesos a «Registrar llamada» desde Pedidos (ventas) y desde la ficha del cliente
+cargarVentas = (orig => async function () {
+  await orig();
+  if (!VE_TODO() || PEDSEC !== 'ventas') return;
+  const acts = $('v-ventas').querySelector('.saludo .acts');
+  if (acts && !$('pedllam')) {
+    acts.insertAdjacentHTML('afterbegin', '<button class="btn sec" id="pedllam">📞 Registrar llamada</button>');
+    $('pedllam').onclick = () => editorLlamada(null);
+  }
+})(cargarVentas);
+
+// Inicio: llamadas de seguimiento para hoy (televenta y administración)
+pintarInicio = (orig => async function () {
+  await orig();
+  if (TAB !== 'inicio' || !VE_TODO() || !$('iniextra') || $('inillam')) return;
+  const { data } = await RPC_ORIG('llamadas_seguimiento', {});
+  const hoy = hoyISO(), pend = (data || []).filter(x => x.proxima_fecha <= hoy);
+  if (!pend.length || $('inillam')) return;
+  $('iniextra').insertAdjacentHTML('afterbegin', `<div class="card" id="inillam"><h2>Llamadas para hoy<span class="n">${pend.length}</span></h2>
+    <p class="sm" style="padding:0 16px">Clientes a los que quedaste en volver a llamar${pend.some(x => x.proxima_fecha < hoy) ? ', algunas atrasadas' : ''}.</p>
+    <div class="acts" style="padding:0 16px 14px"><button class="btn sec" id="inillamver">Ver llamadas</button></div></div>`);
+  $('inillamver').onclick = () => { PEDSEC = 'llamadas'; ir('ventas'); };
+})(pintarInicio);
+
+/* ---------------- comisiones: quién cobra, dentro del propio esquema ---------------- */
+
+pintarComisiones = (orig => async function () {
+  await orig();
+  const a = $('asigesq'); if (a) a.remove();      // ya no va fuera: se gestiona dentro de cada esquema
+})(pintarComisiones);
+
+async function personasEsquema(id) {
+  const ref = $('eguardaresq') && $('eguardaresq').closest('.acts');
+  if (!ref || $('esqpers')) return;
+  if (!id) { ref.insertAdjacentHTML('beforebegin', '<div class="blk" id="esqpers"><h3>Quién cobra con este esquema</h3><p class="sm">Guarda el esquema y después podrás asignarlo a las personas.</p></div>'); return; }
+  ref.insertAdjacentHTML('beforebegin', '<div class="blk" id="esqpers"><h3>Quién cobra con este esquema</h3><div id="esqlista" class="sm">Cargando…</div></div>');
+  if (!COMS.length) await cargarComerciales();
+  const pinta = async () => {
+    const { data } = await db.rpc('asignaciones_esquema_lista');
+    const l = (data || []).filter(x => x.esquema_id === id), hoy = hoyISO(), admin = PERFIL.rol === 'Administrador';
+    if (!$('esqlista')) return;
+    $('esqlista').innerHTML = `${l.length ? `<div class="esqfilas">${l.map(x => {
+      const est = x.vigente ? ['Vigente', 'p-est'] : x.desde > hoy ? ['Programado', 'p-per'] : ['Terminado', 'p-anu'];
+      return `<div class="esqfila"><span class="candado" title="Guardado: no se puede modificar">🔒</span>
+        <span class="ef1"><b>${esc(x.persona)}</b><span class="sm">${x.desde <= '2000-01-01' ? 'Todo el histórico' : 'Desde ' + fechaCorta(x.desde)}${x.hasta ? ' hasta ' + fechaCorta(x.hasta) : ''}</span></span>
+        <span class="pill ${est[1]}">${est[0]}</span>
+        ${admin && x.vigente ? `<button type="button" class="kcfg" data-efin="${x.usuario_id}">Terminar hoy</button>` : ''}
+        ${admin && x.desde > hoy ? `<button type="button" class="kcfg" data-equi="${x.usuario_id}" data-edesde="${x.desde}">Anular</button>` : ''}</div>`;
+    }).join('')}</div>` : '<p class="sm">Nadie cobra todavía con este esquema.</p>'}
+    ${admin ? `<div class="esqadd"><select id="eap"><option value="">Añadir persona…</option>${COMS.filter(u => ['Comercial', 'Televenta'].includes(u.rol)).map(u => `<option value="${u.id}">${esc(u.nombre)}</option>`).join('')}</select>
+      <select id="eadm"><option value="hoy">desde hoy</option><option value="todo">todo su histórico</option><option value="fecha">desde una fecha…</option></select>
+      <span id="eadfw" class="hide"><input id="eadf" type="date" value="${hoy}"></span>
+      <button type="button" class="btn sec" id="eaok">Asignar</button></div>
+      <p class="sm" style="margin-top:6px">Una vez guardada, la asignación queda bloqueada 🔒. Para cambiarla, asigna otro esquema: el anterior termina el día antes.</p>` : ''}`;
+    if (!admin) return;
+    $('eadm').onchange = () => $('eadfw').classList.toggle('hide', $('eadm').value !== 'fecha');
+    $('eaok').onclick = async () => {
+      if (!$('eap').value) { toast('Elige la persona', true); return; }
+      const m = $('eadm').value, desde = m === 'todo' ? '2000-01-01' : m === 'fecha' ? $('eadf').value : hoy;
+      const quien = COMS.find(u => u.id === $('eap').value).nombre;
+      if (!await preguntar(`${quien} cobrará con este esquema ${m === 'todo' ? 'en todo su histórico' : 'desde el ' + fechaCorta(desde)}. Si tenía otro, termina el día antes. Una vez guardado no se puede modificar.`, { titulo: '¿Asignar el esquema?', ok: 'Asignar' })) return;
+      const { data: r, error } = await db.rpc('asignar_esquema', { p_usuario: $('eap').value, p_esquema: id, p_quitar: false, p_desde: desde });
+      if (error || (r && r.ok === false)) { toast('No se ha podido asignar', true); return; }
+      toast('Asignado a ' + quien); ESQUEMAS = []; pinta();
+    };
+    $('esqlista').querySelectorAll('[data-efin]').forEach(b => b.onclick = async () => {
+      if (!await preguntar('Dejará de cobrar con este esquema a partir de mañana.', { titulo: '¿Terminar hoy?', ok: 'Terminar', peligro: true })) return;
+      const d = new Date(); d.setDate(d.getDate() + 1);
+      await db.rpc('asignar_esquema', { p_usuario: b.dataset.efin, p_esquema: null, p_quitar: true, p_desde: fechaLocal(d) }); pinta();
+    });
+    $('esqlista').querySelectorAll('[data-equi]').forEach(b => b.onclick = async () => {
+      if (!await preguntar('Se anula la asignación programada.', { titulo: '¿Anular?', ok: 'Anular', peligro: true })) return;
+      await db.rpc('asignar_esquema', { p_usuario: b.dataset.equi, p_esquema: null, p_quitar: true, p_desde: b.dataset.edesde }); pinta();
+    });
+  };
+  pinta();
+}
+
+// En la ficha de la persona solo se informa: el esquema se gestiona en Comisiones
+editarUsuario = (orig => async function (id) {
+  await orig(id);
+  for (let i = 0; i < 30 && !$('ucom') && $('dlg').open; i++) await new Promise(r => setTimeout(r, 100));
+  const s = $('ucom'); if (!s || $('ucominfo')) return;
+  const g = s.closest('.g2') || s.parentElement;
+  const txt = s.selectedOptions[0] && s.value ? s.selectedOptions[0].textContent : 'Sin comisión';
+  g.classList.add('hide'); if ($('ucdesde')) $('ucdesde').classList.add('hide'); if ($('uchist')) $('uchist').classList.add('hide');
+  g.insertAdjacentHTML('afterend', `<div class="avisoh" id="ucominfo"><span>Comisión: <b>${esc(txt)}</b>. Se asigna dentro de cada esquema en Administración → Comisiones.</span></div>`);
+})(editarUsuario);
 
 
 // Barra inferior del móvil y barra de «Entrar como» desde el primer momento

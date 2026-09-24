@@ -791,8 +791,8 @@ body.modo-medico .gsearch{visibility:hidden}
 .alertlist .item{border-radius:10px}
 
 /* v2.36.1 · tamaños estables en el móvil y solo en vertical */
-html{-webkit-text-size-adjust:100%;text-size-adjust:100%;overflow-x:hidden}
-body{overflow-x:hidden;width:100%;min-height:100dvh;overscroll-behavior-y:none}
+html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
+body{overflow-x:clip;width:100%;min-height:100dvh}
 @media (max-width:760px){
   /* Con menos de 16 px el iPhone amplía la pantalla al escribir y no la devuelve a su tamaño */
   input,select,textarea,.selval{font-size:16px!important}
@@ -816,7 +816,6 @@ body{overflow-x:hidden;width:100%;min-height:100dvh;overscroll-behavior-y:none}
 .seldlg.hoja{left:0;right:0;top:auto;bottom:0;width:100%;margin:0}
 .seldlg.hoja .selpop{width:100%;border-radius:20px 20px 0 0;padding:16px 16px calc(16px + env(safe-area-inset-bottom,0px));box-shadow:0 -12px 40px rgba(11,58,102,.2)}
 .seldlg.hoja .calg button{height:42px}.seldlg.hoja .rjg button{height:40px}
-html:has(dialog[open]){overflow:hidden}
 dialog{overscroll-behavior:contain}
 .vistazo{display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:10px;font-size:14px;color:var(--ink)}
 .vistazo .prox{color:var(--muted)}
@@ -865,6 +864,8 @@ dialog{overscroll-behavior:contain}
 .bmasgrid button span{font-size:20px;line-height:1;color:var(--navy)}
 .bmasgrid button.on{background:var(--sky-soft);color:var(--navy)}
 @media (max-width:760px){
+  html:has(dialog[open]){overflow:hidden}
+  body{overscroll-behavior-y:none}
   /* Rendimiento: sin desenfoques en el móvil (hacían lento el desplazamiento) */
   .card,.kpi,.panel,header,.bnav,.lbox,dialog::backdrop{backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
   .card,.kpi,.panel{background:#fff}
@@ -923,6 +924,31 @@ dialog{overscroll-behavior:contain}
   #v-duplicados .card{padding:12px}
   #v-duplicados .dpar,#v-duplicados .dupgrid{grid-template-columns:1fr!important}
 }
+
+/* v2.38.0 */
+.seldlg:not(.hoja){inset:auto;width:auto;height:auto}
+.llpaso{position:relative;padding:12px 0 12px 34px;border-bottom:1px solid var(--line)}
+.llpaso > b{display:block;color:var(--navy);margin-bottom:8px}
+.lln{position:absolute;left:0;top:12px;width:24px;height:24px;border-radius:50%;background:var(--grad);color:#fff;font-size:12px;font-weight:700;display:grid;place-items:center}
+.segm2{display:inline-grid;grid-auto-flow:column;gap:4px;padding:3px;border:1px solid var(--line);border-radius:12px;margin-bottom:8px;background:#fff}
+.segm2 button{border:0;background:none;border-radius:9px;padding:7px 12px;font:inherit;font-size:13px;font-weight:650;color:var(--muted);cursor:pointer}
+.segm2 button.on{background:var(--sky-soft);color:var(--navy)}
+.chipsw{display:flex;flex-wrap:wrap;gap:6px}
+.chipsel{border:1px solid #D3E3F0;background:#fff;border-radius:999px;padding:7px 12px;font:inherit;font-size:13px;color:var(--ink);cursor:pointer}
+.chipsel:hover{border-color:var(--celeste)}
+.chipsel.on{background:var(--grad);border-color:transparent;color:#fff}
+.chipsel.neg.on{background:linear-gradient(135deg,#B45309,#D97706)}
+.chipsel.pos.on{background:linear-gradient(135deg,#0F6E4C,#12805C)}
+.clisel{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:var(--sky-soft)}
+.clisel .sm{display:block}
+#lcres{margin-top:6px}
+.llmas{margin:12px 0 4px}.llmas summary{cursor:pointer;color:var(--sky);font-weight:650;font-size:13.5px}
+.esqfilas{display:flex;flex-direction:column;gap:6px;margin-bottom:10px}
+.esqfila{display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--line);border-radius:12px;background:#fff}
+.esqfila .ef1{flex:1;min-width:0}.esqfila .ef1 .sm{display:block}
+.candado{font-size:13px;opacity:.6}
+.esqadd{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.esqadd select{width:auto;min-width:150px;flex:1 1 150px}.esqadd #eadfw{flex:1 1 160px}
 </style>
 </head>
 <body>
@@ -1058,6 +1084,6 @@ dialog{overscroll-behavior:contain}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js" defer></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="./config.js"></script>
-<script src="./app.js?v=2.37.0"></script>
+<script src="./app.js?v=2.38.0"></script>
 </body>
 </html>
