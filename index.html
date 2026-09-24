@@ -488,6 +488,25 @@ body.conruta{padding-top:46px}
   .tools .tbox{padding:14px 16px 24px}
   .cercaest{display:none!important}
 }
+/* v2.34.0 */
+.zonas{display:flex;flex-direction:column;gap:4px;max-height:300px;overflow:auto;border:1px solid var(--line);border-radius:10px;padding:6px 10px}
+.zonas summary{display:flex;justify-content:space-between;align-items:center;gap:8px;cursor:pointer;padding:5px 0}
+.zonas summary label{display:flex;align-items:center;gap:6px;margin:0;font-weight:650;color:var(--ink)}
+.zprov{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:4px 10px;padding:2px 0 8px 22px}
+.zprov label{display:flex;align-items:center;gap:6px;margin:0;font-size:13px;color:var(--ink)}
+.zonas input{width:16px;height:16px;min-height:0}
+.opchk{display:flex;align-items:center;gap:10px;margin:0;padding:8px 10px;border-radius:10px;border:1px solid var(--line);margin-top:6px;cursor:pointer;color:var(--ink)}
+.opchk input{width:18px;height:18px;min-height:0}
+.opchk.on{background:#E4F4EC;border-color:#bfe3cf}
+.opgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;padding:0 16px 14px}
+.opcol{border:1px solid var(--line);border-radius:12px;padding:8px 10px}
+.opcol summary{cursor:pointer;font-size:13.5px}
+.opcol summary b{font-size:18px;color:var(--navy);margin-right:4px}
+.dgrid.llam{--cols:110px minmax(140px,1.2fr) minmax(140px,1.2fr) 130px 150px minmax(130px,1fr) 100px;min-width:980px}
+#agmeses{width:auto;min-height:44px;padding:6px 10px;border-radius:10px}
+#agcuerpo.varios .mesbloque{border-bottom:1px solid var(--line);padding-bottom:10px}
+.barra{height:10px;background:var(--bg);border-radius:6px;overflow:hidden;position:relative}
+.barra i{display:block;height:100%;background:linear-gradient(90deg,var(--navy),var(--sky))}
 #franjapruebas{position:relative;z-index:95;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;
   background:repeating-linear-gradient(135deg,#B45309 0 14px,#C2610F 14px 28px);color:#fff;padding:8px 16px;font-size:13px}
 #franjapruebas .btn{min-height:32px;padding:4px 12px;font-size:12.5px}
@@ -652,7 +671,7 @@ input[type=date],input[type=time],input[type=month],input[type=datetime-local]{c
       <button data-t="directorio" aria-selected="false">Directorio</button>
       <button data-t="pacientes" aria-selected="false">Clientes</button>
       <button data-t="productos" aria-selected="false">Productos</button>
-      <button data-t="seguimiento" aria-selected="false">Seguimiento</button>
+      <button data-t="seguimiento" aria-selected="false">Calidad del dato</button>
       <button data-t="ventas" aria-selected="false">Pedidos</button>
       <button data-t="analitica" aria-selected="false">Analítica</button>
       <button data-t="facturacion" aria-selected="false" class="hide">Facturación</button>
@@ -742,6 +761,6 @@ input[type=date],input[type=time],input[type=month],input[type=datetime-local]{c
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js" defer></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="./config.js"></script>
-<script src="./app.js?v=2.33.0"></script>
+<script src="./app.js?v=2.34.0"></script>
 </body>
 </html>

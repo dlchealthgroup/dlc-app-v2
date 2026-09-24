@@ -155,7 +155,7 @@ async function cargarInicio() {
     if (x.filtro) return `<div class="kpi click" data-kf="${esc(JSON.stringify(x.filtro))}"><b class="cont">…</b>
       <span>${esc(x.t || textoFiltro(x.filtro))}</span></div>`;
     const c = KPI_CAT.find(y => y.id === x.id);
-    if (!c || (c.admin && PERFIL.rol !== 'Administrador')) return '';
+    if (!kpiPermitido(c)) return '';
     return kpi(c.v(k), x.t || c.t, c.cls ? c.cls(k) : '', c.h);
   }).join('') + `<div class="kpi" style="display:grid;place-items:center;border-style:dashed">
       <button class="kcfg" data-k="cfgkpis">⚙ Personalizar indicadores</button></div>`;
@@ -1280,12 +1280,12 @@ function editarUsuario(id) {
 
   $('ur').onchange = () => {
     const preset = {
-      'Administrador': { H: 3, G: 3, R: 3, M: 3, C: 3, S: 3, V: 3, K: 3, U: 3 },
-      'Comercial': { H: 2, G: 2, R: 2, M: 2, C: 2, S: 2, V: 1, K: 0 },
-      'Televenta': { H: 2, G: 1, R: 1, M: 2, C: 2, S: 1, V: 3, K: 0 },
-      'Dirección': { H: 2, G: 2, R: 1, M: 1, C: 1, S: 1, V: 1, K: 1, U: 0 },
-      'Solo consulta': { H: 1, G: 1, R: 1, M: 1, C: 1, S: 1, V: 1, K: 0 },
-      'Medico': { H: 1, G: 0, R: 0, M: 0, C: 0, S: 0, V: 0, K: 0 }
+      'Administrador': { H: 3, G: 3, R: 3, M: 3, C: 3, S: 3, V: 3, L: 3, P: 3, F: 3, A: 3, E: 1, Q: 3, K: 3, U: 3 },
+      'Comercial': { H: 2, G: 2, R: 2, M: 2, C: 2, S: 2, V: 0, L: 0, P: 0, F: 0, A: 0, E: 0, Q: 0, K: 0, U: 0 },
+      'Televenta': { H: 2, G: 1, R: 1, M: 2, C: 2, S: 1, V: 3, L: 3, P: 1, F: 2, A: 1, E: 1, Q: 1, K: 0, U: 0 },
+      'Dirección': { H: 2, G: 2, R: 1, M: 1, C: 1, S: 1, V: 1, L: 1, P: 1, F: 1, A: 1, E: 1, Q: 1, K: 1, U: 0 },
+      'Solo consulta': { H: 1, G: 1, R: 1, M: 1, C: 1, S: 1, V: 1, L: 1, P: 1, F: 0, A: 1, E: 0, Q: 1, K: 0, U: 0 },
+      'Medico': { H: 1, G: 0, R: 0, M: 0, C: 0, S: 0, V: 0, L: 0, P: 0, F: 0, A: 0, E: 0, Q: 0, K: 0, U: 0 }
     }[$('ur').value] || {};
     AREAS.forEach(([k]) => { const s = $('dbody').querySelector(`[data-area="${k}"]`); if (s) s.value = String(preset[k] || 0); });
   };
@@ -1303,7 +1303,12 @@ function editarUsuario(id) {
     ev.target.disabled = false; ev.target.textContent = 'Guardar';
     if (error || (r && r.ok === false)) { toast('No se ha podido guardar', true); return; }
     if ($('ucom')) {
-      await db.rpc('asignar_esquema', { p_usuario: id, p_esquema: $('ucom').value || null, p_quitar: !$('ucom').value });
+      // Solo se toca el esquema si cambia o si se elige otra fecha de efecto
+      const modo = $('ucdm') ? $('ucdm').value : 'hoy';
+      if ($('ucom').value !== ($('ucom').dataset.orig || '') || modo !== 'hoy') {
+        const desde = modo === 'todo' ? '2000-01-01' : modo === 'fecha' ? ($('ucdf').value || hoyISO()) : hoyISO();
+        await db.rpc('asignar_esquema', { p_usuario: id, p_esquema: $('ucom').value || null, p_quitar: !$('ucom').value, p_desde: desde });
+      }
       await db.from('perfiles').update({ comision_ver: $('uverc').value }).eq('id', id);
     }
     $('dlg').close(); toast('Usuario guardado'); cargarAdmin();
@@ -4261,7 +4266,7 @@ async function pintarInicio() {
         <button class="ai" data-ayuda-txt="${esc(AYUDA_KPI.filtro + ' Filtro: ' + textoFiltro(x.filtro) + '.')}" data-ayuda-tit="${esc(x.t || 'Filtro guardado')}" aria-label="Qué es">i</button>
         <b class="cont">${cuentas[i] == null ? '—' : num(cuentas[i])}</b><span>${esc(x.t || textoFiltro(x.filtro))}</span></div>`;
     const c = KPI_CAT.find(y => y.id === x.id);
-    if (!c || (c.admin && !esAdmin)) return '';
+    if (!kpiPermitido(c)) return '';
     return kpi(c.v(k), x.t || c.t, c.cls ? c.cls(k) : '', c.h, AYUDA_KPI[c.id]);
   }).join('') + `<div class="kpi" style="display:grid;place-items:center;border-style:dashed">
       <button class="kcfg" data-k="cfgkpis">⚙ Personalizar indicadores</button></div>`;
@@ -4854,7 +4859,7 @@ async function pintarInicio() {
         <button class="ai" data-ayuda-txt="${esc(AYUDA_KPI.filtro + ' Filtro: ' + textoFiltro(x.filtro) + '.')}" data-ayuda-tit="${esc(x.t || 'Filtro guardado')}" aria-label="Qué es">i</button>
         <b class="cont"><span class="spin" style="width:18px;height:18px;border-width:2px;display:inline-block"></span></b><span>${esc(x.t || textoFiltro(x.filtro))}</span></div>`;
     const c = KPI_CAT.find(y => y.id === x.id);
-    if (!c || (c.admin && !esAdmin)) return '';
+    if (!kpiPermitido(c)) return '';
     return kpi(c.v(k), x.t || c.t, c.cls ? c.cls(k) : '', c.h, AYUDA_KPI[c.id]);
   }).join('');
   if (res.cache) avisoCache($('kpis'), res.fecha);
@@ -6763,7 +6768,7 @@ function abrirKpis() {
       <div class="kcards">${D.map((x, i) => {
         const k = KPI_CAT.find(y => y.id === x.id);
         if (!k && !x.filtro) return '';
-        if (k && k.admin && !esAdmin) return '';
+        if (k && !kpiPermitido(k)) return '';
         const desc = x.filtro ? 'Filtro guardado del Directorio: ' + textoFiltro(x.filtro) + '.' : (AYUDA_KPI[x.id] || '');
         return `<div class="kcard ${x.on ? 'on' : ''}">
           <button type="button" class="kojo" data-kon="${i}" aria-pressed="${x.on}" title="${x.on ? 'Visible: pulsa para ocultar' : 'Oculto: pulsa para mostrar'}">${x.on ? ICO.ojo : ICO.ojoNo}</button>
@@ -8948,7 +8953,7 @@ pintarInicio = (orig => async function () {
       <div class="acts" style="padding:0 16px 14px"><button class="btn sec" data-inisem="semana">Ver mi semana</button>${toca ? '<button class="btn sec" data-inisem="plan">Planificarlos</button>' : ''}</div></div>
     <div class="card"><h2>Ventas del mes</h2>
       <div class="minis"><div><b>${num(v1.unidades || 0)}</b><span>unidades ${delta(+v1.unidades || 0, +v0.unidades || 0)}</span></div>
-        <div><b>${eurI(v1.importe || 0)}</b><span>sin IVA ${delta(+v1.importe || 0, +v0.importe || 0)}</span></div>
+        ${verImportes() ? `<div><b>${eurI(v1.importe || 0)}</b><span>sin IVA ${delta(+v1.importe || 0, +v0.importe || 0)}</span></div>` : ''}
         <div><b>${num(v1.medicos || 0)}</b><span>médicos que prescriben</span></div></div>
       <p class="sm" style="padding:0 16px 14px">Comparado con los mismos días del mes anterior (${num(v0.unidades || 0)} unidades).</p></div>
     <div class="card"><h2>Alertas<span class="n">${alertas.reduce((n, a) => n + a.n, 0)}</span></h2>
@@ -9168,9 +9173,9 @@ async function pintarResumenAnalitica() {
     const visitas = actv.reduce((n, x) => n + x.visitas, 0);
     $('ankpis').innerHTML =
       kpi(num(t.unidades || 0), 'Unidades vendidas', 'Unidades de pedidos validados en el periodo.', d(+t.unidades || 0, +ant.unidades || 0)) +
-      kpi(eurI(t.importe || 0), 'Ventas sin IVA', 'Importe sin IVA de los pedidos validados, con el descuento de cada línea.', d(+t.importe || 0, +ant.importe || 0)) +
+      (verImportes() ? kpi(eurI(t.importe || 0), 'Ventas sin IVA', 'Importe sin IVA de los pedidos validados, con el descuento de cada línea.', d(+t.importe || 0, +ant.importe || 0)) : '') +
       kpi(num(t.pedidos || 0), 'Pedidos', 'Pedidos validados en el periodo.', d(+t.pedidos || 0, +ant.pedidos || 0)) +
-      kpi(t.pedidos ? eurI(t.importe / t.pedidos) : '—', 'Ticket medio', 'Importe medio de cada pedido: ventas sin IVA entre número de pedidos.') +
+      (verImportes() ? kpi(t.pedidos ? eurI(t.importe / t.pedidos) : '—', 'Ticket medio', 'Importe medio de cada pedido: ventas sin IVA entre número de pedidos.') : '') +
       kpi(num(t.medicos || 0), 'Médicos que prescriben', 'Médicos distintos con alguna venta atribuida en el periodo.', d(+t.medicos || 0, +ant.medicos || 0)) +
       kpi(visitas ? (Math.round((t.unidades || 0) / visitas * 10) / 10).toString().replace('.', ',') : '—', 'Unidades por visita', 'Unidades vendidas entre visitas registradas en el periodo. Indica cuánto rinde cada visita.');
 
@@ -9181,7 +9186,7 @@ async function pintarResumenAnalitica() {
     const embTot = orden.reduce((n, k) => n + (+emb[k] || 0), 0);
     $('angraf').innerHTML = `
       <div class="card ancard ancha"><h2>Evolución de las ventas</h2>
-        ${(t.unidades || 0) ? svgBarras(meses, meses.map(m => (serie[m] || {}).unidades || 0), meses.map(m => +((serie[m] || {}).importe || 0)), ['Unidades', 'Importe sin IVA'])
+        ${(t.unidades || 0) ? svgBarras(meses, meses.map(m => (serie[m] || {}).unidades || 0), verImportes() ? meses.map(m => +((serie[m] || {}).importe || 0)) : null, ['Unidades', 'Importe sin IVA'])
           : vacioGrafico('Cuando haya pedidos validados verás aquí las unidades (barras) y el importe (línea) de cada mes.')}
         <p class="leer"><b>Cómo leerlo:</b> cada barra son las unidades vendidas en el mes y la línea, el importe. Si la línea sube más que las barras, se vende a mejor precio (menos descuento o productos de más valor).</p></div>
       <div class="card ancard"><h2>Reparto por producto</h2>
@@ -10148,6 +10153,376 @@ MANUAL.unshift({ id: 'roles', t: 'Roles del equipo', a: null, para: 'Qué ve y q
     [0, 'Televenta: ve toda la base, crea y valida pedidos, da de alta clientes, emite facturas y registra cobros'],
     [0, 'Comercial: su cartera, su agenda y rutas, sus visitas y las ventas y clientes de sus médicos'],
     [0, 'Solo consulta: ve sin modificar lo que le permitan sus permisos']], config: ['Permisos por persona: Administración → Usuarios → Editar'] });
+
+
+/* ============================================================
+   DLC OS 2.0 · v2.34.0 · Permisos por módulo e indicadores, zonas de
+   los comerciales, operativa de pedidos, registro de llamadas,
+   comisiones con fecha de efecto, varios meses en la agenda y
+   «Calidad del dato»
+   ============================================================ */
+
+Object.assign(RPC_TTL, { operativa_pendiente: 20, llamadas_lista: 20, llamadas_resumen: 30, calidad_datos: 60, zonas_resumen: 120 });
+
+/* ---------------- permisos nuevos ---------------- */
+
+(function () {
+  const i = AREAS.findIndex(a => a[0] === 'V');
+  AREAS[i][1] = 'Pedidos (ventas y compras)';
+  AREAS.splice(i + 1, 0, ['L', 'Clientes'], ['P', 'Productos y stock'], ['F', 'Facturación'], ['A', 'Analítica'],
+    ['E', 'Importes de ventas'], ['Q', 'Calidad del dato']);
+})();
+const nivelDe2 = a => !PERFIL ? 0 : PERFIL.rol === 'Administrador' ? 3 : +((PERFIL.areas || {})[a] || 0);
+const verImportes = () => nivelDe2('E') >= 1;
+
+// Qué permiso abre cada módulo
+const MODULO_AREA = { inicio: 'H', agenda: 'G', rutas: 'R', directorio: 'M', pacientes: 'L', productos: 'P', seguimiento: 'Q',
+  ventas: 'V', analitica: 'A', facturacion: 'F' };
+const puedeModulo = t => {
+  if (!PERFIL) return false;
+  if (t === 'facturacion' && !VE_TODO()) return false;
+  const a = MODULO_AREA[t];
+  return !a || nivelDe2(a) >= 1;
+};
+function aplicarPermisosMenu() {
+  document.querySelectorAll('nav.main [data-t]').forEach(b => {
+    if (b.dataset.t in MODULO_AREA) b.classList.toggle('hide', !puedeModulo(b.dataset.t));
+  });
+  if (typeof pintarBnav === 'function') pintarBnav();
+}
+const irV2330 = ir;
+ir = function (t) {
+  if (t in MODULO_AREA && !puedeModulo(t)) { toast('No tienes permiso para ese módulo', true); t = puedeModulo('inicio') ? 'inicio' : 'agenda'; }
+  irV2330(t);
+};
+const mostrarAppV2330 = mostrarApp;
+mostrarApp = function (perfil) { mostrarAppV2330(perfil); aplicarPermisosMenu(); };
+
+/* ---------------- indicadores con su categoría y permiso ---------------- */
+
+const KPI_CATEGORIA = {
+  citas: 'Agenda', citas_7d: 'Agenda', urgentes: 'Cartera', interesados: 'Cartera', sin_contactar: 'Cartera', cartera: 'Cartera',
+  sin_visita_60: 'Cartera', sin_horario: 'Calidad del dato', dups: 'Calidad del dato', visitas_sem: 'Actividad', visitas_mes: 'Actividad',
+  visitas_7d: 'Actividad', muestras_mes: 'Actividad', material_mes: 'Actividad', uds_mes: 'Ventas (unidades)', prescriptores: 'Ventas (unidades)',
+  nuevos_presc: 'Ventas (unidades)', activos_90: 'Ventas (unidades)', conversion: 'Cartera', importe_mes: 'Ventas (importes)', borradores: 'Pedidos'
+};
+const KPI_PERMISO = { importe_mes: ['E', 1], borradores: ['V', 1], dups: ['Q', 1], sin_horario: ['M', 1] };
+function kpiPermitido(c) {
+  if (!c) return false;
+  if (c.admin && PERFIL.rol !== 'Administrador') return false;
+  const r = KPI_PERMISO[c.id];
+  return !r || nivelDe2(r[0]) >= r[1];
+}
+
+/* ---------------- zonas de cada comercial ---------------- */
+
+let PROV_CCAA = null;
+async function bloqueZonas(u) {
+  if (!PROV_CCAA) {
+    const [{ data: pc }, { data: rz }] = await Promise.all([db.from('provincias_ccaa').select('provincia,comunidad'), db.rpc('zonas_resumen')]);
+    const cuenta = {}; (rz || []).forEach(x => cuenta[x.provincia] = x.medicos);
+    PROV_CCAA = {};
+    (pc || []).forEach(x => (PROV_CCAA[x.comunidad] = PROV_CCAA[x.comunidad] || []).push({ p: x.provincia, n: cuenta[x.provincia] || 0 }));
+  }
+  const { data: yo } = await db.from('perfiles').select('zonas').eq('id', u.id).single();
+  const sel = new Set((yo && yo.zonas) || []);
+  const bonito = p => p.charAt(0) + p.slice(1).toLowerCase();
+  return `<div class="blk" id="uzonas"><h3>Zona de trabajo</h3>
+    <p class="sm">Marca las provincias de su zona. Al guardar, los médicos de esas provincias que no tengan comercial entran en su cartera, y los que se den de alta después entran solos. Solo verá los médicos de su cartera.</p>
+    <div class="zonas">${Object.keys(PROV_CCAA).sort().map(cc => {
+      const ps = PROV_CCAA[cc].filter((x, i, a) => a.findIndex(y => y.n === x.n && bonito(y.p).slice(0, 4) === bonito(x.p).slice(0, 4)) === i || x.n);
+      return `<details ${ps.some(x => sel.has(x.p)) ? 'open' : ''}><summary><label onclick="event.stopPropagation()"><input type="checkbox" data-zcc="${esc(cc)}" ${ps.every(x => sel.has(x.p)) ? 'checked' : ''}> ${esc(cc)}</label>
+        <span class="sm">${num(ps.reduce((n, x) => n + x.n, 0))} médicos</span></summary>
+        <div class="zprov">${ps.map(x => `<label><input type="checkbox" data-zp="${esc(x.p)}" data-zpc="${esc(cc)}" ${sel.has(x.p) ? 'checked' : ''}> ${esc(bonito(x.p))} <span class="sm">${num(x.n)}</span></label>`).join('')}</div></details>`;
+    }).join('')}</div>
+    <div class="acts" style="margin-top:8px"><button class="btn sec" id="uzok">Guardar zona y asignar sus médicos</button></div></div>`;
+}
+
+editarUsuario = (orig => async function (id) {
+  await orig(id);
+  const u = (USUARIOS || []).find(x => x.id === id);
+  if (!u || !$('dlg').open) return;
+  // Comisión: desde cuándo se aplica el esquema (el selector se pinta un momento después)
+  for (let i = 0; i < 30 && !$('ucom') && $('dlg').open; i++) await new Promise(r => setTimeout(r, 100));
+  const ucom = $('ucom');
+  if (ucom && !$('ucdesde')) {
+    ucom.dataset.orig = ucom.value;
+    ucom.closest('.g2').insertAdjacentHTML('afterend', `<div class="g2" id="ucdesde">
+      <div><label class="sm" for="ucdm">Se aplica</label><select id="ucdm">
+        <option value="hoy">A partir de hoy</option><option value="todo">A todo su histórico (hacia atrás)</option><option value="fecha">A partir de una fecha concreta</option></select></div>
+      <div><label class="sm" for="ucdf">Fecha</label><input id="ucdf" type="date" value="${hoyISO()}" disabled></div></div>
+      <div class="sm" id="uchist"></div>`);
+    $('ucdm').onchange = () => { $('ucdf').disabled = $('ucdm').value !== 'fecha'; };
+    const { data: h } = await RPC_ORIG('historial_esquemas', { p_usuario: id });
+    if ((h || []).length && $('uchist')) $('uchist').innerHTML = 'Historial: ' + h.map(x => `${esc(x.esquema)} desde ${fechaCorta(x.desde)}${x.hasta ? ' hasta ' + fechaCorta(x.hasta) : ''}`).join(' · ');
+  }
+  // Zona, solo para comerciales
+  if (u.rol === 'Comercial' && !$('uzonas')) {
+    const html = await bloqueZonas(u);
+    const ref = $('ucomzona') || $('dbody').querySelector('.acts:last-of-type');
+    if (ref && $('dlg').open) ref.insertAdjacentHTML('beforebegin', html);
+    $('dbody').querySelectorAll('[data-zcc]').forEach(c => c.onchange = () =>
+      $('dbody').querySelectorAll(`[data-zpc="${CSS.escape(c.dataset.zcc)}"]`).forEach(x => x.checked = c.checked));
+    if ($('uzok')) $('uzok').onclick = async ev => {
+      const zonas = [...$('dbody').querySelectorAll('[data-zp]:checked')].map(x => x.dataset.zp);
+      ev.target.disabled = true;
+      const { data: r, error } = await db.rpc('asignar_zona', { p_usuario: id, p_zonas: zonas });
+      ev.target.disabled = false;
+      if (error || (r && r.ok === false)) { toast('No se ha podido guardar la zona', true); return; }
+      toast(`Zona guardada · ${num(r.asignados)} médicos nuevos en su cartera${r.en_otra_cartera ? ` · ${num(r.en_otra_cartera)} de su zona están en otra cartera` : ''}`);
+    };
+  }
+})(editarUsuario);
+
+/* ---------------- operativa de los pedidos ---------------- */
+
+const OPS = [['pago', 'Pago recibido', 'pago_estado', '💳'], ['paquete', 'Paquete preparado', 'paquete_en', '📦'],
+  ['email_factura', 'Email con la factura enviado', 'email_factura_en', '🧾'], ['email_pago', 'Email con los datos de pago enviado', 'email_pago_en', '✉️']];
+const opHecho = (p, k) => k === 'pago' ? p.pago_estado === 'Cobrado' : !!p[OPS.find(o => o[0] === k)[2]];
+
+function textoEmailPago(p, total, cliente) {
+  const e = AJUSTES.empresa || {};
+  return `Hola${cliente ? ' ' + String(cliente).split(' ')[0] : ''}:\n\nGracias por tu pedido${p.numero ? ' ' + p.numero : ''}. Para completarlo, haz una transferencia con estos datos:\n\n` +
+    `Importe: ${eurI(total || 0)}\nBeneficiario: ${e.razon_social || 'DLC Health Group'}\nIBAN: ${e.iban || '(añade el IBAN en Facturación → Datos fiscales)'}\nConcepto: ${p.numero || 'Pedido'} ${cliente || ''}\n\n` +
+    `En cuanto recibamos el pago preparamos el envío.\n\nUn saludo,\n${e.razon_social || 'DLC Health Group'}${e.telefono ? '\n' + e.telefono : ''}`;
+}
+
+verPedido = (orig => async function (id) {
+  await orig(id);
+  if (!$('dlg').open || !(VE_TODO() || PERFIL.rol === 'Administrador')) return;
+  const { data } = await RPC_ORIG('pedido_detalle', { p_id: id });
+  const p = data && data.pedido; if (!p || p.estado !== 'Confirmado' || $('pdops')) return;
+  await cargarAjustes();
+  const cli = data.contacto || {}, total = +((data.totales || {}).total || 0);
+  const puede = VE_TODO() && nivelDe2('V') >= 2;
+  const acts = $('dbody').querySelector('.acts:last-of-type');
+  acts.insertAdjacentHTML('beforebegin', `<div class="blk" id="pdops"><h3>Operativa</h3>
+    ${OPS.map(([k, t]) => `<label class="opchk ${opHecho(p, k) ? 'on' : ''}"><input type="checkbox" data-op="${k}" ${opHecho(p, k) ? 'checked' : ''} ${puede ? '' : 'disabled'}>
+      <span>${esc(t)}${k === 'pago' && p.forma_pago ? ` <span class="sm">· ${esc(p.forma_pago)}${/reembolso/i.test(p.forma_pago) ? ' (se cobra al entregar)' : ''}</span>` : ''}</span></label>`).join('')}
+    <div class="acts" style="margin:6px 0 0">
+      ${cli.email ? `<a class="btn sec" id="pdmailpago" href="mailto:${esc(cli.email)}?subject=${encodeURIComponent('Datos para el pago de tu pedido ' + (p.numero || ''))}&body=${encodeURIComponent(textoEmailPago(p, total, cli.nombre))}">✉️ Preparar email con los datos de pago</a>` : '<span class="sm">El cliente no tiene email en su ficha.</span>'}
+    </div></div>`);
+  $('dbody').querySelectorAll('[data-op]').forEach(c => c.onchange = async () => {
+    const { data: r, error } = await db.rpc('marcar_operativa', { p_pedido: id, p_campo: c.dataset.op, p_hecho: c.checked });
+    if (error || (r && r.ok === false)) { c.checked = !c.checked; toast('No se ha podido guardar', true); return; }
+    c.closest('.opchk').classList.toggle('on', c.checked);
+    toast(c.checked ? (c.dataset.op === 'pago' ? 'Pago validado' + (p.factura_id ? ' · cobro anotado en la factura' : '') : 'Hecho') : 'Desmarcado');
+    if (TAB === 'ventas' && PEDSEC === 'ventas') pintarOperativa();
+  });
+  if ($('pdmailpago')) $('pdmailpago').addEventListener('click', () => setTimeout(async () => {
+    if (await preguntar('¿Has enviado el email con los datos de pago?', { titulo: 'Email de pago', ok: 'Sí, marcar como enviado' })) {
+      await db.rpc('marcar_operativa', { p_pedido: id, p_campo: 'email_pago', p_hecho: true }); verPedido(id);
+    }
+  }, 800));
+})(verPedido);
+
+async function pintarOperativa() {
+  let c = $('operativa');
+  if (!c) { const ref = $('vcuerpo'); if (!ref) return; ref.insertAdjacentHTML('beforebegin', '<div class="card" id="operativa"></div>'); c = $('operativa'); }
+  const { data } = await RPC_ORIG('operativa_pendiente', {});
+  const d = data || {};
+  const tot = ['pago', 'paquete', 'email_factura', 'email_pago'].reduce((n, k) => n + (d[k] || []).length, 0);
+  if (!$('operativa')) return;
+  c.innerHTML = `<h2>Por hacer en los pedidos<span class="n">${tot}</span></h2>
+    ${tot ? `<div class="opgrid">${[['pago', '💳 Pagos por validar'], ['paquete', '📦 Paquetes por preparar'], ['email_factura', '🧾 Facturas por enviar'], ['email_pago', '✉️ Datos de pago por enviar']].map(([k, t]) =>
+      `<details class="opcol"><summary><b>${num((d[k] || []).length)}</b> ${t}</summary>
+        <div class="lista">${(d[k] || []).slice(0, 30).map(p => `<button class="item" data-opped="${p.id}" style="padding:6px 8px"><span class="tx"><b>${esc(p.cliente)}</b>
+          <span class="sm">${esc(p.numero || 'Sin número')} · ${fechaCorta(p.fecha)}${verImportes() ? ' · ' + eurI(p.total || 0) : ''}${p.forma_pago ? ' · ' + esc(p.forma_pago) : ''}</span></span></button>`).join('') || '<div class="sm" style="padding:6px">Nada pendiente</div>'}</div></details>`).join('')}</div>`
+      : '<div class="vacio" style="padding:10px 16px">Todo al día: pagos validados, paquetes preparados y emails enviados.</div>'}`;
+  c.querySelectorAll('[data-opped]').forEach(b => b.onclick = () => verPedido(b.dataset.opped));
+}
+
+/* ---------------- Pedidos: pestaña «Llamadas» ---------------- */
+
+cargarVentas = (orig => async function () {
+  if (PEDSEC === 'llamadas' && !VE_TODO()) PEDSEC = 'ventas';
+  const sec = PEDSEC;
+  if (sec === 'llamadas') PEDSEC = 'compras';     // la base pinta la cabecera; luego se sustituye
+  await orig();
+  PEDSEC = sec;
+  const sub = $('pedsub');
+  if (sub && VE_TODO() && !sub.querySelector('[data-pedsec="llamadas"]')) {
+    sub.insertAdjacentHTML('beforeend', `<button data-pedsec="llamadas" aria-pressed="${PEDSEC === 'llamadas'}">Llamadas</button>`);
+    sub.querySelector('[data-pedsec="llamadas"]').onclick = () => { PEDSEC = 'llamadas'; cargarVentas(); };
+  }
+  if (sub) sub.querySelectorAll('[data-pedsec]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.pedsec === PEDSEC)));
+  if (PEDSEC === 'ventas' && VE_TODO()) pintarOperativa();
+  if (PEDSEC === 'llamadas') {
+    const acts = $('v-ventas').querySelector('.saludo .acts');
+    acts.innerHTML = '<button class="btn" id="llnueva">+ Registrar llamada</button>';
+    $('llnueva').onclick = () => editorLlamada(null);
+    pintarLlamadas();
+  }
+})(cargarVentas);
+
+async function catLlamadas() {
+  for (const k of ['MOTIVO_LLAMADA', 'RESULTADO_LLAMADA']) {
+    if (!(CAT[k] || []).length) { const { data } = await db.rpc('catalogo', { p_clave: k }); CAT[k] = data || []; }
+  }
+}
+async function pintarLlamadas() {
+  await catLlamadas();
+  $('vcuerpo').innerHTML = `<div class="panel">
+    <div class="filtros"><div id="llper"></div>
+      <div><label for="llq">Buscar</label><input id="llq" type="search" placeholder="Nombre, teléfono o médico"></div>
+      <div><label for="llres">Resultado</label><select id="llres"><option value="">Todos</option>${(CAT.RESULTADO_LLAMADA || []).map(x => `<option>${esc(x.valor)}</option>`).join('')}</select></div></div>
+    <div class="kpis vtot" id="lltot"></div>
+    <div class="angrid" id="llres2" style="margin:0 0 14px"></div>
+    <div id="lllista"></div></div>`;
+  let tq;
+  const pinta = async () => {
+    const r = $('llper').__rango();
+    const [{ data: l }, { data: s }] = await Promise.all([
+      db.rpc('llamadas_lista', { p_desde: r.desde, p_hasta: r.hasta, q: $('llq').value.trim() || null, p_resultado: $('llres').value || null }),
+      db.rpc('llamadas_resumen', { p_desde: r.desde, p_hasta: r.hasta })]);
+    if (!$('lllista')) return;
+    const res = s || {}, lista = l || [];
+    $('lltot').innerHTML = `<div class="kpi"><b>${num(res.total || 0)}</b><span>Llamadas</span></div>
+      <div class="kpi"><b>${num(res.con_pedido || 0)}</b><span>Acaban en pedido</span></div>
+      <div class="kpi"><b>${res.total ? Math.round(res.con_pedido / res.total * 100) + '%' : '—'}</b><span>Conversión</span></div>`;
+    $('llres2').innerHTML = `<div class="card ancard"><h2>Cómo terminan</h2>${(res.por_resultado || []).length ? barrasH(res.por_resultado.map(x => ({ n: x.resultado, v: x.n })), num) : vacioGrafico('Registra llamadas para ver cómo terminan.')}
+        <p class="leer"><b>Cómo leerlo:</b> si pesan «El precio no le convence» o «Solo quería información», conviene revisar el argumentario o las condiciones.</p></div>
+      <div class="card ancard"><h2>De qué médico vienen</h2>${(res.por_medico || []).length ? `<div class="barrash">${res.por_medico.map((x, i) => `<div class="bh"><span class="bhn">${i + 1}. ${esc(x.medico)}</span>
+          <span class="bhb"><i style="width:${Math.max(3, x.n / res.por_medico[0].n * 100)}%"></i></span><b>${num(x.pedidos)}/${num(x.n)}</b></div>`).join('')}</div>` : vacioGrafico('Verás qué médicos generan llamadas y cuántas acaban en pedido.')}
+        <p class="leer"><b>Cómo leerlo:</b> pedidos sobre llamadas por médico. Un médico con muchas llamadas y pocos pedidos es una oportunidad de seguimiento.</p></div>`;
+    $('lllista').innerHTML = lista.length ? `<div class="dgrid-wrap"><div class="dgrid llam">
+      <div class="dh"><span>Fecha</span><span>Quién llama</span><span>Médico</span><span>Motivo</span><span>Resultado</span><span>Próximo paso</span><span>Atendió</span></div>
+      ${lista.map(x => `<button class="dr" data-ll="${x.id}"><span>${new Date(x.fecha).toLocaleString('es-ES', { dateStyle: 'short', timeStyle: 'short' })}<span class="sm">${esc(x.direccion || '')}</span></span>
+        <span><b>${esc(x.nombre || x.cliente || '—')}</b><span class="sm">${esc(x.telefono || '')}</span></span><span class="corta">${esc(x.medico || x.medico_texto || '—')}</span>
+        <span class="sm">${esc(x.motivo || '—')}</span><span>${esc(x.resultado || '—')}${x.pedido ? `<span class="sm">Pedido ${esc(x.pedido)}</span>` : ''}</span>
+        <span class="sm">${x.proxima_fecha ? fechaCorta(x.proxima_fecha) + ' · ' : ''}${esc(x.proxima_accion || '')}</span><span class="sm">${esc(x.usuario || '')}</span></button>`).join('')}</div></div>`
+      : '<div class="vacio">Sin llamadas en este periodo. Regístralas con «+ Registrar llamada», aunque no acaben en pedido: así se puede analizar por qué.</div>';
+    $('lllista').querySelectorAll('[data-ll]').forEach(b => b.onclick = () => editorLlamada(lista.find(x => x.id === b.dataset.ll)));
+  };
+  montarPeriodo($('llper'), { id: 'llamadas', valor: 'mes', alCambiar: pinta });
+  $('llq').oninput = () => { clearTimeout(tq); tq = setTimeout(pinta, 300); };
+  $('llres').onchange = pinta;
+  pinta();
+}
+
+async function editorLlamada(l) {
+  await catLlamadas();
+  l = l || { direccion: 'Entrante', fecha: new Date().toISOString() };
+  let medico = l.medico_id ? { id: l.medico_id, nombre: l.medico } : null;
+  const f = new Date(l.fecha), local = new Date(f.getTime() - f.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+  const opts = (cat, v) => `<option value=""></option>${(CAT[cat] || []).map(x => `<option ${x.valor === v ? 'selected' : ''}>${esc(x.valor)}</option>`).join('')}`;
+  $('dbody').innerHTML = `
+    <div class="fh"><div><h2>${l.id ? 'Llamada' : 'Registrar llamada'}</h2><div class="sm">Aunque no acabe en pedido: sirve para medir por qué no se convierte</div></div>
+      <button class="x" data-cerrar aria-label="Cerrar">✕</button></div>
+    <div class="g2"><div><label for="llf">Fecha y hora</label><input id="llf" type="datetime-local" value="${local}"></div>
+      <div><label for="lld">Tipo</label><select id="lld"><option ${l.direccion === 'Entrante' ? 'selected' : ''}>Entrante</option><option ${l.direccion === 'Saliente' ? 'selected' : ''}>Saliente</option></select></div></div>
+    <div class="g2"><div><label for="lln">Nombre de quien llama</label><input id="lln" value="${esc(l.nombre || '')}" placeholder="Paciente o persona interesada"></div>
+      <div><label for="llt">Teléfono</label><input id="llt" value="${esc(l.telefono || '')}" inputmode="tel"></div></div>
+    <label>Médico que lo recomienda</label><div id="llmed"></div>
+    <div class="g2"><div><label for="llm">Motivo</label><select id="llm">${opts('MOTIVO_LLAMADA', l.motivo)}</select></div>
+      <div><label for="llr">Resultado</label><select id="llr">${opts('RESULTADO_LLAMADA', l.resultado)}</select></div></div>
+    <div class="g2"><div><label for="llpa">Próximo paso</label><input id="llpa" value="${esc(l.proxima_accion || '')}" placeholder="p. ej. Llamar cuando cobre"></div>
+      <div><label for="llpf">Fecha del próximo paso</label><input id="llpf" type="date" value="${esc(l.proxima_fecha || '')}"></div></div>
+    <label for="llno">Nota</label><textarea id="llno" rows="2">${esc(l.nota || '')}</textarea>
+    <div class="acts" style="justify-content:flex-end"><button class="btn sec" data-cerrar>Cancelar</button>
+      ${!l.id ? '<button class="btn sec" id="llped">Guardar y crear pedido</button>' : ''}<button class="btn" id="llok">Guardar</button></div>`;
+  $('dlg').showModal();
+  $('llmed').__texto = medico ? '' : (l.medico_texto || '');
+  selectorMedico($('llmed'), { valor: medico, placeholder: 'Nombre, código, centro o municipio', alElegir: m => { medico = m; } });
+  const guardar = async () => {
+    const { data: r, error } = await db.rpc('guardar_llamada', { p: { id: l.id || null, fecha: new Date($('llf').value).toISOString(), direccion: $('lld').value,
+      nombre: $('lln').value.trim(), telefono: $('llt').value.trim(), medico_id: medico ? medico.id : null,
+      medico_texto: medico ? '' : ($('llmed').__texto || '').trim(), motivo: $('llm').value, resultado: $('llr').value,
+      proxima_accion: $('llpa').value.trim(), proxima_fecha: $('llpf').value, nota: $('llno').value.trim(), pedido_id: l.pedido_id || null } });
+    if (error || (r && r.ok === false)) { toast('No se ha podido guardar', true); return null; }
+    return r.id;
+  };
+  $('llok').onclick = async () => { if (await guardar()) { $('dlg').close(); toast('Llamada registrada'); if (TAB === 'ventas' && PEDSEC === 'llamadas') pintarLlamadas(); } };
+  if ($('llped')) $('llped').onclick = async () => {
+    if (!$('llr').value) $('llr').value = 'Pedido hecho';
+    const lid = await guardar(); if (!lid) return;
+    $('dlg').close(); toast('Llamada registrada · crea ahora el pedido');
+    PEDSEC = 'ventas'; ir('ventas'); setTimeout(() => $('pednuevo') && $('pednuevo').click(), 900);
+  };
+}
+
+/* ---------------- Inicio: operativa pendiente para televenta y administración ---------------- */
+
+pintarInicio = (orig => async function () {
+  await orig();
+  if (TAB !== 'inicio' || !$('iniextra') || !(VE_TODO() && nivelDe2('V') >= 1)) return;
+  const { data } = await RPC_ORIG('operativa_pendiente', {});
+  const d = data || {}, n = k => (d[k] || []).length;
+  if (!(n('pago') + n('paquete') + n('email_factura') + n('email_pago')) || $('iniops')) return;
+  $('iniextra').insertAdjacentHTML('afterbegin', `<div class="card" id="iniops"><h2>Operativa de pedidos</h2>
+    <div class="minis"><div><b style="${n('pago') ? 'color:var(--warn)' : ''}">${num(n('pago'))}</b><span>pagos por validar</span></div>
+      <div><b>${num(n('paquete'))}</b><span>paquetes por preparar</span></div>
+      <div><b>${num(n('email_factura') + n('email_pago'))}</b><span>emails por enviar</span></div></div>
+    <div class="acts" style="padding:0 16px 14px"><button class="btn sec" id="iniopsver">Ver en Pedidos</button></div></div>`);
+  $('iniopsver').onclick = () => { PEDSEC = 'ventas'; ir('ventas'); };
+})(pintarInicio);
+
+/* ---------------- Agenda: ver varios meses ---------------- */
+
+let AG_MESES = 1;
+cargarAgenda = (orig => async function () {
+  await orig();
+  if (TAB !== 'agenda' || AG_MODO !== 'mes') return;
+  const acts = $('v-agenda').querySelector('.saludo .acts');
+  if (acts && !$('agmeses')) {
+    acts.insertAdjacentHTML('beforeend', `<select id="agmeses" aria-label="Meses a la vista" title="Meses a la vista">
+      ${[1, 2, 3, 6].map(n => `<option value="${n}" ${AG_MESES === n ? 'selected' : ''}>${n} ${n === 1 ? 'mes' : 'meses'}</option>`).join('')}</select>`);
+    $('agmeses').onchange = e => { AG_MESES = +e.target.value; cargarAgenda(); };
+  }
+  if (AG_MESES <= 1) return;
+  const base = AG_FECHA.slice(0, 7), bloques = [];
+  for (let i = 0; i < AG_MESES; i++) {
+    const d = new Date(base + '-01T12:00:00'); d.setMonth(d.getMonth() + i);
+    await pintarMesAgenda(fechaLocal(d).slice(0, 7));
+    const w = document.createElement('div'); w.className = 'mesbloque';
+    while ($('agcuerpo').firstChild) w.appendChild($('agcuerpo').firstChild);
+    bloques.push(w);
+  }
+  bloques.forEach(w => $('agcuerpo').appendChild(w));
+  $('agcuerpo').classList.add('varios');
+  const fin = new Date(base + '-01T12:00:00'); fin.setMonth(fin.getMonth() + AG_MESES - 1);
+  $('agtit').textContent = periodoTxt(base) + ' – ' + periodoTxt(fechaLocal(fin).slice(0, 7));
+})(cargarAgenda);
+
+/* ---------------- «Seguimiento» pasa a «Calidad del dato» ---------------- */
+
+document.querySelectorAll('[data-t="seguimiento"]').forEach(b => { if (b.closest('nav.main')) b.textContent = 'Calidad del dato'; });
+cargarSeguimiento = (orig => async function () {
+  await orig();
+  const v = $('v-seguimiento');
+  v.querySelector('.saludo h1').firstChild.textContent = 'Calidad del dato';
+  v.querySelector('.saludo .fecha').textContent = 'Fichas completas, datos que faltan y avance de cada médico';
+  const { data: q } = await RPC_ORIG('calidad_datos', {});
+  if (!q || $('calidad')) return;
+  const pct = (a, b) => b ? Math.round(a / b * 100) : 0;
+  const item = (n, t, h) => `<div class="kpi ${n ? 'warn' : 'ok'}"><button class="ai" data-ayuda-txt="${esc(h)}" data-ayuda-tit="${esc(t)}" aria-label="Qué es">i</button><b>${num(n)}</b><span>${esc(t)}</span></div>`;
+  v.querySelector('.saludo').insertAdjacentHTML('afterend', `<div class="card" id="calidad" style="padding-bottom:6px">
+    <div class="manh" style="padding:14px 16px 0"><h2 style="padding:0">Fichas completas: ${pct(q.completas, q.total)}%</h2><span class="sm">${num(q.completas)} de ${num(q.total)} médicos</span></div>
+    <div class="barra" style="margin:8px 16px 10px"><i style="width:${pct(q.completas, q.total)}%"></i></div>
+    <div class="kpis" style="padding:0 16px 10px">
+      ${item(q.sin_ubicacion, 'sin ubicación', 'Sin coordenadas en ninguna consulta: no entran en rutas ni en el mapa.')}
+      ${item(q.sin_horario, 'sin horario de consulta', 'Sin días ni horas de consulta: las rutas no pueden ajustarse a su horario.')}
+      ${item(q.sin_especialidad, 'sin especialidad', 'Sin especialidad en la ficha: no se pueden filtrar ni analizar por especialidad.')}
+      ${item(q.sin_contacto, 'sin teléfono ni email', 'No hay forma de contactar con ellos fuera de la visita.')}
+      ${item(q.sin_provincia, 'sin provincia', 'Sin provincia no se pueden asignar por zona a un comercial.')}
+      ${item(q.sin_comercial, 'sin comercial', 'Médicos que no están en ninguna cartera.')}
+      ${item(q.duplicados, 'pendientes de unificar', 'Fichas marcadas como posibles duplicados.')}
+    </div>
+    <p class="sm" style="padding:0 16px 10px">Una ficha completa tiene ubicación, horario, especialidad y teléfono o email. Debajo, el avance de cada médico.</p></div>`);
+})(cargarSeguimiento);
+
+/* ---------------- ayudas y manual ---------------- */
+
+AYUDA.seguimiento = ['Calidad del dato', 'Qué parte de la base está completa y qué falta, y el avance comercial de cada médico.', [
+  'Arriba, el porcentaje de fichas completas y cuántas fichas no tienen ubicación, horario, especialidad, contacto, provincia o comercial.',
+  'Debajo, cada médico con su estado, visitas y próxima acción, con filtros para localizar los atrasados.']];
+MANUAL.forEach(s => {
+  if (s.id === 'ventas') s.hacer.push([1, 'Operativa de cada pedido: pago recibido, paquete preparado y emails enviados (televenta)'], [1, 'Registro de llamadas de televenta, con motivo, resultado y médico del que viene']);
+  if (s.id === 'admin') s.hacer.push([3, 'Zona de cada comercial por provincias; los médicos nuevos de su zona entran solos en su cartera'], [3, 'Esquema de comisión con fecha de efecto: hoy, todo el histórico o una fecha concreta']);
+});
+MANUAL.push({ id: 'permisos', t: 'Permisos por módulo', a: null, para: 'Cada módulo se abre con su permiso; si no lo tienes, no aparece en el menú.',
+  hacer: [[0, 'Clientes, Productos y stock, Facturación, Analítica y Calidad del dato tienen su propio permiso'],
+    [0, '«Importes de ventas» decide si se ven euros o solo unidades en Inicio, Analítica y listados']], config: ['Administración → Usuarios → Editar'] });
 
 
 // Barra inferior del móvil y barra de «Entrar como» desde el primer momento
