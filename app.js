@@ -1238,7 +1238,8 @@ async function cargarAdmin() {
         <button class="btn sec" data-uedit="${u.id}">Editar</button>
         <button class="btn sec" data-uver="${u.id}">Ver cartera</button>
         <button class="btn sec" data-ucart="${u.id}">Asignar</button>
-        <button class="btn sec" data-upass="${u.id}">Contraseña</button></span></div>`).join('')}</div>`;
+        <button class="btn sec" data-upass="${u.id}">Contraseña</button>
+        ${puedeSuplantar() && u.id !== PERFIL.id && u.rol !== 'Administrador' && u.activo ? `<button class="btn sec" data-ucomo="${u.id}" title="Ver la plataforma exactamente como esta persona">👤 Entrar como</button>` : ''}</span></div>`).join('')}</div>`;
 
   $('admcuerpo').querySelectorAll('[data-uedit]').forEach(b => b.onclick = () => editarUsuario(b.dataset.uedit));
   $('admcuerpo').querySelectorAll('[data-ucart]').forEach(b => b.onclick = () => asignarCartera(b.dataset.ucart));
@@ -1274,7 +1275,7 @@ function editarUsuario(id) {
 
   $('ur').onchange = () => {
     const preset = {
-      'Administrador': { H: 3, G: 3, R: 3, M: 3, C: 3, S: 3, V: 3, K: 3 },
+      'Administrador': { H: 3, G: 3, R: 3, M: 3, C: 3, S: 3, V: 3, K: 3, U: 3 },
       'Comercial': { H: 2, G: 2, R: 2, M: 2, C: 2, S: 2, V: 1, K: 0 },
       'Televenta': { H: 2, G: 1, R: 1, M: 2, C: 2, S: 1, V: 3, K: 0 },
       'Solo consulta': { H: 1, G: 1, R: 1, M: 1, C: 1, S: 1, V: 1, K: 0 },
@@ -2762,6 +2763,7 @@ async function cargarRutas() {
     <div class="saludo"><div><h1>Rutas</h1><div class="fecha">Crea, edita y planifica tus rutas</div></div>
       <div class="acts" style="margin:0"><button class="btn" id="rnueva">+ Nueva ruta</button></div></div>
     <div class="subnav">
+      <button data-rs="inicio" aria-pressed="${RSEC === 'inicio'}">Resumen</button>
       <button data-rs="mis" aria-pressed="${RSEC === 'mis'}">Mis rutas</button>
       <button data-rs="prop" aria-pressed="${RSEC === 'prop'}">Propuestas automáticas</button>
     </div>
@@ -2771,7 +2773,7 @@ async function cargarRutas() {
   $('rnueva').onclick = () => editorRuta(null);
   $('v-rutas').querySelectorAll('[data-rs]').forEach(b => b.onclick = () => { RSEC = b.dataset.rs; cargarRutas(); });
 
-  if (RSEC === 'mis') await listaRutas(); else await listaPropuestas();
+  if (RSEC === 'inicio') await resumenRutas(); else if (RSEC === 'mis') await listaRutas(); else await listaPropuestas();
   if (PLAN) pintarPlan();
 }
 
@@ -5005,14 +5007,15 @@ async function editorPedido(pedido) {
   const form = { fecha: ped ? ped.fecha : hoyISO(), canal: ped ? ped.canal : 'paciente', forma_pago: ped ? ped.forma_pago : '',
     descuento: ped ? (ped.descuento || 0) : 0, descuento_tipo: ped ? ped.descuento_tipo : 'porcentaje', nota: ped ? ped.nota || '' : '',
     medico_texto: ped ? ped.medico_texto || '' : '',
-    envio: ped ? !!ped.envio : !!envioCfg().por_defecto,
-    envio_iva: ped && ped.envio ? +ped.envio_iva : +envioCfg().iva,
-    envio_con: ped && ped.envio ? r2(+ped.envio_base * (1 + (+ped.envio_iva || 0) / 100)) : +envioCfg().precio_con_iva };
+    servicio_id: ped ? (ped.envio ? (ped.servicio_id || ((SERVICIOS[0] || {}).id) || '') : '') : ((SERVICIOS.find(x => x.por_defecto && x.activo) || {}).id || ''),
+    envio: ped ? !!ped.envio : !!SERVICIOS.find(x => x.por_defecto && x.activo),
+    envio_iva: ped && ped.envio ? +ped.envio_iva : +((SERVICIOS.find(x => x.por_defecto && x.activo) || {}).iva ?? 21),
+    envio_con: ped && ped.envio ? r2(+ped.envio_base * (1 + (+ped.envio_iva || 0) / 100)) : +((SERVICIOS.find(x => x.por_defecto && x.activo) || {}).pvp || 0) };
   const leerForm = () => {
     if (!$('pfecha')) return;
     Object.assign(form, { fecha: $('pfecha').value, canal: $('pcan').value, forma_pago: $('ppago').value,
       descuento: $('pdto').value, descuento_tipo: $('pdtot').value, nota: $('pnota').value,
-      envio: $('penv').checked, envio_con: +$('penvi').value || 0, envio_iva: +$('penvv').value || 0,
+      envio: $('penv').checked, envio_con: +$('penvi').value || 0, envio_iva: +$('penvv').value || 0, servicio_id: $('pserv').value,
       medico_texto: $('pselmed') ? ($('pselmed').__texto || '') : form.medico_texto });
   };
 
@@ -5055,10 +5058,13 @@ async function editorPedido(pedido) {
               <option value="importe" ${form.descuento_tipo === 'importe' ? 'selected' : ''}>€</option></select></div></div>
       </div>
       <div class="envbox">
-        <label class="opt" style="margin:0"><input type="checkbox" id="penv" ${form.envio ? 'checked' : ''}> Incluir envío</label>
+        <label for="pserv" style="margin-top:0">Servicio</label>
+        <select id="pserv"><option value="">Sin servicio</option>${SERVICIOS.filter(x => x.activo || x.id === form.servicio_id).map(x =>
+          `<option value="${x.id}" ${form.servicio_id === x.id ? 'selected' : ''}>${esc(x.nombre)} · ${eurI(x.pvp || 0)} con IVA</option>`).join('')}</select>
+        <input type="checkbox" id="penv" class="hide" ${form.envio ? 'checked' : ''}>
         <div class="g2 ${form.envio ? '' : 'hide'}" id="penvd">
-          <div><label for="penvi">Importe del envío con IVA (€)</label><input id="penvi" type="number" step="0.01" min="0" value="${esc(form.envio_con)}"></div>
-          <div><label for="penvv">IVA del envío (%)</label><input id="penvv" type="number" step="1" min="0" max="21" value="${esc(form.envio_iva)}"></div></div>
+          <div><label for="penvi">Importe del servicio con IVA (€)</label><input id="penvi" type="number" step="0.01" min="0" value="${esc(form.envio_con)}"></div>
+          <div><label for="penvv">IVA del servicio (%)</label><input id="penvv" type="number" step="1" min="0" max="21" value="${esc(form.envio_iva)}"></div></div>
       </div>
       <div class="totbox" id="ptot"></div>
       <label for="pnota">Nota</label><input id="pnota" value="${esc(form.nota)}">
@@ -5075,7 +5081,8 @@ async function editorPedido(pedido) {
       });
       $('penvd').classList.toggle('hide', !$('penv').checked);
       $('ptot').innerHTML = bloqueTotales(totalesPedido(lineas, +$('pdto').value || 0, $('pdtot').value,
-        { on: $('penv').checked, con: +$('penvi').value || 0, iva: +$('penvv').value || 0 }));
+        { on: $('penv').checked, con: +$('penvi').value || 0, iva: +$('penvv').value || 0,
+          nombre: ((SERVICIOS.find(x => x.id === $('pserv').value) || {}).nombre) || 'Servicio' }));
     };
 
     $('plineas').oninput = $('plineas').onchange = e => {
@@ -5095,6 +5102,12 @@ async function editorPedido(pedido) {
     $('plineas').querySelectorAll('[data-lx]').forEach(b => b.onclick = () => { lineas.splice(+b.dataset.lx, 1); pinta(); });
     $('pcan').onchange = () => $('zonapac').classList.toggle('hide', $('pcan').value === 'centro');
     ['pdto', 'pdtot', 'penv', 'penvi', 'penvv'].forEach(id => $(id).oninput = $(id).onchange = desglose);
+    $('pserv').onchange = () => {
+      const sv = SERVICIOS.find(x => x.id === $('pserv').value);
+      $('penv').checked = !!sv;
+      if (sv) { $('penvi').value = r2(sv.pvp || 0); $('penvv').value = sv.iva != null ? sv.iva : 21; }
+      desglose();
+    };
     desglose();
 
     const montarMed = () => {
@@ -5119,7 +5132,7 @@ async function editorPedido(pedido) {
         contacto_id: contacto ? contacto.id : null, nota: $('pnota').value.trim(),
         forma_pago: $('ppago').value || null,
         descuento: +$('pdto').value || 0, descuento_tipo: $('pdtot').value,
-        envio: $('penv').checked, envio_con_iva: +$('penvi').value || 0, envio_iva: +$('penvv').value || 0,
+        envio: $('penv').checked, envio_con_iva: +$('penvi').value || 0, envio_iva: +$('penvv').value || 0, servicio_id: $('pserv').value || null,
         lineas: lineas.filter(l => l.producto_id).map(l => ({ producto_id: l.producto_id, unidades: l.unidades || 1,
           importe: l.importe, descuento: l.descuento || 0, iva: l.iva })),
         op_id: 'p-' + Date.now()
@@ -5152,7 +5165,8 @@ async function verPedido(id) {
   if (error || !data || !data.pedido) { $('dbody').innerHTML = `<div class="vacio">${esc(error ? error.message : 'No se ha encontrado el pedido.')}</div>`; return; }
   const p = data.pedido, l = data.lineas || [], c = data.contacto;
   const t = totalesPedido(l, +p.descuento || 0, p.descuento_tipo,
-    { on: !!p.envio, con: r2(+p.envio_base * (1 + (+p.envio_iva || 0) / 100)), iva: +p.envio_iva || 0 });
+    { on: !!p.envio, con: r2(+p.envio_base * (1 + (+p.envio_iva || 0) / 100)), iva: +p.envio_iva || 0,
+      nombre: ((SERVICIOS.find(x => x.id === p.servicio_id) || {}).nombre) || 'Envío' });
   const bor = p.estado === 'Borrador', anulado = p.estado === 'Anulado';
 
   $('dbody').innerHTML = `
@@ -5196,7 +5210,7 @@ async function verPedido(id) {
       id, estado: 'Confirmado', fecha: p.fecha, canal: p.canal, contacto_id: p.contacto_id, centro_id: p.centro_id,
       medico_id: data.medico ? data.medico.id : null, medico_texto: p.medico_texto, nota: p.nota, forma_pago: p.forma_pago,
       descuento: p.descuento || 0, descuento_tipo: p.descuento_tipo,
-      envio: !!p.envio, envio_con_iva: p.envio ? r2(+p.envio_base * (1 + (+p.envio_iva || 0) / 100)) : 0, envio_iva: p.envio_iva,
+      envio: !!p.envio, envio_con_iva: p.envio ? r2(+p.envio_base * (1 + (+p.envio_iva || 0) / 100)) : 0, envio_iva: p.envio_iva, servicio_id: p.servicio_id,
       lineas: l.map(x => ({ producto_id: x.producto_id, unidades: x.unidades, importe: x.importe, descuento: x.descuento, iva: x.iva })) } });
     e.target.disabled = false;
     if (er || (r && r.ok === false)) { toast('No se ha podido validar: ' + ((er && er.message) || (r && r.error) || ''), true); return; }
@@ -6030,7 +6044,7 @@ async function asignarCartera(id) {
     const { data: r, error } = await db.rpc('asignar_cartera', { p: { usuario_id: id, medicos: ids, quitar } });
     ev.target.disabled = false;
     if (error || (r && r.ok === false)) { toast('No se ha podido: ' + ((error && error.message) || 'sin permiso'), true); return; }
-    toast(`${num(r.filas)} médicos ${quitar ? 'retirados' : 'asignados'}`);
+    toast(`${num(r.filas)} médicos ${quitar ? 'retirados' : 'asignados'}${r.movidos ? ` · ${num(r.movidos)} salieron de otra cartera (cartera exclusiva)` : ''}`);
     $('dlg').close(); cargarAdmin();
   };
   $('aasignar').onclick = ev => aplicar(false, ev);
@@ -6250,7 +6264,7 @@ function totalesPedido(lineas, d, dt, env) {
   ls.forEach(l => { porIva[l.iva] = (porIva[l.iva] || 0) + l.b * k * l.iva / 100; });
   const t = { unidades: ls.reduce((n, l) => n + l.u, 0), bruto: sb, descuento: sb * (1 - k), baseProd: sb * k, porIva };
   // El envío se escribe con IVA; aquí se separa su base y su IVA
-  t.envio = env && env.on ? { con: r2(env.con), iva: +env.iva || 0, base: (+env.con || 0) / (1 + (+env.iva || 0) / 100) } : null;
+  t.envio = env && env.on ? { con: r2(env.con), iva: +env.iva || 0, base: (+env.con || 0) / (1 + (+env.iva || 0) / 100), nombre: env.nombre || 'Envío' } : null;
   if (t.envio) { t.envio.ivaImp = t.envio.con - t.envio.base; porIva[t.envio.iva] = (porIva[t.envio.iva] || 0) + t.envio.ivaImp; }
   t.base = t.baseProd + (t.envio ? t.envio.base : 0);
   t.iva = Object.values(porIva).reduce((n, x) => n + x, 0);
@@ -6264,10 +6278,10 @@ function bloqueTotales(t) {
     ${t.descuento > 0.004 ? `<div><span>Suma de líneas</span><b>${eurI(t.bruto)}</b></div>
       <div><span>Descuento general</span><b>−${eurI(t.descuento)}</b></div>` : ''}
     ${t.envio ? `<div><span>Productos sin IVA</span><b>${eurI(t.baseProd)}</b></div>
-      <div><span>Envío sin IVA</span><b>${eurI(t.envio.base)}</b></div>` : ''}
+      <div><span>${esc(t.envio.nombre)} sin IVA</span><b>${eurI(t.envio.base)}</b></div>` : ''}
     <div><span>Base imponible</span><b>${eurI(t.base)}</b></div>
     ${tipos.filter(k => t.porIva[k] > 0.004 || tipos.length === 1).map(k => `<div><span>IVA ${k}%</span><b>${eurI(t.porIva[k])}</b></div>`).join('')}
-    ${t.envio ? `<div class="sm" style="justify-content:flex-end"><span>Incluye envío de ${eurI(t.envio.con)} con IVA</span></div>` : ''}
+    ${t.envio ? `<div class="sm" style="justify-content:flex-end"><span>Incluye ${esc(t.envio.nombre.toLowerCase())} de ${eurI(t.envio.con)} con IVA</span></div>` : ''}
     <div class="tot"><span>Total con IVA</span><b>${eurI(t.total)}</b></div>`;
 }
 
@@ -7892,7 +7906,16 @@ async function planificarSemana(desde, dias, bloq, porDia) {
     const { data: futuras } = await RPC_ORIG('agenda_rango', { p_desde: hoyISO(), p_hasta: isoMas(hoyISO(), 60), p_usuario: agUid() });
     const conCita = new Set((futuras || []).filter(c => CITA_ABIERTA.includes(c.estado)).map(c => c.medico_id));
     lista = await conHorarios(lista.filter(m => !conCita.has(m.id)));
+    // Aviso de visita reciente: fuera los que se han visto hace poco
+    const av = avisoRevisita(); let recientes = [];
+    if (av.on && lista.length) {
+      const { data: rv } = await db.rpc('visitas_recientes', { p_ids: lista.map(m => m.id), p_desde: isoMas(hoyISO(), -av.dias), p_hasta: hoyISO() });
+      const vistos = {}; (rv || []).filter(x => x.tipo === 'visita').forEach(x => { if (!vistos[x.medico_id] || x.fecha > vistos[x.medico_id].fecha) vistos[x.medico_id] = x; });
+      recientes = lista.filter(m => vistos[m.id]).map(m => ({ m, motivo: `visitado el ${fechaCorta(vistos[m.id].fecha)}${vistos[m.id].usuario ? ' (' + vistos[m.id].usuario + ')' : ''}` }));
+      lista = lista.filter(m => !vistos[m.id]);
+    }
     SEM_BORRADOR = repartirSemana(lista, usar, porDia, max, desde);
+    SEM_BORRADOR.sinDia = SEM_BORRADOR.sinDia.concat(recientes);
     ev.target.disabled = false; ev.target.textContent = 'Proponer reparto';
     $('dlg').close();
     if (!SEM_BORRADOR.total) toast('No cabe ninguna visita nueva con estos datos', true);
@@ -8418,6 +8441,539 @@ Object.assign(AYUDA, {
 AYUDA.config = AYUDA.config || ['Configuración', '', []];
 AYUDA.config[2].push('En <b>Clasificadores</b>, los de visitas (resultados, material comercial…) pueden pedir un <b>dato</b> al marcarse: una cantidad, un texto o una opción de una lista. Usa «+ Dato» en cada valor.');
 AYUDA.agenda[2].push('Si añades una cita a un médico que ya tiene otra ese día, te avisa y eliges: mantener las dos o quedarte solo con la nueva.');
+
+
+/* ============================================================
+   DLC OS 2.0 · v2.28.0 · Móvil con todos los módulos, entrar como
+   otro usuario, manual, alertas de cruce, cartera exclusiva, aviso
+   de visita reciente, servicios, inicio de Rutas y un Inicio con más valor
+   ============================================================ */
+
+Object.assign(RPC_TTL, { alertas_mias: 60, alertas_cruce: 120, visitas_recientes: 30 });
+let SERVICIOS = [];
+
+async function cargarProductos() {
+  const { data } = await db.rpc('productos_lista');
+  const l = data || [];
+  PRODUCTOS = l.filter(p => (p.tipo || 'producto') === 'producto');
+  SERVICIOS = l.filter(p => p.tipo === 'servicio');
+}
+
+/* ---------------- móvil: los cuatro principales y «Más» ---------------- */
+
+function pintarBnav() {
+  const b = $('bnav'); if (!b) return;
+  const principales = ['inicio', 'agenda', 'rutas', 'directorio'];
+  const iconos = { inicio: '◉', agenda: '▤', rutas: '➤', directorio: '☰' };
+  b.innerHTML = principales.map(t => `<button data-t="${t}" aria-selected="${TAB === t}"><span>${iconos[t]}</span>${esc((document.querySelector(`nav.main [data-t="${t}"]`) || {}).textContent || t)}</button>`).join('')
+    + `<button id="bmasbtn" aria-selected="${!principales.includes(TAB)}"><span>⋯</span>Más</button>`;
+  b.querySelectorAll('[data-t]').forEach(x => x.onclick = () => ir(x.dataset.t));
+  $('bmasbtn').onclick = abrirMasMovil;
+}
+
+function abrirMasMovil() {
+  const principales = ['inicio', 'agenda', 'rutas', 'directorio'];
+  const mods = [...document.querySelectorAll('nav.main [data-t]')]
+    .filter(x => !x.classList.contains('hide') && !x.disabled && !principales.includes(x.dataset.t))
+    .map(x => [x.dataset.t, x.textContent.replace('Pronto', '').trim()]);
+  const extra = [['manual', 'Manual de uso'], ['config', 'Configuración']].concat(PERFIL.rol === 'Administrador' ? [['admin', 'Administración']] : []);
+  let s = $('bmas');
+  if (!s) { document.body.insertAdjacentHTML('beforeend', '<div id="bmas" class="bmas hide"></div>'); s = $('bmas'); }
+  s.innerHTML = `<div class="bmasbox"><div class="fh"><h2>Todos los módulos</h2><button class="x" id="bmasx" aria-label="Cerrar">✕</button></div>
+    <div class="bmasgrid">${mods.concat(extra).map(([t, n]) => `<button data-bm="${t}" class="${TAB === t ? 'on' : ''}">${esc(n)}</button>`).join('')}</div></div>`;
+  s.classList.remove('hide');
+  $('bmasx').onclick = () => s.classList.add('hide');
+  s.onclick = e => { if (e.target === s) s.classList.add('hide'); };
+  s.querySelectorAll('[data-bm]').forEach(x => x.onclick = () => {
+    s.classList.add('hide');
+    if (x.dataset.bm === 'config') { ir('config'); return; }
+    ir(x.dataset.bm);
+  });
+}
+
+/* ---------------- entrar como otro usuario ---------------- */
+
+const SKEY = 'dlc-suplantador';
+const suplantando = () => { try { return JSON.parse(localStorage.getItem(SKEY) || 'null'); } catch (e) { return null; } };
+const puedeSuplantar = () => PERFIL && (PERFIL.rol === 'Administrador' || ((PERFIL.areas || {}).U || 0) >= 3) && !suplantando();
+
+function limpiarDatosLocales() {
+  try { Object.keys(localStorage).filter(k => /^dlc-(rc-|perfil|jornada-)/.test(k)).forEach(k => localStorage.removeItem(k)); } catch (e) {}
+}
+
+async function entrarComo(id) {
+  const u = (USUARIOS || []).find(x => x.id === id) || { nombre: 'esta persona' };
+  if (!await preguntar(`Verás la plataforma exactamente como ${u.nombre}: su menú, sus permisos, su cartera y sus datos.\n\nLo que hagas quedará a su nombre, y la entrada queda anotada en la auditoría. Para volver, pulsa «Volver a mi sesión» en la barra morada.`,
+    { titulo: `¿Entrar como ${u.nombre}?`, ok: 'Entrar como ' + String(u.nombre).split(' ')[0] })) return;
+  const { data: { session } } = await db.auth.getSession();
+  if (!session) return;
+  const { data, error } = await db.functions.invoke('impersonar', { body: { usuario_id: id } });
+  if (error || !data || !data.ok) {
+    const e = data && data.error;
+    toast(e === 'administrador' ? 'No se puede entrar como otro administrador'
+      : e === 'permiso' ? 'No tienes permiso para entrar como otra persona'
+      : e === 'inactivo' ? 'Ese usuario está desactivado'
+      : 'No se ha podido: ' + ((error && error.message) || e || 'la función «impersonar» no responde'), true);
+    return;
+  }
+  localStorage.setItem(SKEY, JSON.stringify({ access_token: session.access_token, refresh_token: session.refresh_token,
+    nombre: PERFIL.nombre, id: PERFIL.id, como: data.nombre, rol: data.rol, desde: Date.now() }));
+  const { error: e2 } = await db.auth.verifyOtp({ token_hash: data.token_hash, type: 'magiclink' });
+  if (e2) {
+    localStorage.removeItem(SKEY);
+    await db.auth.setSession({ access_token: session.access_token, refresh_token: session.refresh_token });
+    toast('No se ha podido abrir su sesión: ' + e2.message, true); return;
+  }
+  limpiarDatosLocales();
+  location.reload();
+}
+
+async function volverAMiSesion() {
+  const s = suplantando(); if (!s) return;
+  const { error } = await db.auth.setSession({ access_token: s.access_token, refresh_token: s.refresh_token });
+  localStorage.removeItem(SKEY);
+  limpiarDatosLocales();
+  if (error) { await db.auth.signOut(); toast('Tu sesión había caducado: vuelve a entrar', true); }
+  location.reload();
+}
+
+function pintarBarraSuplantacion() {
+  const s = suplantando();
+  let b = $('barrasup');
+  if (!s) { if (b) b.remove(); return; }
+  if (!b) { document.body.insertAdjacentHTML('afterbegin', '<div id="barrasup"></div>'); b = $('barrasup'); }
+  b.innerHTML = `<span>👤 <b>Estás dentro como ${esc(PERFIL ? PERFIL.nombre : s.como)}</b>${PERFIL ? ' · ' + esc(PERFIL.rol) : ''} · Ves lo mismo que esa persona y lo que hagas queda a su nombre</span>
+    <button class="btn" id="supvolver">↩ Volver a mi sesión (${esc(String(s.nombre).split(' ')[0])})</button>`;
+  $('supvolver').onclick = volverAMiSesion;
+}
+
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-ucomo]');
+  if (b) entrarComo(b.dataset.ucomo);
+});
+
+AREAS.push(['U', 'Entrar como otro usuario']);
+
+/* ---------------- manual de uso ---------------- */
+
+const NIVEL_TXT = ['Sin acceso', 'Ver', 'Editar', 'Completo'];
+const nivelDe = a => PERFIL.rol === 'Administrador' ? 3 : ((PERFIL.areas || {})[a] || 0);
+
+const MANUAL = [
+  { id: 'inicio', t: 'Inicio', a: 'H', para: 'El resumen de tu día y de tu semana: indicadores, alertas, tu agenda de hoy y lo que conviene hacer.',
+    hacer: [[1, 'Ver tus indicadores, tu semana, tus ventas del mes y las alertas'], [1, 'Personalizar qué indicadores ves (icono ⚙)'], [1, 'Compartir el resumen de la semana por WhatsApp o email']],
+    config: ['Indicadores visibles y su orden (⚙ junto a «Compartir la semana»)'] },
+  { id: 'agenda', t: 'Agenda y «Tu día»', a: 'G', para: 'Tus citas por día, semana o mes. La vista de día es tu ruta: orden, horas estimadas y registro de visitas.',
+    hacer: [[1, 'Ver tu agenda'], [2, 'Crear, mover, aplazar, confirmar o descartar citas'], [2, 'Ordenar tu día por cercanía y empezar la jornada'], [2, 'Planificar la semana y bloquear días'],
+      [3, 'Ver la agenda de otra persona y el cumplimiento del equipo (administración y televenta)']],
+    config: ['Horario de rutas: salida, hora tope y minutos por visita (Rutas → ⚙ Horario de rutas)', 'Aviso de visita reciente (Configuración → Preferencias)', 'Frecuencia objetivo por estado (Agenda → Equipo, administración)'] },
+  { id: 'rutas', t: 'Rutas', a: 'R', para: 'Plantillas de médicos para llenar tu agenda: listas fijas o por criterios, y propuestas automáticas.',
+    hacer: [[1, 'Ver tus rutas y las propuestas'], [2, 'Crear y editar rutas, planificarlas y pasarlas a tu agenda']],
+    config: ['Punto de salida y llegada (Configuración → Preferencias)', 'Horario de rutas (⚙ Horario de rutas)'] },
+  { id: 'directorio', t: 'Directorio (médicos)', a: 'M', para: 'Todos los médicos que puedes ver: tu cartera o toda la base si eres de administración o televenta.',
+    hacer: [[1, 'Buscar, filtrar y ver fichas'], [2, 'Editar fichas y horarios de consulta'], [3, 'Dar de alta médicos nuevos'], [3, 'Unificar duplicados (administración)']],
+    config: ['Columnas visibles (⋯ → Elegir columnas)', 'Filtros guardados como indicadores de Inicio'] },
+  { id: 'centros', t: 'Centros', a: 'C', para: 'Las fichas de clínicas, hospitales y centros.',
+    hacer: [[1, 'Ver fichas de centros'], [2, 'Editarlas'], [3, 'Darlas de alta']], config: [] },
+  { id: 'visitas', t: 'Visitas', a: 'S', para: 'El registro de cada visita: resultado, muestras, material entregado y próxima acción.',
+    hacer: [[1, 'Ver el historial de visitas'], [2, 'Registrar y editar visitas']],
+    config: ['Resultados y material comercial con su dato (Configuración → Clasificadores, «+ Dato»)'] },
+  { id: 'ventas', t: 'Ventas, Clientes y Productos', a: 'V', para: 'Pedidos con IVA y servicios, clientes (pacientes y empresas) y el catálogo de productos y servicios.',
+    hacer: [[1, 'Ver los pedidos y clientes de tus médicos'], [2, 'Crear, validar y anular pedidos; dar de alta clientes (televenta)'], [3, 'Todo lo anterior sobre toda la base']],
+    config: ['Productos y servicios (solo administración)', 'Servicio propuesto por defecto en pedidos nuevos'] },
+  { id: 'config', t: 'Configuración', a: 'K', para: 'Tus preferencias y las listas que usa toda la plataforma.',
+    hacer: [[0, 'Cambiar tus preferencias de salida, llegada, navegador y avisos'], [1, 'Ver clasificadores'], [2, 'Añadir y editar valores de clasificadores'], [3, 'Crear clasificadores nuevos']], config: [] },
+  { id: 'admin', t: 'Administración', a: null, para: 'Usuarios, permisos, carteras, comisiones, accesos y auditoría. Solo administración.',
+    hacer: [[3, 'Crear y editar usuarios y sus permisos'], [3, 'Asignar carteras (exclusivas o no)'], [3, 'Configurar comisiones y liquidar'], [3, 'Entrar como otro usuario para ver lo que ve']],
+    config: ['Cartera exclusiva: un médico en una sola cartera (Agenda → Equipo → ⚙ Reglas de cartera)'] }
+];
+
+const FAQ = [
+  ['No veo un módulo', 'Depende de tus permisos. En la ficha de cada módulo de este manual ves tu nivel de acceso; si necesitas más, pídelo a administración.'],
+  ['He registrado una visita por error', 'Abre la ficha del médico, busca la visita en el historial y pulsa «Editar»: puedes corregirla o borrarla.'],
+  ['La hora estimada de una cita no cuadra', 'Revisa tu horario de rutas y el horario de consulta del médico en su ficha. La estimación cuenta desplazamientos, esperas y minutos por visita.'],
+  ['Un médico no aparece en mis rutas', 'Solo entran médicos con ubicación y, si tiene horario de consulta, en sus días y horas. Revisa su ficha.'],
+  ['¿Puedo usar la app sin conexión?', 'Sí: consulta lo último que viste y registra visitas; se envían solas al recuperar la conexión.'],
+  ['¿Por qué no puedo descargar datos?', 'Por seguridad: los datos de médicos y ventas solo se consultan dentro de la plataforma.']
+];
+
+async function cargarManual() {
+  const v = $('v-manual');
+  const accesoTxt = s => s.a ? NIVEL_TXT[nivelDe(s.a)] : (PERFIL.rol === 'Administrador' ? 'Completo' : 'Sin acceso');
+  const nivelSec = s => s.a ? nivelDe(s.a) : (PERFIL.rol === 'Administrador' ? 3 : 0);
+  v.innerHTML = `
+    <div class="saludo"><div><h1>Manual de uso</h1><div class="fecha">Qué hace cada parte, qué puedes hacer tú y dónde se configura</div></div></div>
+    <div class="panel"><div class="filtros" style="grid-template-columns:1fr"><div><label for="manq">Buscar</label>
+      <input id="manq" type="search" placeholder="Escribe lo que quieres hacer: aplazar una cita, bloquear un día, material…"></div></div></div>
+    <div id="mancuerpo">${MANUAL.map(s => {
+      const n = nivelSec(s), ay = AYUDA[s.id === 'visitas' ? 'agenda' : s.id === 'centros' ? 'directorio' : s.id] || null;
+      return `<div class="card mansec" data-man="${s.id}">
+        <div class="manh"><h2 style="padding:0">${esc(s.t)}</h2><span class="pill ${n >= 2 ? 'p-est' : n === 1 ? 'p-per' : 'p-anu'}">Tu acceso: ${accesoTxt(s)}</span></div>
+        <p>${esc(s.para)}</p>
+        <h3>Qué se puede hacer</h3>
+        <ul class="manlist">${s.hacer.map(([req, txt]) => `<li class="${n >= req ? 'si' : 'no'}">${n >= req ? '✓' : '🔒'} ${esc(txt)}${n >= req ? '' : ` <span class="sm">· necesitas «${esc(s.a ? (AREAS.find(x => x[0] === s.a) || [])[1] || s.t : 'Administración')}» en ${NIVEL_TXT[req]}</span>`}</li>`).join('')}</ul>
+        ${ay && ay[2] && ay[2].length ? `<h3>Cómo funciona</h3><ul class="manlist">${ay[2].map(x => `<li>${x}</li>`).join('')}</ul>` : ''}
+        ${s.config.length ? `<h3>Dónde se configura</h3><ul class="manlist">${s.config.map(x => `<li>⚙ ${esc(x)}</li>`).join('')}</ul>` : ''}
+      </div>`;
+    }).join('')}
+    <div class="card mansec" data-man="faq"><h2>Preguntas frecuentes</h2>
+      ${FAQ.map(([q, r]) => `<details class="manfaq"><summary>${esc(q)}</summary><p>${esc(r)}</p></details>`).join('')}</div></div>`;
+  $('manq').oninput = e => {
+    const q = e.target.value.trim().toLowerCase();
+    v.querySelectorAll('.mansec').forEach(c => {
+      const ok = !q || c.textContent.toLowerCase().includes(q);
+      c.classList.toggle('hide', !ok);
+      c.querySelectorAll('li, details').forEach(li => li.classList.toggle('manhit', !!q && li.textContent.toLowerCase().includes(q)));
+      if (q && ok) c.querySelectorAll('details').forEach(d => { if (d.textContent.toLowerCase().includes(q)) d.open = true; });
+    });
+  };
+}
+
+/* ---------------- navegación: manual y barra de suplantación ---------------- */
+
+const irV2270 = ir;
+ir = function (t) {
+  if (t === 'manual') {
+    irV2270('manual');
+    document.querySelectorAll('main > section').forEach(s => s.classList.toggle('hide', s.id !== 'v-manual'));
+    cargarManual();
+  } else {
+    $('v-manual').classList.add('hide');
+    irV2270(t);
+  }
+  pintarBnav();
+};
+
+const mostrarAppV2270 = mostrarApp;
+mostrarApp = function (perfil) {
+  mostrarAppV2270(perfil);
+  pintarBarraSuplantacion();
+  pintarBnav();
+  if (!$('manbtn')) {
+    const ub = document.querySelector('[data-u="cfg"]');
+    if (ub) ub.insertAdjacentHTML('beforebegin', '<button data-u="manual" id="manbtn">Manual de uso</button>');
+  }
+};
+document.addEventListener('click', e => {
+  if (e.target.closest('#manbtn')) { e.stopPropagation(); document.querySelectorAll('.umenu').forEach(m => m.classList.add('hide')); ir('manual'); }
+}, true);
+
+/* ---------------- reglas de cartera ---------------- */
+
+async function editorReglasCartera() {
+  await cargarAjustes();
+  const excl = !AJUSTES.cartera || AJUSTES.cartera.exclusiva !== false;
+  $('dbody').innerHTML = `
+    <div class="fh"><div><h2>Reglas de cartera</h2><div class="sm">Cómo se reparten los médicos entre el equipo</div></div>
+      <button class="x" data-cerrar aria-label="Cerrar">✕</button></div>
+    <label class="opt" style="margin-top:10px"><input type="checkbox" id="rcexcl" ${excl ? 'checked' : ''}>
+      <span><b>Cartera exclusiva</b><br><span class="sm">Un médico solo puede estar en la cartera de una persona. Al asignarlo a alguien, sale de la cartera de quien lo tuviera.</span></span></label>
+    <p class="sm">Si la desactivas, un médico podrá estar en varias carteras y administración verá una alerta «Médicos en más de una cartera» en Inicio.</p>
+    <div class="acts" style="justify-content:flex-end"><button class="btn sec" data-cerrar>Cancelar</button><button class="btn" id="rcok">Guardar</button></div>`;
+  $('dlg').showModal();
+  $('rcok').onclick = async () => {
+    const { data: r, error } = await db.rpc('guardar_ajuste', { p_clave: 'cartera', p_valor: { exclusiva: $('rcexcl').checked } });
+    if (error || (r && r.ok === false)) { toast('No se ha podido guardar', true); return; }
+    AJUSTES.cartera = { exclusiva: $('rcexcl').checked }; $('dlg').close(); toast('Reglas guardadas');
+  };
+}
+
+pintarEquipo = (orig => async function () {
+  await orig();
+  const h = $('agcuerpo').querySelector('.semhead');
+  if (h && PERFIL.rol === 'Administrador' && !$('eqcart')) {
+    h.insertAdjacentHTML('beforeend', '<button class="btn sec" id="eqcart">⚙ Reglas de cartera</button>');
+    $('eqcart').onclick = editorReglasCartera;
+  }
+})(pintarEquipo);
+
+/* ---------------- aviso de visita reciente ---------------- */
+
+const avisoRevisita = () => Object.assign({ on: true, dias: 7 }, ((PERFIL.preferencias || {}).avisos || {}).revisita || {});
+
+async function guardarAvisoRevisita(v) {
+  const prefs = Object.assign({}, PERFIL.preferencias || {});
+  prefs.avisos = Object.assign({}, prefs.avisos || {}, { revisita: v });
+  const { data, error } = await db.rpc('guardar_preferencias', { p: prefs });
+  if (error) { toast('No se ha podido guardar', true); return false; }
+  PERFIL.preferencias = data || prefs;
+  return true;
+}
+
+/** Visitas o citas de estos médicos cerca de la fecha (sin contar ese mismo día). */
+async function recientesDe(ids, fecha) {
+  const a = avisoRevisita(); if (!a.on || !ids.length) return {};
+  const { data } = await db.rpc('visitas_recientes', { p_ids: ids, p_desde: isoMas(fecha, -(a.dias - 1)), p_hasta: isoMas(fecha, a.dias - 1) });
+  const por = {};
+  (data || []).filter(x => x.fecha !== fecha).forEach(x => (por[x.medico_id] = por[x.medico_id] || []).push(x));
+  return por;
+}
+const txtReciente = l => l.map(x => `${x.tipo === 'visita' ? 'visitado' : 'cita'} el ${fechaCorta(x.fecha)}${x.usuario ? ' (' + x.usuario + ')' : ''}`).join(', ');
+
+citaRepetida = (orig => async function (medicoId, fecha) {
+  const r = await orig(medicoId, fecha);
+  if (!r) return r;
+  const por = await recientesDe([medicoId], fecha);
+  const l = por[medicoId];
+  if (!l || !l.length) return r;
+  const op = await elegirOpcion('Ya se ha visto hace poco', `${txtReciente(l.slice(0, 3))}.\n\n¿Añades la cita igualmente?`,
+    [{ k: 'no', t: 'Cancelar', cls: 'sec' }, { k: 'nomas', t: 'Sí, y no volver a avisarme', cls: 'sec' }, { k: 'si', t: 'Añadir igualmente' }]);
+  if (!op) return null;
+  if (op === 'nomas') { await guardarAvisoRevisita(Object.assign(avisoRevisita(), { on: false })); toast('Aviso desactivado. Puedes activarlo en Configuración → Preferencias'); }
+  return r;
+})(citaRepetida);
+
+// Plan de ruta: marca a quien ya se ha visto hace poco y permite quitarlo
+pintarPlan = (orig => function () {
+  orig();
+  if (!PLAN || !$('rplan') || PLAN.__recientes === undefined && !PLAN.__pedido) {
+    if (PLAN && !PLAN.__pedido) {
+      PLAN.__pedido = true;
+      const ids = PLAN.paradas.flatMap(p => p.medicos.map(m => m.id));
+      recientesDe(ids, PLAN.fecha || hoyISO()).then(por => { if (!PLAN) return; PLAN.__recientes = por; pintarPlan(); });
+    }
+    return;
+  }
+  const por = PLAN.__recientes || {};
+  const ids = Object.keys(por);
+  if (!ids.length) return;
+  $('rplan').querySelectorAll('.pmed').forEach(el => {
+    const m = PLAN.paradas.flatMap(p => p.medicos).find(x => el.textContent.includes(x.nombre));
+    if (m && por[m.id] && !el.querySelector('.prec')) el.insertAdjacentHTML('beforeend', ` <span class="prec">⚠ ${esc(txtReciente(por[m.id].slice(0, 2)))}</span>`);
+  });
+  const card = $('rplan').querySelector('.card');
+  if (card && !$('planrec')) {
+    card.querySelector('h2').insertAdjacentHTML('afterend', `<div class="avisoh" id="planrec"><span>⚠ ${ids.length} ${ids.length === 1 ? 'médico del plan ya se ha' : 'médicos del plan ya se han'} visitado o tienen cita en los últimos ${avisoRevisita().dias} días.</span>
+      <button class="btn sec" id="planquitar">Quitarlos del plan</button></div>`);
+    $('planquitar').onclick = () => {
+      const u = ULTIMO_PLAN; if (!u) return;
+      construirPlan(u.conXY.filter(m => !ids.includes(m.id)), u.rutaId, null, u.opts);
+    };
+  }
+})(pintarPlan);
+
+// Preferencias: el aviso se puede activar, desactivar y ajustar
+pintarPrefs = (orig => function () {
+  orig();
+  const acts = $('pfguardar') && $('pfguardar').closest('.acts');
+  if (!acts || $('pfaviso')) return;
+  const a = avisoRevisita();
+  acts.insertAdjacentHTML('beforebegin', `<div class="blk" id="pfaviso"><h3>Avisos</h3>
+    <label class="opt"><input type="checkbox" id="pfrev" ${a.on ? 'checked' : ''}>
+      <span><b>Avisarme si un médico ya se ha visitado hace poco</b><br><span class="sm">Al añadir una cita, al planificar una ruta o la semana. Cuenta visitas y citas de cualquier persona.</span></span></label>
+    <div class="g2"><div><label for="pfrevd">Cuántos días cuentan como «hace poco»</label><input id="pfrevd" type="number" min="1" max="60" value="${a.dias}"></div></div></div>`);
+  const guardar = () => guardarAvisoRevisita({ on: $('pfrev').checked, dias: Math.max(1, +$('pfrevd').value || 7) }).then(ok => ok && toast('Aviso guardado'));
+  $('pfrev').onchange = guardar; $('pfrevd').onchange = guardar;
+})(pintarPrefs);
+
+/* ---------------- servicios en Productos ---------------- */
+
+let PSEC = 'productos';
+async function cargarProductosModulo() {
+  const esAdmin = PERFIL.rol === 'Administrador';
+  vaciarModulos('v-productos');
+  $('v-productos').innerHTML = `
+    <div class="saludo"><div><h1>Productos</h1><div class="fecha">Catálogo de productos y servicios, con precios sin IVA y con IVA</div></div>
+      <div class="acts" style="margin:0">${esAdmin ? `<button class="btn" id="prodnuevo">+ Nuevo ${PSEC === 'servicios' ? 'servicio' : 'producto'}</button>` : ''}</div></div>
+    <div class="subnav"><button data-ps="productos" aria-pressed="${PSEC === 'productos'}">Productos</button>
+      <button data-ps="servicios" aria-pressed="${PSEC === 'servicios'}">Servicios</button></div>
+    <div id="vcuerpo"></div>`;
+  $('v-productos').querySelectorAll('[data-ps]').forEach(b => b.onclick = () => { PSEC = b.dataset.ps; cargarProductosModulo(); });
+  if ($('prodnuevo')) $('prodnuevo').onclick = () => PSEC === 'servicios' ? editorServicio(null) : editorProducto(null);
+  if (PSEC === 'servicios') pintarServicios(); else pintarProductos();
+}
+
+async function pintarProductos() {
+  const esAdmin = PERFIL.rol === 'Administrador';
+  cargando($('vcuerpo'), 'Cargando productos…');
+  const { data } = await RPC_ORIG('productos_lista', { p_todos: esAdmin });
+  const l = (data || []).filter(p => (p.tipo || 'producto') === 'producto');
+  $('vcuerpo').innerHTML = `<div class="panel">
+    <div class="cuenta"><b>${num(l.filter(p => p.activo).length)}</b> ${l.filter(p => p.activo).length === 1 ? 'producto activo' : 'productos activos'}${l.some(p => !p.activo) ? ` · ${num(l.filter(p => !p.activo).length)} inactivos` : ''}</div>
+    <div class="dgrid-wrap"><div class="dgrid prods">
+      <div class="dh"><span></span><span>Producto</span><span>Referencia</span><span class="num">Sin IVA</span><span class="num">IVA</span><span class="num">Con IVA</span><span>Estado</span></div>
+      ${l.map(p => `<button class="dr" data-prod="${p.id}" style="${p.activo ? '' : 'opacity:.55'}">
+        <span><span class="pfoto" style="${p.foto_url ? `background-image:url('${esc(p.foto_url)}')` : ''}">${p.foto_url ? '' : '◧'}</span></span>
+        <span><b>${esc(p.nombre)}</b><span class="sm">${esc(p.presentacion || 'Sin presentación')}</span></span>
+        <span class="sm">${esc(p.referencia || '—')}</span><span class="num">${p.precio != null ? eurI(p.precio) : '—'}</span>
+        <span class="num">${num(p.iva || 0)}%</span><span class="num"><b>${p.pvp != null ? eurI(p.pvp) : '—'}</b></span>
+        <span><span class="pill ${p.activo ? 'p-est' : 'p-anu'}">${p.activo ? 'Activo' : 'Inactivo'}</span></span></button>`).join('') || '<div class="vacio">Todavía no hay productos.</div>'}
+    </div></div></div>`;
+  $('vcuerpo').querySelectorAll('[data-prod]').forEach(b => b.onclick = () => editorProducto(l.find(p => p.id === b.dataset.prod)));
+}
+
+async function pintarServicios() {
+  const esAdmin = PERFIL.rol === 'Administrador';
+  cargando($('vcuerpo'), 'Cargando servicios…');
+  const { data } = await RPC_ORIG('productos_lista', { p_todos: esAdmin });
+  const l = (data || []).filter(p => p.tipo === 'servicio');
+  $('vcuerpo').innerHTML = `<div class="panel">
+    <div class="cuenta"><b>${num(l.filter(p => p.activo).length)}</b> servicios activos · Un pedido puede llevar un servicio (envío, portes urgentes…), que se suma con su propio IVA.</div>
+    <div class="dgrid-wrap"><div class="dgrid servs">
+      <div class="dh"><span>Servicio</span><span class="num">Sin IVA</span><span class="num">IVA</span><span class="num">Con IVA</span><span>En pedidos nuevos</span><span>Estado</span></div>
+      ${l.map(p => `<button class="dr" data-serv="${p.id}" style="${p.activo ? '' : 'opacity:.55'}">
+        <span><b>${esc(p.nombre)}</b></span><span class="num">${p.precio != null ? eurI(p.precio) : '—'}</span>
+        <span class="num">${num(p.iva || 0)}%</span><span class="num"><b>${p.pvp != null ? eurI(p.pvp) : '—'}</b></span>
+        <span>${p.por_defecto ? '<span class="pill p-est">Se propone por defecto</span>' : '<span class="vac">—</span>'}</span>
+        <span><span class="pill ${p.activo ? 'p-est' : 'p-anu'}">${p.activo ? 'Activo' : 'Inactivo'}</span></span></button>`).join('') || '<div class="vacio">Todavía no hay servicios.</div>'}
+    </div></div></div>`;
+  $('vcuerpo').querySelectorAll('[data-serv]').forEach(b => b.onclick = () => editorServicio(l.find(p => p.id === b.dataset.serv)));
+}
+
+function editorServicio(s) {
+  const esAdmin = PERFIL.rol === 'Administrador';
+  s = s || { iva: 21, activo: true };
+  const ro = esAdmin ? '' : 'disabled';
+  $('dbody').innerHTML = `
+    <div class="fh"><div><h2>${s.id ? esc(s.nombre) : 'Nuevo servicio'}</h2>
+      <div class="sm">Escribe el precio sin IVA o con IVA: el otro se calcula solo. En cada pedido se puede cambiar.</div></div>
+      <button class="x" data-cerrar aria-label="Cerrar">✕</button></div>
+    <label for="svn">Nombre</label><input id="svn" value="${esc(s.nombre || '')}" placeholder="p. ej. Envío, Envío urgente" ${ro}>
+    <div class="pvp">
+      <div><label for="svs">Sin IVA (€)</label><input id="svs" type="number" step="0.01" min="0" value="${s.precio != null ? +(+s.precio).toFixed(4) : ''}" ${ro}></div>
+      <div><label for="svi">IVA (%)</label><input id="svi" type="number" step="1" min="0" max="21" value="${s.iva != null ? s.iva : 21}" ${ro}></div>
+      <div><label for="svc">Con IVA (€)</label><input id="svc" type="number" step="0.01" min="0" value="${s.precio != null ? r2(s.precio * (1 + (+s.iva || 0) / 100)) : ''}" ${ro}></div></div>
+    <label class="opt" style="margin-top:12px"><input type="checkbox" id="svdef" ${s.por_defecto ? 'checked' : ''} ${ro}> Proponerlo por defecto en los pedidos nuevos</label>
+    ${s.id ? `<label class="opt" style="margin-top:8px"><input type="checkbox" id="svact" ${s.activo ? 'checked' : ''} ${ro}> Activo</label>` : ''}
+    <div class="acts" style="justify-content:flex-end"><button class="btn sec" data-cerrar>${esAdmin ? 'Cancelar' : 'Cerrar'}</button>
+      ${esAdmin ? `<button class="btn" id="svok">${s.id ? 'Guardar' : 'Crear servicio'}</button>` : ''}</div>`;
+  $('dlg').showModal();
+  if (!esAdmin) return;
+  const iva = () => (+$('svi').value || 0) / 100;
+  $('svs').oninput = () => { $('svc').value = $('svs').value === '' ? '' : r2(+$('svs').value * (1 + iva())); };
+  $('svc').oninput = () => { $('svs').value = $('svc').value === '' ? '' : +(+$('svc').value / (1 + iva())).toFixed(4); };
+  $('svi').oninput = () => { if ($('svs').value !== '') $('svc').value = r2(+$('svs').value * (1 + iva())); };
+  $('svok').onclick = async () => {
+    if (!$('svn').value.trim()) { toast('Escribe el nombre', true); return; }
+    const { data: r, error } = await db.rpc('guardar_producto', { p: { id: s.id || null, tipo: 'servicio', nombre: $('svn').value.trim(),
+      precio: $('svs').value, iva: $('svi').value, por_defecto: $('svdef').checked, ...($('svact') ? { activo: $('svact').checked } : {}) } });
+    if (error || (r && r.ok === false)) { toast('No se ha podido guardar', true); return; }
+    $('dlg').close(); toast(s.id ? 'Servicio guardado' : 'Servicio creado');
+    await cargarProductos(); if (TAB === 'productos') pintarServicios();
+  };
+}
+
+/* ---------------- Rutas: resumen como pantalla de entrada ---------------- */
+
+RSEC = 'inicio';
+
+async function resumenRutas() {
+  const hoy = hoyISO();
+  const [{ data: rutas }, { data: pr }, citasHoy] = await Promise.all([db.rpc('rutas_visibles'), db.rpc('propuestas_rutas', { lim: 60 }), citasDelDia(hoy)]);
+  RUTAS = rutas || [];
+  const j = jornadaActiva();
+  const abiertas = citasHoy.filter(c => CITA_ABIERTA.includes(c.estado)).length;
+  const hechas = citasHoy.filter(c => c.estado === 'Visitada').length;
+  const grupos = [['hoy', '📅', 'Pasan consulta hoy', 'y no se visitan desde hace 14 días'], ['urgentes', '❗', 'Urgentes sin visitar', ''],
+    ['interesados', '🔥', 'Interesados sin visita en 20 días', ''], ['sin_visitar', '🆕', 'Nunca visitados', 'con ubicación']];
+  PROPUESTAS = pr || {};
+  $('rcuerpo').innerHTML = `
+    <div class="rgrid">
+      <div class="card"><h2>Hoy</h2>
+        ${j ? `<p><b style="color:var(--ok)">● Jornada en curso</b> · ${hechas} visitadas, ${abiertas} por hacer</p>`
+          : (hechas + abiertas) ? `<p>Tienes <b>${hechas + abiertas}</b> citas hoy: ${hechas} visitadas y ${abiertas} por hacer.</p>`
+          : '<p>No tienes citas hoy. Elige una propuesta o una de tus rutas y pásala a tu agenda.</p>'}
+        <div class="acts"><button class="btn" id="rrdia">Ver mi día</button><button class="btn sec" id="rrsem">Planificar la semana</button></div></div>
+      <div class="card"><h2>Propuestas para hoy</h2><p class="sm">Calculadas con tus datos. Al pulsar se prepara el plan.</p>
+        <div class="lista">${grupos.map(([k, ic, t, s]) => { const n = ((pr || {})[k] || []).filter(m => m.lat).length; return `<button class="item" data-rrprop="${k}" ${n ? '' : 'disabled style="opacity:.5"'}>
+          <span class="ic">${ic}</span><span class="tx"><b>${t}</b><span class="sm">${n} médicos${s ? ' ' + s : ''}</span></span><span class="n">${n}</span></button>`; }).join('')}</div></div>
+      <div class="card"><h2>Mis rutas<span class="n">${RUTAS.length}</span></h2>
+        ${RUTAS.length ? `<div class="lista">${RUTAS.slice(0, 6).map(r => `<button class="item" data-ruta="${r.id}"><span class="ic">➤</span>
+          <span class="tx"><b>${esc(r.nombre)}</b><span class="sm">${r.tipo === 'criterios' ? 'Por criterios' : 'Lista fija'}${r.n != null ? ' · ' + num(r.n) + ' médicos' : ''}</span></span></button>`).join('')}</div>
+          ${RUTAS.length > 6 ? '<button class="verlo" data-rs="mis">Ver todas</button>' : ''}`
+        : `<div class="rguia"><p><b>Aún no tienes rutas.</b> Una ruta es una lista de médicos que visitas a menudo. Tres pasos:</p>
+            <ol><li><b>+ Nueva ruta</b>: elige médicos concretos o unos criterios (municipio, estado, días de consulta).</li>
+              <li><b>Planificar</b>: la app ordena las paradas y calcula las horas con tu horario.</li>
+              <li><b>Guardar en mi agenda</b> o <b>Empezar</b>: el plan pasa a «Tu día».</li></ol>
+            <div class="acts"><button class="btn" id="rrnueva">+ Crear mi primera ruta</button></div></div>`}</div>
+    </div>`;
+  $('rrdia').onclick = () => { AG_MODO = 'dia'; AG_FECHA = hoy; ir('agenda'); };
+  $('rrsem').onclick = () => { AG_MODO = 'semana'; AG_FECHA = hoy; ir('agenda'); setTimeout(() => $('semplan') && $('semplan').click(), 900); };
+  if ($('rrnueva')) $('rrnueva').onclick = () => editorRuta(null);
+  $('rcuerpo').querySelectorAll('[data-rrprop]').forEach(b => b.onclick = () => planDesdeLista((pr || {})[b.dataset.rrprop] || [], b.dataset.rrprop, b));
+  $('rcuerpo').querySelectorAll('[data-ruta]').forEach(b => b.onclick = () => planificar(b.dataset.ruta, b));
+  $('rcuerpo').querySelectorAll('[data-rs]').forEach(b => b.onclick = () => { RSEC = b.dataset.rs; cargarRutas(); });
+}
+
+/* ---------------- Inicio: mi semana, ventas, alertas y equipo ---------------- */
+
+pintarInicio = (orig => async function () {
+  await orig();
+  if (TAB !== 'inicio') return;
+  if (!$('iniextra')) $('kpis').insertAdjacentHTML('afterend', '<div class="iniextra" id="iniextra"></div>');
+  const cont = $('iniextra');
+  const esTop = VE_TODO();
+  const desde = lunesDe(hoyISO()), hoy = hoyISO();
+  const mesIni = hoy.slice(0, 8) + '01', ant = new Date(mesIni + 'T12:00:00'); ant.setMonth(ant.getMonth() - 1);
+  const antIni = fechaLocal(ant), antFin = isoMas(mesIni, -1);
+  const antMismoDia = isoMas(antIni, +hoy.slice(8, 10) - 1) > antFin ? antFin : isoMas(antIni, +hoy.slice(8, 10) - 1);
+  cont.innerHTML = ['Mi semana', 'Ventas del mes', 'Alertas'].concat(esTop ? ['Equipo esta semana'] : []).map(t => `<div class="card">${skelCard(t)}</div>`).join('');
+  const [sem, v1, v0, mias, cruce, equipo, toca] = await Promise.all([
+    RPC_ORIG('agenda_rango', { p_desde: desde, p_hasta: isoMas(desde, 6), p_usuario: PERFIL.id }).then(r => r.data || []),
+    db.rpc('analitica_v2', { p_dim: 'producto', p_desde: mesIni, p_hasta: hoy }).then(r => (r.data || {}).totales || {}),
+    db.rpc('analitica_v2', { p_dim: 'producto', p_desde: antIni, p_hasta: antMismoDia }).then(r => (r.data || {}).totales || {}),
+    db.rpc('alertas_mias').then(r => r.data || []),
+    esTop ? db.rpc('alertas_cruce', { p_dias: 30 }).then(r => r.data || []) : Promise.resolve([]),
+    esTop ? db.rpc('supervision_equipo', { p_desde: desde, p_hasta: isoMas(desde, 6) }).then(r => r.data || []) : Promise.resolve([]),
+    db.rpc('toca_visitar', { p_usuario: PERFIL.id, lim: 300 }).then(r => (r.data || []).length)
+  ]);
+  if (TAB !== 'inicio' || !$('iniextra')) return;
+  const pasadas = sem.filter(c => c.fecha < hoy && !['Descartada'].includes(c.estado));
+  const cerradasOk = pasadas.filter(c => c.estado === 'Visitada').length;
+  const cumple = pasadas.length ? Math.round(cerradasOk / pasadas.length * 100) : null;
+  const semVis = sem.filter(c => c.estado === 'Visitada').length, semPend = sem.filter(c => CITA_ABIERTA.includes(c.estado) && c.fecha >= hoy).length;
+  const delta = (a, b) => !b ? '' : `<span class="delta ${a >= b ? 'up' : 'down'}">${a >= b ? '▲' : '▼'} ${Math.abs(Math.round((a - b) / b * 100))}%</span>`;
+  const alertas = cruce.map(x => Object.assign({ equipo: true }, x)).concat(mias);
+  const eqTot = equipo.reduce((t, x) => { ['visitadas', 'no_estaba', 'aplazadas', 'sin_hacer', 'atrasados'].forEach(k => t[k] = (t[k] || 0) + (+x[k] || 0)); return t; }, {});
+  const eqBase = (eqTot.visitadas || 0) + (eqTot.no_estaba || 0) + (eqTot.aplazadas || 0) + (eqTot.sin_hacer || 0);
+  cont.innerHTML = `
+    <div class="card"><h2>Mi semana</h2>
+      <div class="minis"><div><b>${num(semVis)}</b><span>visitadas</span></div><div><b>${num(semPend)}</b><span>por hacer</span></div>
+        <div><b style="${cumple != null && cumple < 60 ? 'color:var(--warn)' : ''}">${cumple == null ? '—' : cumple + '%'}</b><span>cumplimiento</span></div>
+        <div><b style="${toca ? 'color:var(--warn)' : ''}">${num(toca)}</b><span>les toca visita</span></div></div>
+      <div class="acts" style="padding:0 16px 14px"><button class="btn sec" data-inisem="semana">Ver mi semana</button>${toca ? '<button class="btn sec" data-inisem="plan">Planificarlos</button>' : ''}</div></div>
+    <div class="card"><h2>Ventas del mes</h2>
+      <div class="minis"><div><b>${num(v1.unidades || 0)}</b><span>unidades ${delta(+v1.unidades || 0, +v0.unidades || 0)}</span></div>
+        <div><b>${eurI(v1.importe || 0)}</b><span>sin IVA ${delta(+v1.importe || 0, +v0.importe || 0)}</span></div>
+        <div><b>${num(v1.medicos || 0)}</b><span>médicos que prescriben</span></div></div>
+      <p class="sm" style="padding:0 16px 14px">Comparado con los mismos días del mes anterior (${num(v0.unidades || 0)} unidades).</p></div>
+    <div class="card"><h2>Alertas<span class="n">${alertas.reduce((n, a) => n + a.n, 0)}</span></h2>
+      ${alertas.length ? `<div class="lista">${alertas.map((a, i) => `<details class="alerta2 ${a.gravedad || ''}">
+        <summary><span class="an">${num(a.n)}</span> ${esc(a.titulo)}${a.equipo ? ' <span class="pill p-per">equipo</span>' : ''}</summary>
+        <div>${(a.items || []).map(it => `<button class="item" ${a.tipo === 'pedido_sin_medico' ? `data-iniped="${it.id}"` : a.tipo === 'citas_sin_hacer' ? '' : `data-inificha="${it.id}"`} style="padding:6px 8px">
+          <span class="tx"><b>${esc(it.nombre)}</b><span class="sm">${esc(it.quien || '')}</span></span></button>`).join('')}
+          ${a.n > (a.items || []).length ? `<div class="sm" style="padding:4px 8px">y ${num(a.n - a.items.length)} más</div>` : ''}</div></details>`).join('')}</div>`
+        : '<div class="vacio">Todo en orden: no hay cruces ni pendientes.</div>'}</div>
+    ${esTop ? `<div class="card"><h2>Equipo esta semana</h2>
+      <div class="minis"><div><b>${eqBase ? Math.round((eqTot.visitadas || 0) / eqBase * 100) + '%' : '—'}</b><span>cumplimiento</span></div>
+        <div><b>${num(eqTot.visitadas || 0)}</b><span>visitadas</span></div>
+        <div><b style="${eqTot.sin_hacer ? 'color:var(--warn)' : ''}">${num(eqTot.sin_hacer || 0)}</b><span>sin hacer</span></div>
+        <div><b style="${eqTot.atrasados ? 'color:var(--warn)' : ''}">${num(eqTot.atrasados || 0)}</b><span>les toca</span></div></div>
+      <div class="acts" style="padding:0 16px 14px"><button class="btn sec" id="iniequipo">Ver el equipo</button></div></div>` : ''}`;
+  cont.querySelectorAll('[data-inificha]').forEach(b => b.onclick = () => abrirFicha(b.dataset.inificha));
+  cont.querySelectorAll('[data-iniped]').forEach(b => b.onclick = () => verPedido(b.dataset.iniped));
+  cont.querySelectorAll('[data-inisem]').forEach(b => b.onclick = () => {
+    AG_MODO = 'semana'; AG_FECHA = hoyISO(); ir('agenda');
+    if (b.dataset.inisem === 'plan') setTimeout(() => $('semplan') && $('semplan').click(), 900);
+  });
+  if ($('iniequipo')) $('iniequipo').onclick = () => { AG_MODO = 'equipo'; ir('agenda'); };
+})(pintarInicio);
+
+/* ---------------- ayudas ---------------- */
+
+Object.assign(AYUDA, {
+  productos: ['Productos y servicios', 'El catálogo que se usa en pedidos, muestras y analítica.', [
+    '<b>Productos</b>: lo que se vende. Escribe el precio sin IVA o con IVA: el otro se calcula solo.',
+    '<b>Servicios</b>: envío, portes urgentes… Un pedido puede llevar un servicio, que se suma con su propio IVA y no cuenta como unidades.',
+    'Marca un servicio como «por defecto» para que se proponga en los pedidos nuevos.',
+    'Un producto o servicio inactivo no aparece al crear pedidos, pero se conserva en el histórico.']]
+});
+AYUDA.inicio[2].push('<b>Mi semana</b>, <b>Ventas del mes</b> y <b>Alertas</b> resumen lo importante. Administración y televenta ven además los cruces del equipo (médicos en dos carteras, visitas a médicos de otra cartera…) y el cumplimiento del equipo.');
+AYUDA.rutas[2].unshift('La pestaña <b>Resumen</b> muestra tu día, las propuestas para hoy y tus rutas, con accesos directos a planificar.');
+
+
+// Barra inferior del móvil y barra de «Entrar como» desde el primer momento
+pintarBnav();
 
 pintarConexion();
 vaciarCola();
