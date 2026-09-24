@@ -334,10 +334,10 @@ async function abrirFicha(id) {
         <div class="sm">${esc(m.especialidad || '')}${m.area ? ' · ' + esc(m.area) : ''} · código ${esc(m.codigo)}</div></div>
       <button class="x" id="fx" aria-label="Cerrar">✕</button>
     </div>
-    ${(puedeRegistrar() || puedeEditar()) ? `<div class="acts">
+    ${(puedeRegistrar() || puedeEditarTipo(m.tipo)) ? `<div class="acts">
       ${puedeRegistrar() ? `<button class="btn" data-act="visita" data-id="${m.id}">Registrar visita</button>` : ''}
-      ${puedeEditar() ? `<button class="btn sec" data-act="editar" data-id="${m.id}">Editar ficha</button>` : ''}
-      ${puedeEditar() ? `<button class="btn ${m.urgente ? 'sec' : 'warn'}" data-act="urgente" data-id="${m.id}" data-urg="${m.urgente ? 1 : 0}">${m.urgente ? 'Quitar urgente' : 'Marcar urgente'}</button>` : ''}
+      ${puedeEditarTipo(m.tipo) ? `<button class="btn sec" data-act="editar" data-id="${m.id}">Editar ficha</button>` : ''}
+      ${puedeEditarTipo(m.tipo) ? `<button class="btn ${m.urgente ? 'sec' : 'warn'}" data-act="urgente" data-id="${m.id}" data-urg="${m.urgente ? 1 : 0}">${m.urgente ? 'Quitar urgente' : 'Marcar urgente'}</button>` : ''}
       <button class="btn sec" data-agendar="${m.id}">+ Añadir a mi agenda</button>
     </div>` : ''}
     <div class="blk"><h3>Estado</h3>
@@ -391,7 +391,9 @@ const HT = ['15:00-19:00', '16:00-19:00', '16:00-20:00', '17:00-20:00'];
 let FICHA_ID = null;
 
 const puedeEditar = () => PERFIL && (PERFIL.rol === 'Administrador' || ((PERFIL.areas || {}).M || 0) >= 2);
-const puedeCrear = () => PERFIL && (PERFIL.rol === 'Administrador' || ((PERFIL.areas || {}).M || 0) >= 3);
+const puedeEditarTipo = t => PERFIL && (PERFIL.rol === 'Administrador' || ((PERFIL.areas || {})[t === 'Centro' ? 'C' : 'M'] || 0) >= 2);
+const puedeCrearTipo = t => PERFIL && (PERFIL.rol === 'Administrador' || ((PERFIL.areas || {})[t === 'Centro' ? 'C' : 'M'] || 0) >= 3);
+const puedeCrear = () => puedeCrearTipo('Persona') || puedeCrearTipo('Centro');
 const puedeRegistrar = () => PERFIL && (PERFIL.rol === 'Administrador' || ((PERFIL.areas || {}).S || 0) >= 2);
 
 let tToast;
@@ -731,9 +733,9 @@ $('nuevoBtn').addEventListener('click', () => {
     <div class="fh"><div><h2>Crear nuevo</h2><div class="sm">¿Qué quieres dar de alta?</div></div>
       <button class="x" data-cerrar aria-label="Cerrar">✕</button></div>
     <div class="opciones" style="margin-top:10px">
-      <button class="opt" data-crear="Persona" style="flex-direction:column;align-items:flex-start;gap:4px;padding:16px">
+      <button class="opt ${puedeCrearTipo('Persona') ? '' : 'hide'}" data-crear="Persona" style="flex-direction:column;align-items:flex-start;gap:4px;padding:16px">
         <b style="font-size:16px;color:var(--navy)">Médico</b><span class="sm">Profesional con sus consultas y horarios</span></button>
-      <button class="opt" data-crear="Centro" style="flex-direction:column;align-items:flex-start;gap:4px;padding:16px">
+      <button class="opt ${puedeCrearTipo('Centro') ? '' : 'hide'}" data-crear="Centro" style="flex-direction:column;align-items:flex-start;gap:4px;padding:16px">
         <b style="font-size:16px;color:var(--navy)">Centro</b><span class="sm">Clínica, hospital o centro médico</span></button>
     </div>`;
   $('dbody').querySelectorAll('[data-crear]').forEach(b => b.onclick = () => abrirEditor(null, b.dataset.crear));
@@ -1028,7 +1030,7 @@ document.addEventListener('click', async e => {
    ============================================================ */
 
 let CFG_SEC = 'prefs', ADM_SEC = 'usuarios', USUARIOS = [], CATS = [];
-const AREAS = [['H', 'Inicio'], ['G', 'Agenda'], ['R', 'Rutas'], ['M', 'Directorio'], ['S', 'Visitas'], ['V', 'Ventas'], ['K', 'Configuración']];
+const AREAS = [['H', 'Inicio'], ['G', 'Agenda'], ['R', 'Rutas'], ['M', 'Directorio (médicos)'], ['C', 'Centros'], ['S', 'Visitas'], ['V', 'Ventas y pacientes'], ['K', 'Configuración']];
 const NIVELES = ['Sin acceso', 'Ver', 'Editar', 'Completo'];
 const ROLES = ['Administrador', 'Comercial', 'Televenta', 'Solo consulta', 'Medico'];
 const puedeCatalogos = () => PERFIL && (PERFIL.rol === 'Administrador' || ((PERFIL.areas || {}).K || 0) >= 2);
@@ -1272,11 +1274,11 @@ function editarUsuario(id) {
 
   $('ur').onchange = () => {
     const preset = {
-      'Administrador': { H: 3, G: 3, R: 3, M: 3, S: 3, V: 3, K: 3 },
-      'Comercial': { H: 2, G: 2, R: 2, M: 2, S: 2, V: 1, K: 0 },
-      'Televenta': { H: 2, G: 1, R: 1, M: 2, S: 1, V: 3, K: 0 },
-      'Solo consulta': { H: 1, G: 1, R: 1, M: 1, S: 1, V: 1, K: 0 },
-      'Medico': { H: 1, G: 0, R: 0, M: 0, S: 0, V: 0, K: 0 }
+      'Administrador': { H: 3, G: 3, R: 3, M: 3, C: 3, S: 3, V: 3, K: 3 },
+      'Comercial': { H: 2, G: 2, R: 2, M: 2, C: 2, S: 2, V: 1, K: 0 },
+      'Televenta': { H: 2, G: 1, R: 1, M: 2, C: 2, S: 1, V: 3, K: 0 },
+      'Solo consulta': { H: 1, G: 1, R: 1, M: 1, C: 1, S: 1, V: 1, K: 0 },
+      'Medico': { H: 1, G: 0, R: 0, M: 0, C: 0, S: 0, V: 0, K: 0 }
     }[$('ur').value] || {};
     AREAS.forEach(([k]) => { const s = $('dbody').querySelector(`[data-area="${k}"]`); if (s) s.value = String(preset[k] || 0); });
   };
@@ -2135,7 +2137,8 @@ $('compartirBtn').addEventListener('click', compartirSemana);
 
 let PRODUCTOS = [], PEDIDOS = [], SIN_ATRIB = [];
 const AN = { dim: 'medico', desde: '', hasta: '', canal: '', producto: '' };
-const puedeVentas = () => PERFIL && (PERFIL.rol === 'Administrador' || ((PERFIL.areas || {}).V || 0) >= 2);
+// Crear o cambiar pedidos y pacientes: administración y televenta (el comercial solo consulta lo suyo)
+const puedeVentas = () => PERFIL && (PERFIL.rol === 'Administrador' || (((PERFIL.areas || {}).V || 0) >= 2 && PERFIL.rol === 'Televenta'));
 const veVentas = () => PERFIL && (PERFIL.rol === 'Administrador' || ((PERFIL.areas || {}).V || 0) >= 1 || PERFIL.rol === 'Comercial');
 
 async function cargarProductos() {
