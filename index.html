@@ -990,6 +990,23 @@ dialog{overscroll-behavior:contain}
 .vfmodo input{width:16px;height:16px;min-height:0}.vfmodo b{color:var(--navy)}.vfmodo span{font-size:12.5px;color:var(--muted)}
 .vfmodo:has(input:checked){border-color:var(--sky);background:var(--sky-soft)}
 @media (max-width:760px){.vfpasos{grid-template-columns:1fr 1fr}.vfgrid,.vfmodos,.mpgrid{grid-template-columns:1fr}.vfhero{flex-direction:column}}
+
+/* v2.40.0 · carga en bloque, sin menú al iniciar sesión, alertas gestionables */
+@keyframes giro{to{transform:rotate(360deg)}}
+dialog.cargando{min-height:180px}
+dialog.cargando > *{visibility:hidden}
+dialog.cargando::after{content:"";position:absolute;left:50%;top:50%;width:36px;height:36px;margin:-18px 0 0 -18px;border-radius:50%;
+  border:3px solid #DCEBF7;border-top-color:var(--sky);animation:giro .8s linear infinite}
+main > section.cargando{position:relative;min-height:60vh}
+main > section.cargando > *{visibility:hidden}
+main > section.cargando::after{content:"";position:absolute;left:50%;top:140px;width:40px;height:40px;margin-left:-20px;border-radius:50%;
+  border:3px solid #DCEBF7;border-top-color:var(--sky);animation:giro .8s linear infinite}
+body.sin-sesion .bnav,body.sin-sesion .bmas,body.sin-sesion .fab,body.sin-sesion #bmas{display:none!important}
+body.sin-sesion main{padding-bottom:0!important}
+#inialerta{display:none!important}
+.alacts{display:flex;gap:6px;flex-wrap:wrap;margin-top:4px}
+.alacts .btn{margin-top:0!important}
+.alocmenu{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:6px;padding:8px 10px;border-radius:10px;background:var(--sky-soft)}
 </style>
 </head>
 <body>
@@ -1125,6 +1142,6 @@ dialog{overscroll-behavior:contain}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js" defer></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="./config.js"></script>
-<script src="./app.js?v=2.39.0"></script>
+<script src="./app.js?v=2.40.0"></script>
 </body>
 </html>
