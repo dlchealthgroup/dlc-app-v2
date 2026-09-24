@@ -944,12 +944,13 @@ document.addEventListener('click', e => {
 
 /* distancia aproximada en km entre dos puntos */
 function km(a, b) {
+  if (!a || !b || a[0] == null || b[0] == null) return 0;   // sin punto de salida no hay desplazamiento que contar
   const R = 6371, r = Math.PI / 180;
   const dLat = (b[0] - a[0]) * r, dLon = (b[1] - a[1]) * r;
   const s = Math.sin(dLat / 2) ** 2 + Math.cos(a[0] * r) * Math.cos(b[0] * r) * Math.sin(dLon / 2) ** 2;
   return 2 * R * Math.asin(Math.sqrt(s));
 }
-const minutosEntre = (a, b) => Math.max(6, Math.round(km(a, b) / 40 * 60) + 5);
+const minutosEntre = (a, b) => (!a || !b || a[0] == null || b[0] == null) ? 0 : Math.max(6, Math.round(km(a, b) / 40 * 60) + 5);
 const hm = m => String(Math.floor(m / 60) % 24).padStart(2, '0') + ':' + String(Math.round(m) % 60).padStart(2, '0');
 
 async function planificar(rutaId, btn) {
@@ -966,7 +967,7 @@ function pintarPlan() {
   if (!PLAN) { $('rplan').innerHTML = ''; return; }
   const total = PLAN.paradas.reduce((n, p) => n + p.medicos.length, 0);
   const ultima = PLAN.paradas[PLAN.paradas.length - 1];
-  const enlace = enlaceNav(navActual() === 'google' ? [PLAN.salida.lat, PLAN.salida.lon] : ultima.xy,
+  const enlace = enlaceNav(navActual() === 'google' && PLAN.salida.lat != null ? [PLAN.salida.lat, PLAN.salida.lon] : ultima.xy,
     navActual() === 'google' ? PLAN.paradas.map(p => p.xy) : null);
 
   $('rplan').innerHTML = `<div class="card">
@@ -1063,7 +1064,7 @@ document.addEventListener('click', e => {
 const punto = k => (PERFIL.preferencias || {})[k] || null;
 
 function pintarPrefs() {
-  const s = punto('salida') || { nombre: 'Santpedor', dir: 'Santpedor', lat: 41.7833, lon: 1.8414 };
+  const s = punto('salida') || { nombre: '', dir: '' };
   const l = punto('llegada');
   const caja = (k, x, titulo, sub) => `<div class="card" style="padding:16px">
     <h2 style="padding:0">${titulo}</h2><p class="sm" style="padding:0">${sub}</p>
@@ -1775,13 +1776,14 @@ function mapaDelPlan() {
   if (!caja) return;
   if (!caja.dataset.on) {
     caja.dataset.on = '1'; caja.style.height = 'min(55vh,460px)';
-    const m = L.map('planmapa').setView([PLAN.salida.lat, PLAN.salida.lon], 10);
+    const conSal = PLAN.salida.lat != null, centro = conSal ? [PLAN.salida.lat, PLAN.salida.lon] : PLAN.paradas[0].xy;
+    const m = L.map('planmapa').setView(centro, 10);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(m);
     const pin = (xy, txt, col) => L.marker(xy, { icon: L.divIcon({ className: 'mpin', html: `<span style="background:${col}">${txt}</span>`, iconSize: [24, 24], iconAnchor: [12, 12] }) }).addTo(m);
-    pin([PLAN.salida.lat, PLAN.salida.lon], 'S', '#12805C').bindPopup('Salida · ' + esc(PLAN.salida.nombre));
+    if (conSal) pin([PLAN.salida.lat, PLAN.salida.lon], 'S', '#12805C').bindPopup('Salida · ' + esc(PLAN.salida.nombre));
     PLAN.paradas.forEach((p, i) => pin(p.xy, String(i + 1), '#0E2F52')
       .bindPopup(`<b>${i + 1}. ${esc(p.centro)}</b><br>${hm(p.llegada)}–${hm(p.fin)}<br>${p.medicos.map(x => esc(x.nombre)).join('<br>')}`));
-    const linea = [[PLAN.salida.lat, PLAN.salida.lon]].concat(PLAN.paradas.map(p => p.xy), [[PLAN.salida.lat, PLAN.salida.lon]]);
+    const linea = conSal ? [[PLAN.salida.lat, PLAN.salida.lon]].concat(PLAN.paradas.map(p => p.xy), [[PLAN.salida.lat, PLAN.salida.lon]]) : PLAN.paradas.map(p => p.xy);
     L.polyline(linea, { color: '#2B6CB0', weight: 3, dashArray: '6 6' }).addTo(m);
     m.fitBounds(linea, { padding: [30, 30] });
     setTimeout(() => m.invalidateSize(), 60);
@@ -3050,7 +3052,7 @@ async function planDesdeLista(lista, nombre, btn) {
 
 function construirPlan(conXY, rutaId, btn) {
   const cfg = PLANCFG();
-  const salida = (PERFIL.preferencias || {}).salida || { nombre: 'Santpedor', lat: 41.7833, lon: 1.8414 };
+  const salida = salidaUsuario();
   const paradas = {};
   conXY.forEach(m => {
     const k = (m.centro_nombre || 'Consulta') + '|' + (m.municipio || '');
@@ -6074,7 +6076,7 @@ const rutaPausada = () => { try { return JSON.parse(localStorage.getItem(RPKEY()
 
 function construirPlan(conXY, rutaId, btn) {
   const cfg = PLANCFG();
-  const salida = (PERFIL.preferencias || {}).salida || { nombre: 'Santpedor', lat: 41.7833, lon: 1.8414 };
+  const salida = salidaUsuario();
   const paradas = {};
   conXY.forEach(m => {
     const k = (m.centro_nombre || 'Consulta') + '|' + (m.municipio || '');
@@ -6408,7 +6410,7 @@ function construirPlan(conXY, rutaId, btn, opts) {
   opts = opts || {};
   ULTIMO_PLAN = { conXY, rutaId, opts };
   const cfg = PLANCFG();
-  const salida = (PERFIL.preferencias || {}).salida || { nombre: 'Santpedor', lat: 41.7833, lon: 1.8414 };
+  const salida = salidaUsuario();
   const paradas = {};
   conXY.forEach(m => {
     const k = (m.centro_nombre || 'Consulta') + '|' + (m.municipio || '');
@@ -6806,7 +6808,7 @@ function abrirKpis() {
 /* ---------------- ruta en curso: ficha al pulsar, acciones y orden ---------------- */
 
 function recalcularRuta(a, hechos) {
-  const cfg = PLANCFG(), sal = (PERFIL.preferencias || {}).salida || { lat: 41.7833, lon: 1.8414 };
+  const cfg = PLANCFG(), sal = salidaUsuario();
   const ahora = new Date(), t0 = Math.ceil((ahora.getHours() * 60 + ahora.getMinutes()) / 5) * 5;
   let pos = [sal.lat, sal.lon], t = t0;
   a.paradas.forEach(p => {
@@ -6959,7 +6961,7 @@ async function pintarRutaBarra() {
 
 const minHora = h => h ? (+String(h).slice(0, 2) * 60 + +String(h).slice(3, 5)) : null;
 const xyCita = c => c.lat != null && c.lon != null ? [+c.lat, +c.lon] : null;
-const salidaUsuario = () => prefsActivas().salida || { nombre: 'la salida', lat: 41.7833, lon: 1.8414 };
+const salidaUsuario = () => prefsActivas().salida || { nombre: 'la primera visita', lat: null, lon: null, falta: true };
 
 /** Calcula la hora estimada de cada cita abierta siguiendo el orden actual. */
 function estimarDia(citas, fecha) {
@@ -9730,9 +9732,11 @@ async function pintarFacturas() {
       <div class="kpi"><b>${eurI(sum(l, 'cuota_iva'))}</b><span>IVA repercutido</span></div>
       <div class="kpi"><b>${eurI(sum(pend, 'total') - sum(pend, 'cobrado'))}</b><span>Pendiente de cobro · ${num(pend.length)}</span></div>
       <div class="kpi ${venc.length ? 'warn' : ''}"><b>${eurI(sum(venc, 'total') - sum(venc, 'cobrado'))}</b><span>Vencido · ${num(venc.length)}</span></div>`;
+    const tamF = tamPagina(); FACPAG = Math.min(FACPAG, Math.max(0, Math.ceil(l.length / tamF) - 1));
+    const lp = l.slice(FACPAG * tamF, FACPAG * tamF + tamF);
     $('flista').innerHTML = l.length ? `<div class="dgrid-wrap"><div class="dgrid facts">
       <div class="dh"><span>Número</span><span>Fecha</span><span>Cliente</span><span>NIF</span><span class="num">Base</span><span class="num">IVA</span><span class="num">Total</span><span>Vencimiento</span><span>Cobro</span></div>
-      ${l.map(f => `<button class="dr" data-fac="${f.id}">
+      ${lp.map(f => `<button class="dr" data-fac="${f.id}">
         <span><b>${esc(f.numero)}</b>${f.rectifica ? `<span class="sm">rectifica ${esc(f.rectifica)}</span>` : f.rectificada_por ? `<span class="sm">rectificada: ${esc(f.rectificada_por)}</span>` : ''}</span>
         <span>${fechaCorta(f.fecha)}</span><span class="corta">${esc(f.cliente || '—')}</span><span class="sm">${esc(f.nif || '—')}</span>
         <span class="num">${eurI(f.base)}</span><span class="num">${eurI(f.cuota_iva)}</span><span class="num"><b>${eurI(f.total)}</b></span>
@@ -9740,10 +9744,12 @@ async function pintarFacturas() {
         <span>${pillCobro(f.estado_cobro)}</span></button>`).join('')}</div></div>`
       : '<div class="vacio">No hay facturas con estos filtros. Las facturas se emiten desde un pedido validado (Pedidos → Ventas → abrir el pedido → «Emitir factura»).</div>';
     $('flista').querySelectorAll('[data-fac]').forEach(b => b.onclick = () => verFactura(b.dataset.fac));
+    $('flista').insertAdjacentHTML('beforeend', '<div id="fpag"></div>');
+    paginador($('fpag'), l.length, FACPAG, p => { FACPAG = p; pinta(); }, () => { FACPAG = 0; pinta(); });
   };
   montarPeriodo($('fper'), { id: 'facturas', valor: 'mes', alCambiar: pinta });
-  $('fq').oninput = () => { clearTimeout(tq); tq = setTimeout(pinta, 300); };
-  $('fcob').onchange = pinta;
+  $('fq').oninput = () => { clearTimeout(tq); tq = setTimeout(() => { FACPAG = 0; pinta(); }, 300); };
+  $('fcob').onchange = () => { FACPAG = 0; pinta(); };
   pinta();
 }
 
@@ -10300,7 +10306,7 @@ verPedido = (orig => async function (id) {
     ${OPS.map(([k, t]) => `<label class="opchk ${opHecho(p, k) ? 'on' : ''}"><input type="checkbox" data-op="${k}" ${opHecho(p, k) ? 'checked' : ''} ${puede ? '' : 'disabled'}>
       <span>${esc(t)}${k === 'pago' && p.forma_pago ? ` <span class="sm">· ${esc(p.forma_pago)}${/reembolso/i.test(p.forma_pago) ? ' (se cobra al entregar)' : ''}</span>` : ''}</span></label>`).join('')}
     <div class="acts" style="margin:6px 0 0">
-      ${cli.email ? `<a class="btn sec" id="pdmailpago" href="mailto:${esc(cli.email)}?subject=${encodeURIComponent('Datos para el pago de tu pedido ' + (p.numero || ''))}&body=${encodeURIComponent(textoEmailPago(p, total, cli.nombre))}">✉️ Preparar email con los datos de pago</a>` : '<span class="sm">El cliente no tiene email en su ficha.</span>'}
+      ${cli.email ? `<a class="btn sec" id="pdmailpago" data-ped="${id}" href="mailto:${esc(cli.email)}?subject=${encodeURIComponent('Datos para el pago de tu pedido ' + (p.numero || ''))}&body=${encodeURIComponent(textoEmailPago(p, total, cli.nombre))}">✉️ Preparar email con los datos de pago</a>` : '<span class="sm">El cliente no tiene email en su ficha.</span>'}
     </div></div>`);
   $('dbody').querySelectorAll('[data-op]').forEach(c => c.onchange = async () => {
     const { data: r, error } = await db.rpc('marcar_operativa', { p_pedido: id, p_campo: c.dataset.op, p_hecho: c.checked });
@@ -10385,14 +10391,18 @@ async function pintarLlamadas() {
       <div class="card ancard"><h2>De qué médico vienen</h2>${(res.por_medico || []).length ? `<div class="barrash">${res.por_medico.map((x, i) => `<div class="bh"><span class="bhn">${i + 1}. ${esc(x.medico)}</span>
           <span class="bhb"><i style="width:${Math.max(3, x.n / res.por_medico[0].n * 100)}%"></i></span><b>${num(x.pedidos)}/${num(x.n)}</b></div>`).join('')}</div>` : vacioGrafico('Verás qué médicos generan llamadas y cuántas acaban en pedido.')}
         <p class="leer"><b>Cómo leerlo:</b> pedidos sobre llamadas por médico. Un médico con muchas llamadas y pocos pedidos es una oportunidad de seguimiento.</p></div>`;
+    const tamL = tamPagina(); LLPAG = Math.min(LLPAG, Math.max(0, Math.ceil(lista.length / tamL) - 1));
+    const lvis = lista.slice(LLPAG * tamL, LLPAG * tamL + tamL);
     $('lllista').innerHTML = lista.length ? `<div class="dgrid-wrap"><div class="dgrid llam">
       <div class="dh"><span>Fecha</span><span>Quién llama</span><span>Médico</span><span>Motivo</span><span>Resultado</span><span>Próximo paso</span><span>Atendió</span></div>
-      ${lista.map(x => `<button class="dr" data-ll="${x.id}"><span>${new Date(x.fecha).toLocaleString('es-ES', { dateStyle: 'short', timeStyle: 'short' })}<span class="sm">${esc(x.direccion || '')}</span></span>
+      ${lvis.map(x => `<button class="dr" data-ll="${x.id}"><span>${new Date(x.fecha).toLocaleString('es-ES', { dateStyle: 'short', timeStyle: 'short' })}<span class="sm">${esc(x.direccion || '')}</span></span>
         <span><b>${esc(x.nombre || x.cliente || '—')}</b><span class="sm">${esc(x.telefono || '')}</span></span><span class="corta">${esc(x.medico || x.medico_texto || '—')}</span>
         <span class="sm">${esc(x.motivo || '—')}</span><span>${esc(x.resultado || '—')}${x.pedido ? `<span class="sm">Pedido ${esc(x.pedido)}</span>` : ''}</span>
         <span class="sm">${x.proxima_fecha ? fechaCorta(x.proxima_fecha) + ' · ' : ''}${esc(x.proxima_accion || '')}</span><span class="sm">${esc(x.usuario || '')}</span></button>`).join('')}</div></div>`
       : '<div class="vacio">Sin llamadas en este periodo. Regístralas con «+ Registrar llamada», aunque no acaben en pedido: así se puede analizar por qué.</div>';
     $('lllista').querySelectorAll('[data-ll]').forEach(b => b.onclick = () => editorLlamada(lista.find(x => x.id === b.dataset.ll)));
+    $('lllista').insertAdjacentHTML('beforeend', '<div id="llpag"></div>');
+    paginador($('llpag'), lista.length, LLPAG, p => { LLPAG = p; pinta(); }, () => { LLPAG = 0; pinta(); });
   };
   montarPeriodo($('llper'), { id: 'llamadas', valor: 'mes', alCambiar: pinta });
   $('llq').oninput = () => { clearTimeout(tq); tq = setTimeout(pinta, 300); };
@@ -10523,6 +10533,362 @@ MANUAL.forEach(s => {
 MANUAL.push({ id: 'permisos', t: 'Permisos por módulo', a: null, para: 'Cada módulo se abre con su permiso; si no lo tienes, no aparece en el menú.',
   hacer: [[0, 'Clientes, Productos y stock, Facturación, Analítica y Calidad del dato tienen su propio permiso'],
     [0, '«Importes de ventas» decide si se ven euros o solo unidades en Inicio, Analítica y listados']], config: ['Administración → Usuarios → Editar'] });
+
+
+/* ============================================================
+   DLC OS 2.0 · v2.35.0 · Pedidos paginados y guardados en el dispositivo,
+   factura en PDF como la de Holded y envío por email con el PDF adjunto,
+   manual renovado y punto de salida sin valor por defecto
+   ============================================================ */
+
+Object.assign(RPC_TTL, { pedidos_pagina: 30 });
+
+/* ---------------- punto de salida: cada persona configura el suyo ---------------- */
+
+function avisoSinSalida(el) {
+  if (prefsActivas().salida || !el || el.querySelector('.sinsalida')) return;
+  el.insertAdjacentHTML('afterbegin', `<div class="avisoh sinsalida"><span>📍 <b>Aún no has configurado tu punto de salida.</b> Las horas se calculan desde la primera visita, sin el desplazamiento inicial.</span>
+    <button class="btn sec" data-irprefs>Configurarlo</button></div>`);
+}
+document.addEventListener('click', e => { if (e.target.closest('[data-irprefs]')) { CFG_SEC = 'prefs'; ir('config'); } });
+
+/* ---------------- Pedidos → Ventas: por páginas y guardado en el dispositivo ---------------- */
+
+let PEDPAG = 0;
+async function listaPedidos() {
+  if (!$('pedlista') || !$('pper') || !$('pcanal')) return;
+  const r = $('pper').__rango();
+  if (!$('popf') && $('pestado')) {
+    $('pestado').closest('div').insertAdjacentHTML('afterend', `<div><label for="popf">Operativa</label><select id="popf">
+      <option value="">Todo</option><option value="pago">Pago por validar</option><option value="paquete">Paquete por preparar</option><option value="email">Factura por enviar</option></select></div>`);
+    $('popf').onchange = () => { PEDPAG = 0; listaPedidos(); };
+  }
+  const params = { p_desde: r.desde, p_hasta: r.hasta, p_canal: $('pcanal').value || null, q: ($('pq') && $('pq').value.trim()) || null,
+    p_estado: $('pestado').value || null, p_operativa: ($('popf') && $('popf').value) || null, lim: tamPagina(), desplaz: PEDPAG * tamPagina() };
+  const clave = 'pedidos-' + JSON.stringify(params);
+  if (!$('pedlista').querySelector('.dgrid')) cargando($('pedlista'), 'Cargando pedidos…');
+  const res = await rpcCache('pedidos_pagina', params, clave);
+  if (!$('pedlista') || !$('pestado')) return;
+  if (!res.data) { $('pedlista').innerHTML = `<div class="vacio">No se ha podido cargar${res.error ? ': ' + esc(res.error.message) : ''}.</div>`; return; }
+  const d = res.data, s = d.resumen || {}, imp = verImportes();
+  PEDIDOS = d.filas || [];
+  $('ptotales').innerHTML = `
+    <div class="kpi"><b>${num(s.pedidos || 0)}</b><span>Pedidos validados${s.borradores ? ` · ${s.borradores} en borrador` : ''}</span></div>
+    <div class="kpi"><b>${num(s.unidades || 0)}</b><span>Unidades</span></div>
+    ${imp ? `<div class="kpi"><b>${eurI(s.base || 0)}</b><span>Base sin IVA</span></div>
+    <div class="kpi"><b>${eurI(s.iva || 0)}</b><span>IVA</span></div>
+    <div class="kpi ok"><b>${eurI(s.total || 0)}</b><span>Total con IVA</span></div>` : ''}`;
+  const ico = p => p.estado !== 'Confirmado' ? '' : `<span class="opico" title="Pago ${p.pago_estado === 'Cobrado' ? 'recibido' : 'pendiente'} · Paquete ${p.paquete_en ? 'preparado' : 'por preparar'}${p.factura ? ' · Factura ' + (p.email_factura_en ? 'enviada' : 'por enviar') : ''}">
+      <i class="${p.pago_estado === 'Cobrado' ? 'ok' : 'no'}">💳</i><i class="${p.paquete_en ? 'ok' : 'no'}">📦</i>${p.factura ? `<i class="${p.email_factura_en ? 'ok' : 'no'}">🧾</i>` : ''}</span>`;
+  $('pedlista').innerHTML = PEDIDOS.length ? `<div class="dgrid-wrap"><div class="dgrid peds2 ${imp ? '' : 'sinimp'}">
+    <div class="dh"><span>Fecha</span><span>Cliente</span><span>Médico</span><span>Comercial</span><span>Productos</span>
+      <span class="num">Uds.</span>${imp ? '<span class="num">Base</span><span class="num">Total</span>' : ''}<span>Estado</span><span>Operativa</span></div>
+    ${PEDIDOS.map(p => `<button class="dr" data-ped="${p.id}" style="${p.estado === 'Anulado' ? 'opacity:.55' : ''}">
+      <span>${fechaCorta(p.fecha)}${p.factura || p.numero ? `<span class="sm">${esc(p.factura || p.numero)}</span>` : ''}</span>
+      <span><b>${esc(p.contacto || p.centro || p.medico_texto || '—')}</b><span class="sm">${p.canal === 'centro' ? 'Venta a centro' : 'Recomendación'}${p.forma_pago ? ' · ' + esc(p.forma_pago) : ''}</span></span>
+      <span class="corta">${p.medico ? esc(p.medico) : '<span class="vac">Sin atribuir</span>'}</span>
+      <span>${p.comercial ? esc(p.comercial) : '<span class="vac">—</span>'}</span>
+      <span class="sm corta">${esc(p.productos || '')}</span><span class="num">${num(p.unidades)}</span>
+      ${imp ? `<span class="num">${eurI(p.base)}</span><span class="num"><b>${eurI(p.total)}</b></span>` : ''}
+      <span>${pillEstado(p.estado)}</span><span>${ico(p)}</span></button>`).join('')}
+  </div></div>` : '<div class="vacio">No hay pedidos con estos filtros.</div>';
+  if (!$('pedpag')) $('pedlista').insertAdjacentHTML('afterend', '<div id="pedpag"></div>');
+  paginador($('pedpag'), d.total, PEDPAG, p => { PEDPAG = p; listaPedidos(); $('pedlista').scrollIntoView({ block: 'start' }); }, () => { PEDPAG = 0; listaPedidos(); });
+  if (res.cache) avisoCache($('pedlista'), res.fecha);
+  $('pedlista').querySelectorAll('[data-ped]').forEach(b => b.onclick = () => verPedido(b.dataset.ped));
+}
+// Cualquier cambio de filtro vuelve a la primera página
+document.addEventListener('change', e => { if (e.target.closest('#pper, #pcanal, #pestado')) PEDPAG = 0; }, true);
+document.addEventListener('input', e => { if (e.target.id === 'pq') PEDPAG = 0; }, true);
+
+/* ---------------- paginación también en facturas y llamadas ---------------- */
+
+function paginarRejilla(cont, filas, pagKey, pintaFila, cabecera, clase) {
+  const tam = tamPagina(), pag = Math.min(window[pagKey] || 0, Math.max(0, Math.ceil(filas.length / tam) - 1));
+  window[pagKey] = pag;
+  cont.innerHTML = `<div class="dgrid-wrap"><div class="dgrid ${clase}">${cabecera}${filas.slice(pag * tam, pag * tam + tam).map(pintaFila).join('')}</div></div><div class="pagz"></div>`;
+  paginador(cont.querySelector('.pagz'), filas.length, pag, p => { window[pagKey] = p; paginarRejilla(cont, filas, pagKey, pintaFila, cabecera, clase); }, () => { window[pagKey] = 0; paginarRejilla(cont, filas, pagKey, pintaFila, cabecera, clase); });
+}
+let FACPAG = 0, LLPAG = 0;
+
+/* ---------------- factura en PDF (mismo formato que Holded) ---------------- */
+
+let LOGO_DATA = null;
+async function logoData() {
+  if (LOGO_DATA) return LOGO_DATA;
+  try {
+    const b = await (await fetch(new URL('logo.png', location.href).href)).blob();
+    LOGO_DATA = await new Promise(r => { const f = new FileReader(); f.onload = () => r(f.result); f.readAsDataURL(b); });
+  } catch (e) { LOGO_DATA = null; }
+  return LOGO_DATA;
+}
+async function imagenData(url) {
+  try { const b = await (await fetch(url)).blob(); return await new Promise(r => { const f = new FileReader(); f.onload = () => r(f.result); f.readAsDataURL(b); }); }
+  catch (e) { return null; }
+}
+async function cargarJsPDF() {
+  if (window.jspdf) return window.jspdf.jsPDF;
+  await new Promise((ok, ko) => { const s = document.createElement('script'); s.src = new URL('jspdf.umd.min.js', location.href).href; s.onload = ok; s.onerror = ko; document.head.appendChild(s); });
+  return window.jspdf.jsPDF;
+}
+async function cargarQR() {
+  if (window.qrcode) return window.qrcode;
+  await new Promise((ok, ko) => { const s = document.createElement('script'); s.src = new URL('qrcode.js', location.href).href; s.onload = ok; s.onerror = ko; document.head.appendChild(s); });
+  return window.qrcode;
+}
+
+async function facturaPDF(f, rectificaNum) {
+  const JsPDF = await cargarJsPDF();
+  if (!PRODUCTOS.length) await cargarProductos();
+  const doc = new JsPDF({ unit: 'mm', format: 'a4' });
+  const e = f.emisor || {}, c = f.cliente || {};
+  const gris = [110, 118, 126], negro = [28, 39, 51], claro = [238, 240, 242];
+  const eur = v => (Math.round((+v || 0) * 100) / 100).toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '€';
+  const fecha = x => x ? x.split('-').reverse().join('/') : '';
+  // Logo en su círculo
+  doc.setFillColor(236, 240, 245); doc.circle(34, 36, 15, 'F');
+  const logo = await logoData();
+  if (logo) doc.addImage(logo, 'PNG', 22.5, 31.5, 23, 9.2);
+  // Título y número
+  doc.setFont('helvetica', 'normal'); doc.setTextColor(...negro); doc.setFontSize(f.rectifica_id ? 22 : 28);
+  doc.text(f.rectifica_id ? 'FACTURA RECTIFICATIVA' : 'FACTURA', 192, 36, { align: 'right' });
+  doc.setFontSize(14); doc.setTextColor(...gris); doc.text(f.numero, 192, 44, { align: 'right' });
+  // Fechas y referencia
+  doc.setFontSize(9.5); let y = 70;
+  const fila = (etq, val, x, yy) => { doc.setTextColor(...gris); doc.text(etq, x, yy); doc.setTextColor(...negro); doc.text(val || '', x + doc.getTextWidth(etq) + 1.2, yy); };
+  fila('Fecha:', fecha(f.fecha), 18, y);
+  fila('Fecha vencimiento:', f.rectifica_id ? '' : fecha(f.vencimiento), 18, y + 4.6);
+  const dirCli = [c.direccion, [c.municipio, c.cp ? '(' + c.cp + ')' : '', c.provincia, c.pais].filter(Boolean).join(', ').replace(', (', ' (')].filter(Boolean);
+  if (dirCli.length) { fila('Ref:', dirCli[0], 18, y + 13.8); if (dirCli[1]) { doc.setTextColor(...negro); doc.text(dirCli[1], 18, y + 18.4); } }
+  if (f.rectifica_id) { doc.setTextColor(...gris); doc.text('Rectifica la factura ' + (rectificaNum || '') + (f.motivo_rectificacion ? ' · ' + f.motivo_rectificacion : ''), 18, y + 25, { maxWidth: 80 }); }
+  // Cliente
+  doc.setFont('helvetica', 'bold'); doc.setTextColor(...negro); doc.text(c.nombre || '', 110, y);
+  doc.setFont('helvetica', 'normal');
+  [c.nif, ...dirCli, c.email].filter(Boolean).forEach((t, i) => doc.text(String(t), 110, y + 4.6 * (i + 1)));
+  // Tabla
+  y = 104;
+  const col = { con: 46, pre: 110, uds: 138, sub: 162, iva: 173, tot: 192 };
+  doc.setFillColor(...claro); doc.rect(42, y, 150, 11, 'F'); doc.rect(18, y, 22.5, 11, 'F');
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(8.8); doc.setTextColor(...negro);
+  doc.text('CONCEPTO', col.con, y + 7); doc.text('PRECIO', col.pre, y + 7, { align: 'right' }); doc.text('UNIDADES', col.uds, y + 7, { align: 'right' });
+  doc.text('SUBTOTAL', col.sub, y + 7, { align: 'right' }); doc.text('IVA', col.iva, y + 7, { align: 'right' }); doc.text('TOTAL', col.tot, y + 7, { align: 'right' });
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5); y += 11;
+  for (const l of f.lineas) {
+    const p = PRODUCTOS.find(x => x.nombre && l.descripcion && l.descripcion.toLowerCase().startsWith(x.nombre.toLowerCase()));
+    const img = p && p.foto_url ? await imagenData(p.foto_url) : null;
+    const alto = img ? 20 : 11;
+    if (y + alto > 250) { doc.addPage(); y = 20; }
+    if (img) { try { doc.addImage(img, 20, y + 3, 18, 13); } catch (er) {} }
+    const lineasDesc = doc.splitTextToSize(l.descripcion || '', col.pre - col.con - 22);
+    doc.text(lineasDesc, col.con, y + 7);
+    doc.text(eur(l.precio), col.pre, y + 7, { align: 'right' }); doc.text(String(l.unidades), col.uds, y + 7, { align: 'right' });
+    doc.text(eur(l.base), col.sub, y + 7, { align: 'right' }); doc.text((+l.iva || 0) + '%', col.iva, y + 7, { align: 'right' });
+    doc.text(eur((+l.base || 0) * (1 + (+l.iva || 0) / 100)), col.tot, y + 7, { align: 'right' });
+    y += Math.max(alto, 5 + lineasDesc.length * 4.6);
+    doc.setDrawColor(226, 230, 234); doc.line(18, y, 192, y);
+  }
+  // Totales
+  y += 10; doc.setFontSize(9.5);
+  const tot = (etq, val, negrita) => { doc.setTextColor(...gris); doc.text(etq, 150, y, { align: 'right' }); doc.setTextColor(...negro);
+    doc.setFont('helvetica', negrita ? 'bold' : 'normal'); doc.text(val, 190, y, { align: 'right' }); doc.setFont('helvetica', 'normal'); y += 7; };
+  tot('Base imponible', eur(f.base));
+  (f.desglose_iva || []).filter(d => +d.cuota).forEach(d => tot('IVA ' + d.iva + '%', eur(d.cuota)));
+  if (!(f.desglose_iva || []).some(d => +d.cuota)) tot('IVA', eur(0));
+  doc.setFillColor(...claro); doc.rect(152, y - 5, 40, 9, 'F'); tot('Total', eur(f.total), true);
+  // Forma de pago
+  y += 4;
+  if (f.forma_pago) { doc.setTextColor(...gris); doc.text('Forma de pago: ', 18, y); doc.setTextColor(...negro); doc.text(f.forma_pago + (/transfer/i.test(f.forma_pago) && e.iban ? ' · IBAN ' + e.iban : ''), 18 + doc.getTextWidth('Forma de pago: '), y); }
+  // QR VeriFactu, si está activo
+  if ((f.verifactu || {}).activo && f.qr_url) {
+    try {
+      const QR = await cargarQR(), q = QR(0, 'M'); q.addData(f.qr_url); q.make();
+      const n = q.getModuleCount(), tam = 26 / n, x0 = 18, y0 = 238;
+      doc.setFillColor(0, 0, 0);
+      for (let r = 0; r < n; r++) for (let k = 0; k < n; k++) if (q.isDark(r, k)) doc.rect(x0 + k * tam, y0 + r * tam, tam, tam, 'F');
+      doc.setFontSize(8.5); doc.setTextColor(...negro); doc.setFont('helvetica', 'bold'); doc.text('VERI*FACTU', 48, y0 + 10);
+      doc.setFont('helvetica', 'normal'); doc.setTextColor(...gris); doc.text('Factura verificable en la sede electrónica de la AEAT', 48, y0 + 15);
+    } catch (er) {}
+  }
+  // Pie
+  const pies = doc.getNumberOfPages();
+  for (let i = 1; i <= pies; i++) {
+    doc.setPage(i); doc.setDrawColor(226, 230, 234); doc.line(18, 276, 192, 276);
+    doc.setFontSize(8.3); doc.setTextColor(...gris);
+    doc.text(`${e.razon_social || 'DLC Health Group S.L.'} | NIF: ${e.nif || ''} | ${[e.direccion, [e.cp, e.municipio].filter(Boolean).join(' '), e.pais || 'España'].filter(Boolean).join(', ')}`, 105, 281, { align: 'center' });
+    if (e.telefono) doc.text('Atención al cliente: ' + e.telefono, 105, 285, { align: 'center' });
+    doc.text(e.web || 'www.dlchealthgroup.com', 105, 289, { align: 'center' });
+    if (e.pie) doc.text(doc.splitTextToSize(e.pie, 170), 105, 293, { align: 'center' });
+    doc.text(i + '/' + pies, 192, 289, { align: 'right' });
+  }
+  return doc;
+}
+const nombrePDF = f => `${f.numero}_${String((f.cliente || {}).nombre || 'cliente').replace(/[^\p{L}\p{N} ]/gu, '').trim().replace(/\s+/g, '_')}.pdf`;
+
+async function descargarFacturaPDF(f, rn) {
+  const doc = await facturaPDF(f, rn); doc.save(nombrePDF(f));
+  await db.from('eventos_facturacion').insert({ tipo: 'PDF descargado', factura_id: f.id, detalle: {} }).then(() => {}, () => {});
+}
+
+async function enviarFacturaEmail(f, rn) {
+  await cargarAjustes();
+  const e = AJUSTES.empresa || {}, c = f.cliente || {};
+  const saludo = c.nombre ? String(c.nombre).split(' ')[0] : '';
+  $('dlg2body').innerHTML = `
+    <div class="fh"><div><h2>Enviar ${esc(f.numero)} por email</h2><div class="sm">La factura va adjunta en PDF</div></div>
+      <button class="x" data-cerrar2 aria-label="Cerrar">✕</button></div>
+    <label for="efp">Para</label><input id="efp" type="email" value="${esc(c.email || '')}" placeholder="email del cliente">
+    <label for="efa">Asunto</label><input id="efa" value="${esc(`Tu factura ${f.numero} · ${e.razon_social || 'DLC Health Group'}`)}">
+    <label for="eft">Mensaje</label><textarea id="eft" rows="7">${esc(`Hola${saludo ? ' ' + saludo : ''}:\n\nTe adjuntamos la factura ${f.numero} de tu pedido, por un importe de ${eurI(f.total)}.\n\nGracias por tu confianza. Para cualquier consulta, estamos a tu disposición${e.telefono ? ' en el ' + e.telefono : ''}.\n\nUn saludo,\n${e.razon_social || 'DLC Health Group'}`)}</textarea>
+    <div class="adjunto">📎 ${esc(nombrePDF(f))}</div>
+    <div class="acts" style="justify-content:flex-end;flex-wrap:wrap"><button class="btn sec" data-cerrar2>Cancelar</button>
+      <button class="btn" id="efok">Enviar</button></div>`;
+  $('dlg2').showModal();
+  $('efok').onclick = async ev => {
+    const para = $('efp').value.trim(); if (!/\S+@\S+\.\S+/.test(para)) { toast('Escribe un email válido', true); return; }
+    ev.target.disabled = true; ev.target.textContent = 'Preparando el PDF…';
+    const doc = await facturaPDF(f, rn), b64 = doc.output('datauristring').split(',')[1];
+    ev.target.textContent = 'Enviando…';
+    let { data, error } = await db.functions.invoke('enviar_email', { body: { para, asunto: $('efa').value.trim(), texto: $('eft').value,
+      adjuntos: [{ nombre: nombrePDF(f), base64: b64, tipo: 'application/pdf' }], factura_id: f.id, pedido_id: f.pedido_id, marca: 'email_factura' } });
+    // Si la función responde con error, su motivo viene en el cuerpo de la respuesta
+    if (error && error.context && typeof error.context.json === 'function') { try { data = await error.context.json(); } catch (x) {} }
+    ev.target.disabled = false; ev.target.textContent = 'Enviar';
+    if (!error && data && data.ok) { $('dlg2').close(); toast('Factura enviada a ' + para); return; }
+    // Sin envío directo configurado: se ofrece compartir el PDF o descargarlo y adjuntarlo
+    const sinSmtp = data && data.error === 'sin_smtp';
+    const archivo = new File([doc.output('blob')], nombrePDF(f), { type: 'application/pdf' });
+    const compartir = navigator.canShare && navigator.canShare({ files: [archivo] });
+    $('dlg2body').innerHTML = `<div class="fh"><div><h2>${sinSmtp ? 'El envío directo aún no está configurado' : 'No se ha podido enviar'}</h2>
+      <div class="sm">${sinSmtp ? 'Falta conectar el correo de la empresa (lo prepara administración).' : esc((error && error.message) || (data && data.error) || '')}</div></div>
+      <button class="x" data-cerrar2 aria-label="Cerrar">✕</button></div>
+      <p>Puedes enviarla desde tu correo con el PDF adjunto:</p>
+      <div class="acts" style="flex-wrap:wrap">${compartir ? '<button class="btn" id="efsh">Compartir el PDF (correo, WhatsApp…)</button>' : ''}
+        <button class="btn ${compartir ? 'sec' : ''}" id="efdl">⬇ Descargar el PDF</button>
+        <a class="btn sec" href="mailto:${esc(para)}?subject=${encodeURIComponent($('efa') ? $('efa').value : f.numero)}&body=${encodeURIComponent('Adjuntamos la factura ' + f.numero + '.')}">Abrir mi correo</a></div>
+      <label class="opt" style="margin-top:12px"><input type="checkbox" id="efmarca"> Ya la he enviado: marcar el pedido como «Email con la factura enviado»</label>
+      <div class="acts" style="justify-content:flex-end"><button class="btn sec" data-cerrar2>Cerrar</button></div>`;
+    if ($('efsh')) $('efsh').onclick = () => navigator.share({ files: [archivo], title: f.numero, text: 'Factura ' + f.numero }).catch(() => {});
+    $('efdl').onclick = () => doc.save(nombrePDF(f));
+    $('efmarca').onchange = async ev2 => { if (ev2.target.checked && f.pedido_id) { await db.rpc('marcar_operativa', { p_pedido: f.pedido_id, p_campo: 'email_factura', p_hecho: true }); toast('Marcado como enviado'); } };
+  };
+}
+
+verFactura = (orig => async function (id) {
+  await orig(id);
+  const acts = $('dbody').querySelector('.acts:last-of-type');
+  if (!acts || !$('fvpdf')) return;
+  const { data } = await RPC_ORIG('factura_detalle', { p_id: id });
+  const f = data && data.factura; if (!f) return;
+  const rn = data.rectifica && data.rectifica.numero;
+  $('fvpdf').textContent = 'Ver';
+  $('fvpdf').classList.add('sec');
+  $('fvpdf').insertAdjacentHTML('afterend', `<button class="btn sec" id="fvdl">⬇ PDF</button>${puedeFacturar() ? '<button class="btn" id="fvmail">✉️ Enviar por email</button>' : ''}`);
+  $('fvdl').onclick = () => descargarFacturaPDF(f, rn);
+  if ($('fvmail')) $('fvmail').onclick = () => enviarFacturaEmail(f, rn);
+  // «Ver» abre el mismo PDF que se envía
+  $('fvpdf').onclick = async () => { const doc = await facturaPDF(f, rn); window.open(doc.output('bloburl'), '_blank'); };
+})(verFactura);
+
+/* ---------------- email con los datos de pago: envío directo si está configurado ---------------- */
+
+document.addEventListener('click', async e => {
+  const a = e.target.closest('#pdmailpago');
+  if (!a) return;
+  e.preventDefault(); e.stopImmediatePropagation();
+  const href = new URL(a.href.replace(/^mailto:/, 'http://x/?to=').replace('?subject', '&subject'));
+  const para = decodeURIComponent(href.searchParams.get('to') || ''), asunto = href.searchParams.get('subject') || '', texto = href.searchParams.get('body') || '';
+  const { data, error } = await db.functions.invoke('enviar_email', { body: { para, asunto, texto, pedido_id: a.dataset.ped || null, marca: 'email_pago' } });
+  if (!error && data && data.ok) { toast('Email con los datos de pago enviado'); return; }
+  location.href = a.href;   // sin envío directo: se abre el correo del dispositivo
+}, true);
+
+/* ---------------- datos fiscales: web de la empresa para el pie de la factura ---------------- */
+
+pintarEmpresa = (orig => async function () {
+  await orig();
+  if ($('em_web')) return;
+  const e = AJUSTES.empresa || {};
+  $('em_email').closest('.g2').insertAdjacentHTML('afterend', `<div class="g2"><div><label for="em_web">Web</label><input id="em_web" value="${esc(e.web || 'www.dlchealthgroup.com')}"></div><div></div></div>`);
+  const ok = $('emok').onclick;
+  $('emok').onclick = async () => { await ok(); AJUSTES.empresa = Object.assign({}, AJUSTES.empresa, { web: $('em_web').value.trim() });
+    await db.rpc('guardar_ajuste', { p_clave: 'empresa', p_valor: AJUSTES.empresa }); };
+})(pintarEmpresa);
+
+/* ---------------- manual de uso renovado ---------------- */
+
+const ICONOS_MANUAL = { roles: '👥', inicio: '🏠', agenda: '📅', rutas: '🧭', directorio: '🩺', centros: '🏥', visitas: '📝', ventas: '🛒',
+  config: '⚙️', admin: '🛡️', facturacion: '🧾', permisos: '🔐' };
+const PRIMEROS_PASOS = {
+  Comercial: [['📍', 'Configura tu punto de salida', 'Configuración → Preferencias. Con él se calculan las horas de tus rutas.', 'config'],
+    ['📅', 'Planifica tu semana', 'Agenda → Semana → «Planificar la semana». Reparte a tus médicos por días.', 'agenda'],
+    ['▶', 'Empieza la jornada', 'Agenda → Tu día → «Empezar jornada» y registra cada visita al terminarla.', 'agenda']],
+  Televenta: [['🛒', 'Crea y valida pedidos', 'Pedidos → Ventas → «+ Nuevo pedido». Al validarlo sale del stock.', 'ventas'],
+    ['📞', 'Registra cada llamada', 'Pedidos → Llamadas. Aunque no acabe en pedido: así se ve por qué.', 'ventas'],
+    ['✅', 'Cierra la operativa', 'Valida el pago, prepara el paquete y envía la factura desde el pedido.', 'ventas']],
+  default: [['🏠', 'Revisa Inicio', 'Indicadores, alertas y tu semana de un vistazo.', 'inicio'],
+    ['👥', 'Mira el equipo', 'Agenda → Equipo: cumplimiento de cada persona.', 'agenda'],
+    ['📊', 'Analiza los resultados', 'Analítica → Resumen, con gráficos explicados.', 'analitica']]
+};
+
+async function cargarManual() {
+  const v = $('v-manual');
+  const accesoTxt = s => s.a ? NIVEL_TXT[nivelDe2(s.a)] : (PERFIL.rol === 'Administrador' ? 'Completo' : '—');
+  const nivelSec = s => s.a ? nivelDe2(s.a) : (PERFIL.rol === 'Administrador' ? 3 : (s.id === 'roles' || s.id === 'permisos') ? 1 : 0);
+  const modulos = Object.keys(MODULO_AREA).filter(puedeModulo).length;
+  const pasos = PRIMEROS_PASOS[PERFIL.rol] || PRIMEROS_PASOS.default;
+  v.innerHTML = `
+    <div class="manhero">
+      <div><h1>Manual de uso</h1><p>Todo lo que puedes hacer en DLC OS, explicado para tu perfil.</p>
+        <div class="manchips"><span>👤 ${esc(PERFIL.nombre)}</span><span>🎫 ${esc(PERFIL.rol)}</span><span>🧩 ${num(modulos)} módulos disponibles</span></div></div>
+      <div class="manbusca"><input id="manq" type="search" placeholder="¿Qué quieres hacer? Aplazar una cita, bloquear un día, emitir una factura…" aria-label="Buscar en el manual"></div>
+    </div>
+    <h2 class="mantit">Primeros pasos</h2>
+    <div class="manpasos">${pasos.map(([ic, t, d, m], i) => `<button class="manpaso" data-mira="${m}"><span class="mpn">${i + 1}</span><span class="mpi">${ic}</span><b>${esc(t)}</b><span>${esc(d)}</span></button>`).join('')}</div>
+    <h2 class="mantit">Por módulo</h2>
+    <div class="mangrid">${MANUAL.map(s => {
+      const n = nivelSec(s);
+      return `<button class="mancard ${n ? '' : 'bloq'}" data-mansec="${s.id}"><span class="mci">${ICONOS_MANUAL[s.id] || '📘'}</span>
+        <b>${esc(s.t)}</b><span class="mcd">${esc(s.para)}</span><span class="pill ${n >= 2 ? 'p-est' : n === 1 ? 'p-per' : 'p-anu'}">${n ? 'Tu acceso: ' + accesoTxt(s) : 'Sin acceso'}</span></button>`;
+    }).join('')}</div>
+    <div id="mandet"></div>
+    <h2 class="mantit">Preguntas frecuentes</h2>
+    <div class="card manfaqs">${FAQ.map(([q, r]) => `<details class="manfaq"><summary>${esc(q)}</summary><p>${esc(r)}</p></details>`).join('')}</div>`;
+  const abrir = id => {
+    const s = MANUAL.find(x => x.id === id); if (!s) return;
+    const n = nivelSec(s), ay = AYUDA[id === 'visitas' ? 'agenda' : id === 'centros' ? 'directorio' : id] || null;
+    v.querySelectorAll('.mancard').forEach(c => c.classList.toggle('on', c.dataset.mansec === id));
+    $('mandet').innerHTML = `<div class="card mandet"><div class="manh"><h2 style="padding:0">${ICONOS_MANUAL[id] || '📘'} ${esc(s.t)}</h2>
+        ${MODULO_AREA[id] && puedeModulo(id) ? `<button class="btn sec" data-mira="${id}">Abrir ${esc(s.t)}</button>` : ''}</div>
+      <p>${esc(s.para)}</p>
+      <div class="mancols"><div><h3>Qué se puede hacer</h3><ul class="manlist">${s.hacer.map(([req, txt]) => `<li class="${n >= req ? 'si' : 'no'}"><span>${n >= req ? '✓' : '🔒'}</span><span>${esc(txt)}${n >= req ? '' : ` <em>· requiere ${esc(s.a ? (AREAS.find(x => x[0] === s.a) || [])[1] || s.t : 'Administración')} en «${NIVEL_TXT[req]}»</em>`}</span></li>`).join('')}</ul></div>
+        ${ay && ay[2] && ay[2].length ? `<div><h3>Cómo funciona</h3><ul class="manlist">${ay[2].map(x => `<li><span>•</span><span>${x}</span></li>`).join('')}</ul></div>` : ''}</div>
+      ${s.config.length ? `<h3>Dónde se configura</h3><div class="mancfg">${s.config.map(x => `<span>⚙ ${esc(x)}</span>`).join('')}</div>` : ''}</div>`;
+    $('mandet').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+  v.querySelectorAll('[data-mansec]').forEach(b => b.onclick = () => abrir(b.dataset.mansec));
+  v.onclick = e => { const m = e.target.closest('[data-mira]'); if (m && puedeModulo(m.dataset.mira)) { if (m.dataset.mira === 'config') CFG_SEC = 'prefs'; ir(m.dataset.mira); } };
+  $('manq').oninput = e => {
+    const q = e.target.value.trim().toLowerCase();
+    if (!q) { v.querySelectorAll('.mancard').forEach(c => c.classList.remove('hide')); return; }
+    let primera = null;
+    v.querySelectorAll('.mancard').forEach(c => {
+      const s = MANUAL.find(x => x.id === c.dataset.mansec), ay = AYUDA[s.id] || [];
+      const txt = [s.t, s.para, ...s.hacer.map(h => h[1]), ...s.config, ...(ay[2] || [])].join(' ').toLowerCase();
+      const ok = txt.includes(q); c.classList.toggle('hide', !ok); if (ok && !primera) primera = s.id;
+    });
+    v.querySelectorAll('.manfaq').forEach(d => { const ok = d.textContent.toLowerCase().includes(q); d.open = ok; });
+    if (primera) abrir(primera);
+  };
+}
+
+/* ---------------- ayudas ---------------- */
+
+AYUDA.facturacion[2].push('<b>⬇ PDF</b> descarga la factura con el mismo formato que Holded. <b>✉️ Enviar por email</b> la manda al cliente con el PDF adjunto desde el correo de la empresa.');
+AYUDA.ventas[2].push('El listado va por páginas y se guarda en el dispositivo: si vuelves a él, aparece al momento mientras se actualiza. Filtra por operativa para ver pagos por validar, paquetes por preparar o facturas por enviar.');
+
+// Aviso de punto de salida en el plan y en «Tu día»
+pintarPlan = (orig => function () { orig(); if (PLAN && $('rplan')) avisoSinSalida($('rplan').querySelector('.card')); })(pintarPlan);
+cargarAgenda = (orig => async function () { await orig(); if (TAB === 'agenda' && AG_MODO === 'dia' && !AG_VISTA) avisoSinSalida($('agcuerpo')); })(cargarAgenda);
 
 
 // Barra inferior del móvil y barra de «Entrar como» desde el primer momento
