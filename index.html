@@ -799,14 +799,6 @@ body{overflow-x:clip;width:100%;min-height:100dvh}
   .datol input,.datol select,.dph input,.lrow input,.lrow select{font-size:16px!important}
 }
 #girar{display:none}
-@media (orientation:landscape) and (max-height:520px) and (pointer:coarse){
-  #girar{display:flex;position:fixed;inset:0;z-index:2000;flex-direction:column;align-items:center;justify-content:center;gap:14px;text-align:center;padding:24px;
-    background:url('./fondo.jpg') left top/cover no-repeat,#F3F8FC;color:var(--navy)}
-  #girar .gi{font-size:44px;animation:girar 1.6s ease-in-out infinite}
-  #girar b{font-size:18px}
-  body > *:not(#girar){visibility:hidden}
-}
-@keyframes girar{0%,20%{transform:rotate(90deg)}60%,100%{transform:rotate(0deg)}}
 /* ============================================================
    v2.37.0 · Móvil ordenado, fluido y sin desbordes
    ============================================================ */
@@ -1096,6 +1088,28 @@ body.masabierto .bnav{border-top-color:transparent;box-shadow:none}
 #cfgcuerpo textarea{width:100%;max-width:none;box-sizing:border-box}
 #cfgcuerpo .card .g2{align-items:start}
 @media (max-width:760px){#cfgcuerpo .cols{grid-template-columns:1fr}}
+
+/* v2.44.0 · Configuración en el móvil por pasos y sin desbordes */
+#girar{display:none!important}
+.cfghub{grid-template-columns:300px minmax(0,1fr)}
+.cfghub > *{min-width:0}
+.cfgcuerpo{min-width:0;overflow-x:hidden}
+.cfgcuerpo .planes{grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+.cfgcuerpo .usrlista{grid-template-columns:repeat(auto-fill,minmax(min(300px,100%),1fr))}
+.cfgcuerpo .kpis{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
+.cfgcuerpo .dgrid-wrap{max-width:100%;overflow-x:auto}
+.cfgvolver{display:none}
+.cfghub.movil{display:block}
+.cfghub.movil .cfgcuerpo{display:none}
+.cfghub.movil.detalle .cfgnav{display:none}
+.cfghub.movil.detalle .cfgcuerpo{display:block}
+.cfghub.movil .cfgvolver{display:inline-flex;align-items:center;gap:4px;border:0;background:none;color:var(--sky);font:inherit;font-weight:700;font-size:15px;padding:4px 0 12px;cursor:pointer}
+.cfghub.movil .cfgg button{padding:12px 14px}
+.cubica{margin:6px 0 4px;padding:10px 12px;border-radius:12px;background:var(--sky-soft)}
+.cubica .acts .btn{min-height:38px;font-size:13.5px}
+
+.vfswitch{position:relative}
+.vfswitch input{position:absolute;left:0;top:0;width:1px;height:1px;opacity:0;pointer-events:none;margin:0}
 </style>
 </head>
 <body>
@@ -1116,7 +1130,6 @@ body.masabierto .bnav{border-top-color:transparent;box-shadow:none}
   </form>
 </section>
 
-<div id="girar" role="alert"><span class="gi">📱</span><b>Gira el móvil</b><span>Se usa en vertical.</span></div>
 <div id="app" class="hide">
   <header>
     <div class="top">
@@ -1231,6 +1244,6 @@ body.masabierto .bnav{border-top-color:transparent;box-shadow:none}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js" defer></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="./config.js"></script>
-<script src="./app.js?v=2.43.0"></script>
+<script src="./app.js?v=2.44.0"></script>
 </body>
 </html>

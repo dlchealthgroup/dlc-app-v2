@@ -561,7 +561,7 @@ async function abrirVisita(id) {
 /* ---------------- editar ficha y altas ---------------- */
 
 function consHTML(c, i) {
-  return `<div class="cons" data-cons="${i}">
+  return `<div class="cons" data-cons="${i}" ${c.lat ? `data-lat="${c.lat}"` : ""}>
     ${i > 0 ? `<button type="button" class="quitar" data-quitar="${i}">Quitar</button>` : ''}
     <input type="hidden" data-cid="${i}" value="${esc(c.id || '')}">
     <div class="g2">
@@ -573,7 +573,7 @@ function consHTML(c, i) {
       <div><label>Código postal</label><input data-cf="${i}|cp" value="${esc(c.cp || '')}"></div>
     </div>
     <div class="g2">
-      <div><label>Provincia</label><input data-cf="${i}|provincia" value="${esc(c.provincia || 'BARCELONA')}"></div>
+      <div><label>Provincia</label><input data-cf="${i}|provincia" value="${esc(c.provincia || '')}"></div>
       <div><label>Teléfono</label><input data-cf="${i}|telefono" value="${esc(c.telefono || '')}" inputmode="tel"></div>
     </div>
     <label>Días y horario</label>${dpHTML(c.dias || {}, i)}
@@ -632,7 +632,7 @@ async function abrirEditor(id, tipo) {
         id: (box.querySelector(`[data-cid="${i}"]`) || {}).value || null,
         centro_nombre: g('centro_nombre').toUpperCase(), municipio: g('municipio').toUpperCase(),
         provincia: g('provincia').toUpperCase(), direccion: g('direccion'), cp: g('cp'),
-        telefono: g('telefono'), dias: dpLeer(box, i)
+        telefono: g('telefono'), dias: dpLeer(box, i), lat: g('lat') || null, lon: g('lon') || null
       };
     });
     return {
@@ -13214,6 +13214,160 @@ pintarPerfil = (orig => function () {
     aplicarIdioma(id); toast('✓');
   };
 })(pintarPerfil);
+
+
+/* ============================================================
+   v2.44.0 · Sin aviso de horizontal (tapaba la app al abrir el
+   teclado), idioma que se guarda de verdad, Configuración en el
+   móvil por pasos (lista → apartado), contenido que no se sale de
+   la pantalla y ubicación de centros y consultas con un toque
+   ============================================================ */
+
+/* ---------------- horizontal: no se muestra ningún aviso ---------------- */
+
+(function () { const g = $('girar'); if (g) g.remove(); })();
+
+/* ---------------- idioma ---------------- */
+
+// El idioma se guarda en el perfil y se aplica al recargar, para que todo salga ya traducido
+pintarPerfil = (orig => function () {
+  orig();
+  const ok = $('pfok');
+  if (ok) {
+    // Siempre con las preferencias actuales: antes, guardar «Mis datos» podía borrar el idioma elegido
+    ok.onclick = async () => {
+      const nombre = $('pfn').value.trim(); if (!nombre) { toast('El nombre no puede quedar vacío', true); return; }
+      const prefs = Object.assign({}, PERFIL.preferencias || {}, { telefono: $('pft').value.trim(), inicio: $('pfi').value });
+      const [a, b] = await Promise.all([db.rpc('guardar_preferencias', { p: prefs }), db.from('perfiles').update({ nombre }).eq('id', PERFIL.id)]);
+      if (a.error) { toast('No se ha podido guardar', true); return; }
+      PERFIL.preferencias = a.data || prefs;
+      if (!b.error) { PERFIL.nombre = nombre; $('uname').textContent = nombre.split(' ')[0]; $('av').textContent = iniciales(nombre); }
+      toast('Datos guardados');
+    };
+  }
+  const sel = $('pfl');
+  if (sel) sel.onchange = async () => {
+    const id = sel.value;
+    const prefs = Object.assign({}, PERFIL.preferencias || {}, { idioma: id });
+    const { data, error } = await db.rpc('guardar_preferencias', { p: prefs });
+    if (error) { toast('No se ha podido guardar', true); return; }
+    PERFIL.preferencias = data || prefs;
+    try { localStorage.setItem('app-idioma', id); sessionStorage.removeItem('app-idioma-recarga'); } catch (e) {}
+    pantallaCarga(IDIOMAS.find(x => x[0] === id)[1] + '…');
+    location.reload();
+  };
+})(pintarPerfil);
+// Al entrar se usa el idioma del perfil; como mucho una recarga por sesión, para no quedar en bucle
+mostrarApp = (orig => function (p) {
+  const id = (p.preferencias || {}).idioma || 'es';
+  let guardado = 'es'; try { guardado = localStorage.getItem('app-idioma') || 'es'; } catch (e) {}
+  if (id !== guardado) {
+    let ya = false; try { ya = sessionStorage.getItem('app-idioma-recarga') === id; } catch (e) {}
+    try { localStorage.setItem('app-idioma', id); sessionStorage.setItem('app-idioma-recarga', id); } catch (e) {}
+    if (!ya) { location.reload(); return; }
+  }
+  prepararIdioma(id);
+  orig(p);
+  if (MAPA_I18N) traducir(document.body);
+})(mostrarApp);
+
+/* ---------------- Configuración en el móvil: primero la lista, después el apartado ---------------- */
+
+function cfgMovil() {
+  const hub = document.querySelector('.cfghub'); if (!hub) return;
+  hub.classList.toggle('movil', ES_MOVIL());
+  if (!ES_MOVIL()) { hub.classList.remove('detalle'); return; }
+  const cuerpo = $('cfgcuerpo');
+  if (cuerpo && !cuerpo.querySelector(':scope > .cfgvolver')) {
+    cuerpo.insertAdjacentHTML('afterbegin', '<button class="cfgvolver" type="button">‹ Configuración</button>');
+  }
+}
+document.addEventListener('click', e => {
+  const v = e.target.closest('.cfgvolver'); if (v) { const hub = v.closest('.cfghub'); hub.classList.remove('detalle'); scrollTo({ top: 0 }); return; }
+  const b = e.target.closest('.cfghub.movil [data-cfg]');
+  if (b) { const hub = b.closest('.cfghub'); hub.classList.add('detalle'); scrollTo({ top: 0 });
+    setTimeout(() => { cfgMovil(); const t = $('cfgcuerpo') && $('cfgcuerpo').querySelector('.cfgvolver'); if (t) t.dataset.titulo = b.querySelector('b').textContent; }, 50); }
+}, true);
+cargarConfig = (orig => async function () {
+  await orig();
+  cfgMovil();
+  // Si se entra en un apartado concreto (por ejemplo desde las notificaciones), se abre directamente
+  if (ES_MOVIL() && CFG_SEC && CFG_SEC !== 'perfil' && window.__CFG_DIRECTO) { const hub = document.querySelector('.cfghub'); if (hub) hub.classList.add('detalle'); }
+  window.__CFG_DIRECTO = false;
+})(cargarConfig);
+// Cada vez que el apartado se repinta, se mantiene el botón de volver
+new MutationObserver(() => { if (TAB === 'config' && ES_MOVIL() && $('cfgcuerpo') && !$('cfgcuerpo').querySelector(':scope > .cfgvolver')) cfgMovil(); })
+  .observe(document.querySelector('main'), { childList: true, subtree: true });
+window.addEventListener('resize', () => { if (TAB === 'config') cfgMovil(); });
+// «Elegir qué notificaciones recibo» abre ese apartado directamente
+panelNotificaciones = (orig => function (l) {
+  orig(l);
+  const b = $('notcfg');
+  if (b) b.onclick = () => { $('dlg').close(); CFG_SEC = 'notif'; window.__CFG_DIRECTO = true; ir('config'); };
+})(panelNotificaciones);
+
+/* ---------------- ubicación de centros y consultas ---------------- */
+
+function marcarUbicado(box, i, lat, lon, texto) {
+  const set = (f, v) => { let el = box.querySelector(`[data-cf="${i}|${f}"]`); if (!el) { el = document.createElement('input'); el.type = 'hidden'; el.dataset.cf = `${i}|${f}`; box.appendChild(el); } el.value = v; };
+  set('lat', lat); set('lon', lon);
+  const est = box.querySelector('.cubest');
+  if (est) est.innerHTML = `<b style="color:var(--ok)">✓ Ubicado</b> ${esc(texto || '')} <a href="https://www.openstreetmap.org/?mlat=${lat}&mlon=${lon}#map=18/${lat}/${lon}" target="_blank" rel="noopener">Ver en el mapa</a>`;
+  const d = box.closest('dialog'); if (d) d.dataset.sucio = '1';
+}
+async function geocodificar(q) {
+  const r = await fetch('https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&limit=1&q=' + encodeURIComponent(q));
+  const j = await r.json(); return j[0] || null;
+}
+async function geoInversa(lat, lon) {
+  try { const r = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1&lat=${lat}&lon=${lon}`); return await r.json(); } catch (e) { return null; }
+}
+function rellenarDireccion(box, i, a) {
+  if (!a) return;
+  const set = (f, v) => { const el = box.querySelector(`[data-cf="${i}|${f}"]`); if (el && v && !el.value.trim()) el.value = v; };
+  set('direccion', [a.road, a.house_number].filter(Boolean).join(', '));
+  set('municipio', (a.city || a.town || a.village || a.municipality || '').toUpperCase());
+  set('cp', a.postcode || ''); set('provincia', (a.province || a.state_district || a.county || a.state || '').toUpperCase());
+}
+// Botones en cada consulta del editor de la ficha
+new MutationObserver(() => {
+  const cons = $('econs'); if (!cons) return;
+  [...cons.children].forEach(box => {
+    if (box.querySelector('.cubica')) return;
+    const i = box.dataset.cons, dir = box.querySelector(`[data-cf="${i}|direccion"]`); if (!dir) return;
+    const g = dir.closest('.g2');
+    g.insertAdjacentHTML('afterend', `<div class="cubica"><div class="cubest sm">${box.dataset.lat ? '<b style="color:var(--ok)">✓ Ubicado</b>' : 'Sin ubicación: no saldrá en rutas ni en el mapa'}</div>
+      <div class="acts" style="margin:6px 0 0"><button type="button" class="btn sec" data-cbus="${i}">🔎 Buscar la dirección</button><button type="button" class="btn sec" data-cgeo="${i}">📍 Estoy aquí</button></div></div>`);
+    const prov = box.querySelector(`[data-cf="${i}|provincia"]`);
+    if (prov && prov.value === 'BARCELONA' && !box.querySelector(`[data-cid="${i}"]`).value) prov.value = '';
+  });
+}).observe(document.body, { childList: true, subtree: true });
+document.addEventListener('click', async e => {
+  const bus = e.target.closest('[data-cbus]'), geo = e.target.closest('[data-cgeo]');
+  if (!bus && !geo) return;
+  const i = (bus || geo).dataset.cbus || (bus || geo).dataset.cgeo, box = (bus || geo).closest('[data-cons]');
+  const v = f => ((box.querySelector(`[data-cf="${i}|${f}"]`) || {}).value || '').trim();
+  const b = bus || geo, txt = b.textContent; b.disabled = true; b.textContent = bus ? 'Buscando…' : 'Localizando…';
+  try {
+    if (bus) {
+      const q = [v('direccion'), v('cp'), v('municipio'), v('provincia'), 'España'].filter(Boolean).join(', ');
+      if (!v('direccion') && !v('municipio')) { toast('Escribe la dirección o el municipio', true); return; }
+      const r = await geocodificar(q);
+      if (!r) { toast('No se ha encontrado esa dirección. Prueba con calle, número y municipio.', true); return; }
+      rellenarDireccion(box, i, r.address); marcarUbicado(box, i, +r.lat, +r.lon, r.display_name.split(',').slice(0, 3).join(','));
+      toast('Ubicado');
+    } else {
+      if (!navigator.geolocation) { toast('Este dispositivo no da la ubicación', true); return; }
+      const pos = await new Promise((ok, ko) => navigator.geolocation.getCurrentPosition(ok, ko, { enableHighAccuracy: true, timeout: 12000 }));
+      const lat = +pos.coords.latitude.toFixed(6), lon = +pos.coords.longitude.toFixed(6);
+      const inv = await geoInversa(lat, lon);
+      rellenarDireccion(box, i, inv && inv.address);
+      marcarUbicado(box, i, lat, lon, inv ? inv.display_name.split(',').slice(0, 3).join(',') : `${lat}, ${lon}`);
+      toast('Ubicado donde estás');
+    }
+  } catch (err) { toast(geo ? 'No se ha podido obtener tu ubicación: revisa el permiso de ubicación' : 'No se ha podido buscar', true); }
+  finally { b.disabled = false; b.textContent = txt; }
+}, true);
 
 
 // Barra inferior del móvil y barra de «Entrar como» desde el primer momento
