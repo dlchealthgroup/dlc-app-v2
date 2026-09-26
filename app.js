@@ -65,23 +65,55 @@ $('nav').addEventListener('click', e => {
   ir(b.dataset.t);
 });
 
+/* Navegación entre módulos.
+   Reúne en una sola función lo que antes estaba repartido en 13 piezas (la original y 12 capas),
+   con el mismo orden: comprobaciones de destino, cancelación de lo pendiente, cambio de pantalla,
+   carga del módulo e indicador de carga. */
 var ir = function (t) {
+  // 1. Destinos que no se abren o que se redirigen
+  if (t in MODULO_AREA && PERFIL && puedeModuloV2400(t) && !planIncluye(t)) { avisoPlan(t); return; }   // fuera del plan contratado
+  if (t === 'admin') { CFG_SEC = CFG_ADMIN[ADM_SEC] || 'usuarios'; t = 'config'; }                       // Administración vive en Configuración
+
+  // 2. Se cancela todo lo que estaba pendiente de la pantalla anterior
+  document.querySelectorAll('main > section.cargando').forEach(s => s.classList.remove('cargando'));
+  PEND = 0;
+  if (t !== 'config') salirPanel();
+  NAV_CTRL.abort(); NAV_CTRL = new AbortController(); NAV_GEN++;
+  if (typeof cerrarSelector === 'function') cerrarSelector();
+
+  // 3. Destino según el perfil y los permisos
+  if (ES_MEDICO() && !['informe', 'manual', 'config'].includes(t)) t = 'informe';
+  if (t in MODULO_AREA && !puedeModulo(t)) { toast('No tienes permiso para ese módulo', true); t = puedeModulo('inicio') ? 'inicio' : 'agenda'; }
+
+  // 4. Cambio de pantalla
+  if (t !== TAB) TAB_ANTERIOR = TAB;
+  $('tools').classList.remove('abierto');
+  if (t !== 'agenda') AG_VISTA = null;
   TAB = t;
-  document.querySelectorAll('#nav button[data-t]').forEach(x => x.setAttribute('aria-selected', String(x.dataset.t === t)));
-  ['inicio', 'agenda', 'rutas', 'directorio', 'pacientes', 'productos', 'seguimiento', 'ventas', 'analitica', 'config', 'admin', 'duplicados'].forEach(k => $('v-' + k).classList.toggle('hide', k !== t));
+  document.querySelectorAll('nav.main [data-t], #bnav [data-t]').forEach(x => x.setAttribute('aria-selected', String(x.dataset.t === t)));
+  document.querySelectorAll('main > section').forEach(s => s.classList.toggle('hide', s.id !== 'v-' + t));
   window.scrollTo({ top: 0 });
-  if (t === 'directorio' && !$('lista').children.length) buscar(true);
-  if (t === 'inicio') cargarInicio();
-  if (t === 'agenda') cargarAgenda();
-  if (t === 'rutas') cargarRutas();
-  if (t === 'seguimiento') cargarSeguimiento();
-  if (t === 'ventas') cargarVentas();
-  if (t === 'analitica') cargarAnalitica();
-  if (t === 'config') cargarConfig();
-  if (t === 'admin') cargarAdmin();
-  if (t === 'duplicados') cargarDuplicados();
-  if (t === 'pacientes') cargarPacientes();
-  if (t === 'productos') cargarProductosModulo();
+
+  // 5. Carga del módulo
+  const cargar = {
+    directorio: () => { if (!$('lista').children.length) buscar(true); },
+    inicio: cargarInicio, agenda: cargarAgenda, rutas: cargarRutas, seguimiento: cargarSeguimiento,
+    ventas: cargarVentas, analitica: cargarAnalitica, config: cargarConfig, duplicados: cargarDuplicados,
+    pacientes: cargarPacientes, productos: cargarProductosModulo, manual: cargarManual,
+    facturacion: cargarFacturacion, informe: cargarInforme
+  };
+  if (cargar[t]) cargar[t]();
+  pintarBnav();
+
+  // 6. Indicador de carga: se quita cuando el módulo deja de pedir datos (como mucho, 8 segundos)
+  const sec = $('v-' + t); if (!sec || ES_MEDICO()) return;
+  sec.classList.add('cargando');
+  const t0 = Date.now(); let quietos = 0;
+  const w = setInterval(() => {
+    if (TAB !== t) { clearInterval(w); sec.classList.remove('cargando'); return; }
+    quietos = PEND === 0 ? quietos + 1 : 0;
+    if ((quietos >= 3 && Date.now() - t0 > 300) || Date.now() - t0 > 8000) { clearInterval(w); requestAnimationFrame(() => sec.classList.remove('cargando')); }
+  }, 80);
 };
 
 /* ---------------- inicio ---------------- */
@@ -222,7 +254,112 @@ $('lista').addEventListener('click', e => { const b = e.target.closest('[data-id
 
 /* ---------------- ficha ---------------- */
 
-async function abrirFicha(id) {
+/* Ficha del prescriptor: la ficha base y, en orden, cada bloque que se le añade
+   (antes eran 6 capas separadas). */
+async function abrirFicha(id, ...r) {
+  const d = $('ficha'); d.classList.add('cargando');
+  const limite = setTimeout(() => d.classList.remove('cargando'), 8000);
+  try {
+    FICHA_PAC = null;
+    await pintarFichaBase(id, ...r);
+    await fichaComercialYPacientes(id);
+    await fichaAvisoHorario(id);
+    await fichaMaterialVisitas(id);
+    await fichaUnidades(id);
+  } finally { clearTimeout(limite); requestAnimationFrame(() => d.classList.remove('cargando')); }
+  await fichaAcceso(id);
+}
+
+// Ficha · Comercial asignado (administración) y pacientes que vienen de este prescriptor
+async function fichaComercialYPacientes(id) {
+  if (FICHA_ID !== id || !$('fbody').querySelector('.fh')) return;
+  const esAdmin = PERFIL.rol === 'Administrador';
+  if (esAdmin) {
+    $('fbody').insertAdjacentHTML('beforeend', `<div class="blk" id="fcomblk"><h3>Comercial asignado</h3>
+      <div style="display:flex;gap:8px"><select id="fcomsel" style="flex:1"><option>Cargando…</option></select>
+        <button class="btn sec" id="fcomok">Guardar</button></div>
+      <div class="sm" style="margin-top:6px">Las ventas nuevas se atribuyen al comercial asignado en ese momento. Las anteriores no cambian.</div></div>`);
+    const [{ data: us }, { data: act }] = await Promise.all([db.rpc('usuarios_lista'), RPC_ORIG('comercial_de_medico', { p_medico: id })]);
+    if (FICHA_ID !== id || !$('fcomsel')) return;
+    $('fcomsel').innerHTML = '<option value="">Sin comercial</option>' + (us || []).filter(u => u.activo && (u.rol === 'Comercial' || (act && act.id === u.id)))
+      .map(u => `<option value="${u.id}" ${act && act.id === u.id ? 'selected' : ''}>${esc(u.nombre)} · ${esc(u.rol)}</option>`).join('');
+    $('fcomok').onclick = async ev => {
+      ev.target.disabled = true;
+      const { data: r, error } = await db.rpc('asignar_comercial_medico', { p_medico: id, p_usuario: $('fcomsel').value || null });
+      ev.target.disabled = false;
+      if (error || (r && r.ok === false)) { toast('No se ha podido asignar', true); return; }
+      toast('Comercial asignado'); abrirFicha(id);
+    };
+  }
+  if (esAdmin || ((PERFIL.areas || {}).V || 0) >= 1) {
+    const { data } = await db.rpc('pacientes_lista', { q: null, p_medico: id, lim: 5, desplaz: 0 });
+    if (FICHA_ID !== id || !data || !data.total) return;
+    $('fbody').insertAdjacentHTML('beforeend', `<div class="blk"><h3>Pacientes<span class="n" style="margin-left:6px">${num(data.total)}</span></h3>
+      ${data.filas.map(x => `<button class="item" data-fmpac="${x.id}" style="padding:7px 4px"><span class="tx"><b>${esc(x.nombre)}</b>
+        <span class="sm">${num(x.unidades)} uds. · ${num(x.pedidos)} pedidos${x.ultimo_pedido ? ' · último ' + fechaCorta(x.ultimo_pedido) : ''}</span></span></button>`).join('')}
+      ${data.total > 5 ? `<button class="verlo" id="fmpactodos" style="border-radius:8px;margin-top:6px">Ver los ${num(data.total)} pacientes</button>` : ''}</div>`);
+    $('fbody').querySelectorAll('[data-fmpac]').forEach(b => b.onclick = () => fichaPaciente(b.dataset.fmpac));
+    const nombre = ($('fbody').querySelector('.fh h2') || {}).textContent || '';
+    if ($('fmpactodos')) $('fmpactodos').onclick = () => {
+      $('ficha').close(); Object.assign(PAC, { q: '', medico: id, medicoNombre: nombre.replace(/^Urgente\s*/, ''), pagina: 0 }); ir('pacientes');
+    };
+  }
+}
+
+// Ficha · Aviso si falta su horario de consulta
+async function fichaAvisoHorario(id) {
+  if (FICHA_ID !== id || !$('fbody').querySelector('.fh')) return;
+  if (!await faltaHorario(id) || FICHA_ID !== id || $('fhorario')) return;
+  $('fbody').querySelector('.fh').insertAdjacentHTML('afterend', `<div class="avisoh" id="fhorario">
+    <span>⚠ <b>Falta su horario de consulta.</b> Sin él, las rutas y el planificador no saben qué días y horas pasa consulta.</span>
+    ${puedeEditar() ? '<button class="btn sec" id="fhcompletar">Completar horario</button>' : ''}</div>`);
+  if ($('fhcompletar')) $('fhcompletar').onclick = () => abrirEditor(id);
+}
+
+// Ficha · Material entregado y datos bajo cada visita del historial
+async function fichaMaterialVisitas(id) {
+  if (FICHA_ID !== id) return;
+  // Material y datos bajo cada visita del historial
+  $('fbody').querySelectorAll('[data-editv]').forEach(b => {
+    let v; try { v = JSON.parse(b.dataset.editv); } catch (e) { return; }
+    const t = detTxt(v); if (!t) return;
+    const span = b.parentElement.querySelector(':scope > span');
+    if (span && !span.querySelector('.vdet')) span.insertAdjacentHTML('beforeend', `<div class="sm vdet">📎 ${esc(t)}</div>`);
+  });
+}
+
+// Ficha · Unidades pautadas por periodo y evolución de los últimos 12 meses
+async function fichaUnidades(id) {
+  if (FICHA_ID !== id || !$('fbody') || $('fundades')) return;
+  const { data: u } = await RPC_ORIG('unidades_medico', { p_medico: id });
+  if (!u || FICHA_ID !== id || $('fundades')) return;
+  const max = Math.max(1, ...(u.meses || []).map(m => m.unidades));
+  const bloque = `<div class="blk" id="fundades"><h3>Unidades pautadas</h3>
+    <div class="uper">${[['Hoy', u.hoy], ['Semana', u.semana], ['Mes', u.mes], ['Trimestre', u.trimestre], ['Año', u.anio], ['Total', u.total]]
+      .map(([t, v]) => `<div><b>${num(v)}</b><span>${t}</span></div>`).join('')}</div>
+    <div class="spark" title="Últimos 12 meses">${(u.meses || []).map(m => `<i style="height:${Math.round(m.unidades / max * 100)}%" title="${periodoTxt(m.mes)}: ${num(m.unidades)}"></i>`).join('')}</div>
+    <div class="sm">${u.total ? `${num(u.pautas)} pautas · última el ${fechaCorta(u.ultima)} · barras: últimos 12 meses` : 'Todavía sin pautas registradas.'}</div></div>`;
+  const ref = $('fbody').querySelector('.blk:nth-of-type(2)') || $('fbody').lastElementChild;
+  ref.insertAdjacentHTML('beforebegin', bloque);
+}
+
+// Ficha · Acceso del médico a la plataforma (administración)
+async function fichaAcceso(id) {
+  if (PERFIL.rol !== 'Administrador' || FICHA_ID !== id || !$('fbody') || $('facceso')) return;
+  const { data: us } = await RPC_ORIG('usuarios_resumen', {});
+  const ya = (us || []).find(u => u.medico_id === id);
+  $('fbody').insertAdjacentHTML('beforeend', `<div class="blk" id="facceso"><h3>Acceso a la plataforma</h3>
+    ${ya ? `<p class="sm">Tiene acceso como <b>${esc(ya.email || '')}</b>${ya.activo ? '' : ' (desactivado)'}: ve su informe y recibe un aviso con cada pauta.</p>`
+      : `<p class="sm">Puede tener acceso a su informe de prescripción y recibir un aviso con cada pauta a su nombre. No verá importes ni datos de pacientes.</p>
+         <button class="btn sec" id="fdaracc">Dar acceso</button>`}</div>`);
+  if ($('fdaracc')) $('fdaracc').onclick = async () => {
+    const { data: f } = await db.rpc('ficha_medico', { p_id: id });
+    $('ficha').close(); nuevoUsuario({ medico: { id, nombre: f.medico.nombre }, nombre: f.medico.nombre, email: f.medico.email || '' });
+  };
+}
+
+/* Ficha base del prescriptor; abrirFicha le añade el resto de bloques */
+async function pintarFichaBase(id) {
   FICHA_ID = id;
   $('fbody').innerHTML = '<div class="skel" style="width:50%"></div><div class="skel"></div><div class="skel" style="width:80%"></div>';
   $('ficha').showModal();
@@ -661,7 +798,85 @@ const isoMas = (iso, n) => { const d = new Date(iso + 'T00:00:00'); d.setDate(d.
 const lunesDe = iso => { const d = new Date(iso + 'T00:00:00'); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return d.toISOString().slice(0, 10); };
 const EST_COL = { Planificada: 'var(--navy)', Visitada: 'var(--ok)', Pendiente: 'var(--warn)', Reprogramada: 'var(--sky)', Descartada: 'var(--muted)' };
 
+/* Agenda: pinta la vista base (día, semana o mes) y le añade, en orden, lo que antes eran 8 capas separadas. */
 async function cargarAgenda() {
+  // Se recuerda el desplazamiento para no saltar arriba al repintar la misma vista
+  const y = window.scrollY, mismo = TAB === 'agenda' && $('agcuerpo') && $('agcuerpo').children.length;
+  // La vista «Equipo» se pinta primero como semana y después se sustituye
+  const modo = AG_MODO;
+  if (modo === 'equipo') AG_MODO = 'semana';
+
+  await pintarAgendaBase();
+
+  // Día: sugerencias para hoy y días futuros, y «Tu día»
+  if (TAB === 'agenda' && AG_MODO === 'dia' && AG_FECHA >= hoyISO()) sugerenciasAgenda();
+  if (TAB === 'agenda' && AG_MODO === 'dia') await pintarTuDia();
+
+  // Semana en cuadrícula y «Reprogramar todas» para los pendientes de días anteriores
+  if (TAB === 'agenda') {
+    if (AG_MODO === 'semana') await pintarSemanaAgenda();
+    const pend = $('agpend');
+    if (pend && pend.querySelector('h2') && !$('agrepro')) {
+      pend.querySelector('p.sm').insertAdjacentHTML('afterend', '<div class="acts" style="padding:0 16px 8px"><button class="btn" id="agrepro">Reprogramar todas</button></div>');
+      $('agrepro').onclick = async () => {
+        const { data } = await RPC_ORIG('pendientes_ruta', {});
+        reprogramarCitas(data || [], 'Pendientes de días anteriores', `${(data || []).length} sin visitar`);
+      };
+    }
+  }
+
+  // Ver la agenda de otra persona y vista «Equipo» (quien ve todo el equipo)
+  AG_MODO = modo;
+  if (TAB === 'agenda') {
+    const acts = $('v-agenda').querySelector('.saludo .acts');
+    if (acts && VE_TODO() && !$('agvista')) {
+      if (!COMS.length) await cargarComerciales();
+      acts.insertAdjacentHTML('afterbegin', `<select id="agvista" aria-label="Agenda de" title="Ver la agenda de otra persona">
+          <option value="">Mi agenda</option>${COMS.filter(u => u.id !== PERFIL.id).map(u => `<option value="${u.id}" ${AG_VISTA && AG_VISTA.id === u.id ? 'selected' : ''}>${esc(u.nombre)}</option>`).join('')}</select>
+        <button class="btn ${modo === 'equipo' ? '' : 'sec'}" data-ag="equipo">Equipo</button>`);
+      $('agvista').onchange = e => verAgendaDe(e.target.value);
+      if (modo === 'equipo') acts.querySelectorAll('[data-ag="semana"]').forEach(b => b.classList.add('sec'));
+    }
+    if (AG_VISTA && $('agtit')) $('agtit').textContent += ' · agenda de ' + AG_VISTA.nombre;
+    if (modo === 'equipo') { $('agtit').textContent = 'Cumplimiento del equipo'; await pintarEquipo(); }
+  }
+
+  // Se marca la vista pintada (para repintar sin parpadeo) y se abre el plan semanal si se pidió
+  const c = $('agcuerpo');
+  if (c) c.dataset.modo = AG_MODO + '|' + (AG_MODO === 'dia' ? AG_FECHA : lunesDe(AG_FECHA || hoyISO())) + '|' + agUid();
+  if (ABRIR_PLAN_SEMANA && AG_MODO === 'semana' && $('semplan')) { ABRIR_PLAN_SEMANA = false; $('semplan').click(); }
+
+  // Mes: selector de meses a la vista y varios meses seguidos
+  if (TAB === 'agenda' && AG_MODO === 'mes') {
+    const acts = $('v-agenda').querySelector('.saludo .acts');
+    if (acts && !$('agmeses')) {
+      acts.insertAdjacentHTML('beforeend', `<select id="agmeses" aria-label="Meses a la vista" title="Meses a la vista">
+        ${[1, 2, 3, 6].map(n => `<option value="${n}" ${AG_MESES === n ? 'selected' : ''}>${n} ${n === 1 ? 'mes' : 'meses'}</option>`).join('')}</select>`);
+      $('agmeses').onchange = e => { AG_MESES = +e.target.value; cargarAgenda(); };
+    }
+    if (AG_MESES > 1) {
+      const base = AG_FECHA.slice(0, 7), bloques = [];
+      for (let i = 0; i < AG_MESES; i++) {
+        const d = new Date(base + '-01T12:00:00'); d.setMonth(d.getMonth() + i);
+        await pintarMesAgenda(fechaLocal(d).slice(0, 7));
+        const w = document.createElement('div'); w.className = 'mesbloque';
+        while ($('agcuerpo').firstChild) w.appendChild($('agcuerpo').firstChild);
+        bloques.push(w);
+      }
+      bloques.forEach(w => $('agcuerpo').appendChild(w));
+      $('agcuerpo').classList.add('varios');
+      const fin = new Date(base + '-01T12:00:00'); fin.setMonth(fin.getMonth() + AG_MESES - 1);
+      $('agtit').textContent = periodoTxt(base) + ' – ' + periodoTxt(fechaLocal(fin).slice(0, 7));
+    }
+  }
+
+  // Día propio: aviso si falta el punto de salida
+  if (TAB === 'agenda' && AG_MODO === 'dia' && !AG_VISTA) avisoSinSalida($('agcuerpo'));
+  if (mismo && TAB === 'agenda') window.scrollTo(0, y);
+}
+
+/* Vista base de la agenda (día, semana o mes); cargarAgenda le añade el resto */
+async function pintarAgendaBase() {
   if (!AG_FECHA) AG_FECHA = hoyISO();
   const desde = AG_MODO === 'dia' ? AG_FECHA : lunesDe(AG_FECHA);
   const hasta = AG_MODO === 'dia' ? AG_FECHA : isoMas(desde, 6);
@@ -812,7 +1027,117 @@ async function planificar(rutaId, btn) {
   construirPlan(conXY, rutaId, btn);
 }
 
+/* pintarPlan: la parte base y, en orden, cada paso que se le añade (antes eran 6 capas separadas). */
 function pintarPlan() {
+  pintarPlanBase();
+  planBotonesAgenda();
+  planHorasYFueraDePlan();
+  planMapaYDescartar();
+  planVisitadosRecientes();
+  planAvisoSinSalida();
+  planFichasYNotas();
+}
+
+function planBotonesAgenda() {
+  if ($('planag')) $('planag').onclick = async ev => {
+    ev.target.disabled = true;
+    const r = await planAAgenda(PLAN);
+    ev.target.disabled = false;
+    if (!r) return;
+    toast(`${r.n} citas en tu agenda del ${fechaCorta(r.fecha)}`);
+    AG_MODO = 'dia'; AG_FECHA = r.fecha; PLAN = null; ir('agenda');
+  };
+  if ($('planempezar')) { $('planempezar').textContent = '▶ Pasar a mi agenda y empezar'; $('planempezar').onclick = empezarRuta; }
+  if ($('planag')) $('planag').textContent = 'Guardar en mi agenda';
+}
+
+function planHorasYFueraDePlan() {
+  if (!PLAN || !$('rplan')) return;
+  // Hora de cada médico y su franja de consulta
+  $('rplan').querySelectorAll('.lista > .item').forEach((el, i) => {
+    const p = PLAN.paradas[i]; if (!p) return;
+    const linea = el.querySelectorAll('.tx .sm')[1];
+    if (linea) linea.innerHTML = p.medicos.map(m => `<span class="pmed"><b>${m.horaPlan != null ? hm(m.horaPlan) : ''}</b> ${esc(m.nombre)}${
+      m.ventanas && m.ventanas.length ? ` <span class="pvent">consulta ${txtVentanas(m.ventanas)}</span>` : ''}</span>`).join('');
+  });
+  const fuera = PLAN.fuera || [];
+  if (fuera.length) {
+    $('rplan').querySelector('.card .lista').insertAdjacentHTML('afterend', `<div class="planfuera">
+      <h3>Se quedan fuera · ${fuera.length}</h3>
+      <div class="lista">${fuera.slice(0, 30).map(f => `<div class="item" style="cursor:default">
+        <span class="ic w">!</span><span class="tx"><b>${esc(f.m.nombre)}</b>
+          <span class="sm">${esc(f.motivo)}${f.m.municipio ? ' · ' + esc(f.m.municipio) : ''}</span></span></div>`).join('')}
+        ${fuera.length > 30 ? `<div class="sm" style="padding:6px 12px">y ${fuera.length - 30} más</div>` : ''}</div></div>`);
+  }
+}
+
+function planMapaYDescartar() {
+  if (!PLAN || !$('rplan')) return;
+  const fuera = $('rplan').querySelector('.planfuera'), mapa = $('planmapa');
+  if (fuera && mapa) mapa.insertAdjacentElement('afterend', fuera);
+  if ($('plancerrar')) { $('plancerrar').textContent = '✕ Descartar plan'; $('plancerrar').title = 'Descarta este plan (la ruta guardada no cambia)'; }
+  if ($('planver')) $('planver').onclick = () => {
+    const m = $('planmapa');
+    if (m.dataset.on && m.style.height !== '0px') {
+      m.style.height = '0px'; m.style.marginTop = '0'; $('planver').textContent = 'Ver la ruta en el mapa';
+    } else {
+      mapaDelPlan(); m.style.height = 'min(55vh,460px)'; m.style.marginTop = '12px'; $('planver').textContent = 'Ocultar el mapa';
+    }
+  };
+}
+
+function planVisitadosRecientes() {
+  if (!PLAN || !$('rplan') || PLAN.__recientes === undefined && !PLAN.__pedido) {
+    if (PLAN && !PLAN.__pedido) {
+      PLAN.__pedido = true;
+      const ids = PLAN.paradas.flatMap(p => p.medicos.map(m => m.id));
+      recientesDe(ids, PLAN.fecha || hoyISO()).then(por => { if (!PLAN) return; PLAN.__recientes = por; pintarPlan(); });
+    }
+    return;
+  }
+  const por = PLAN.__recientes || {};
+  const ids = Object.keys(por);
+  if (!ids.length) return;
+  $('rplan').querySelectorAll('.pmed').forEach(el => {
+    const m = PLAN.paradas.flatMap(p => p.medicos).find(x => el.textContent.includes(x.nombre));
+    if (m && por[m.id] && !el.querySelector('.prec')) el.insertAdjacentHTML('beforeend', ` <span class="prec">⚠ ${esc(txtReciente(por[m.id].slice(0, 2)))}</span>`);
+  });
+  const card = $('rplan').querySelector('.card');
+  if (card && !$('planrec')) {
+    card.querySelector('h2').insertAdjacentHTML('afterend', `<div class="avisoh" id="planrec"><span>⚠ ${ids.length} ${ids.length === 1 ? 'médico del plan ya se ha' : 'médicos del plan ya se han'} visitado o tienen cita en los últimos ${avisoRevisita().dias} días.</span>
+      <button class="btn sec" id="planquitar">Quitarlos del plan</button></div>`);
+    $('planquitar').onclick = () => {
+      const u = ULTIMO_PLAN; if (!u) return;
+      construirPlan(u.conXY.filter(m => !ids.includes(m.id)), u.rutaId, null, u.opts);
+    };
+  }
+}
+
+function planAvisoSinSalida() {
+ if (PLAN && $('rplan')) avisoSinSalida($('rplan').querySelector('.card'));
+}
+
+function planFichasYNotas() {
+  if (!PLAN || !$('rplan')) return;
+  const items = $('rplan').querySelectorAll('.lista > .item');
+  PLAN.paradas.forEach((p, i) => {
+    const it = items[i]; if (!it || it.dataset.ext) return;
+    it.dataset.ext = '1';
+    const tx = it.querySelector('.tx'), meds = tx.querySelectorAll('.sm')[1];
+    if (meds) meds.innerHTML = p.medicos.map(m => `<button type="button" class="lnkmed" data-pfm="${m.id}" title="Abrir la ficha">${esc(m.nombre)}</button>`).join('');
+    if (p.nota) tx.insertAdjacentHTML('beforeend', `<span class="sm notapar">📝 ${esc(p.nota)}</span>`);
+    const acts = it.querySelector('.acts');
+    acts.insertAdjacentHTML('afterbegin', `${p.medicos.length === 1 ? `<button class="btn sec" data-pfm="${p.medicos[0].id}">Ficha</button>` : ''}<button class="btn sec" data-pnota="${i}">${p.nota ? 'Editar nota' : 'Nota'}</button>`);
+  });
+  $('rplan').querySelectorAll('[data-pfm]').forEach(b => b.onclick = () => abrirFicha(b.dataset.pfm));
+  $('rplan').querySelectorAll('[data-pnota]').forEach(b => b.onclick = async () => {
+    const p = PLAN.paradas[+b.dataset.pnota];
+    const t = await pedirTexto('Se guardará en la cita de cada médico de esta parada al pasar el plan a tu agenda.', p.nota || '', { titulo: 'Nota para ' + p.centro, ok: 'Guardar nota' });
+    if (t === null) return; p.nota = t.trim(); pintarPlan();
+  });
+}
+
+function pintarPlanBase() {
   if (!PLAN) { $('rplan').innerHTML = ''; return; }
   const total = PLAN.paradas.reduce((n, p) => n + p.medicos.length, 0);
   const ultima = PLAN.paradas[PLAN.paradas.length - 1];
@@ -912,7 +1237,52 @@ document.addEventListener('click', e => {
 
 const punto = k => (PERFIL.preferencias || {})[k] || null;
 
-function pintarPrefs() {
+/* pintarPrefs: la parte base y, en orden, cada paso que se le añade (antes eran 2 capas separadas). */
+async function pintarPrefs() {
+  pintarPrefsBase();
+  pintarPrefsPaso1();
+  await pintarPrefsPaso2();
+}
+
+function pintarPrefsPaso1() {
+  const acts = $('pfguardar') && $('pfguardar').closest('.acts');
+  if (!acts || $('pfaviso')) return;
+  const a = avisoRevisita();
+  acts.insertAdjacentHTML('beforebegin', `<div class="blk" id="pfaviso"><h3>Avisos</h3>
+    <label class="opt"><input type="checkbox" id="pfrev" ${a.on ? 'checked' : ''}>
+      <span><b>Avisarme si un médico ya se ha visitado hace poco</b><br><span class="sm">Al añadir una cita, al planificar una ruta o la semana. Cuenta visitas y citas de cualquier persona.</span></span></label>
+    <div class="g2"><div><label for="pfrevd">Cuántos días cuentan como «hace poco»</label><input id="pfrevd" type="number" min="1" max="60" value="${a.dias}"></div></div></div>`);
+  const guardar = () => guardarAvisoRevisita({ on: $('pfrev').checked, dias: Math.max(1, +$('pfrevd').value || 7) }).then(ok => ok && toast('Aviso guardado'));
+  $('pfrev').onchange = guardar; $('pfrevd').onchange = guardar;
+}
+
+async function pintarPrefsPaso2() {
+  if (!$('cfgcuerpo') || $('miperfil')) return;
+  const mods = Object.keys(MODULO_AREA).filter(puedeModulo);
+  const nombres = { inicio: 'Inicio', agenda: 'Agenda', rutas: 'Rutas', directorio: 'Directorio', pacientes: 'Clientes', productos: 'Productos', seguimiento: 'Calidad del dato',
+    ventas: 'Pedidos', analitica: 'Analítica', facturacion: 'Facturación' };
+  $('cfgcuerpo').insertAdjacentHTML('afterbegin', `<div class="card miperfil" id="miperfil">
+    <div class="mpcab"><span class="mpav">${esc(iniciales(PERFIL.nombre))}</span>
+      <div><h2 style="padding:0;margin:0">${esc(PERFIL.nombre)}</h2><div class="sm">${esc(PERFIL.email || '')}</div>
+        <div class="mpchips"><span class="pill p-est">${esc(PERFIL.rol)}</span></div></div></div>
+    <div class="mpgrid">
+      <div><b>Tus módulos</b><div class="mpmods">${mods.map(m => `<span>${ICO_MOD[m] || '•'} ${esc(nombres[m] || m)}</span>`).join('')}</div></div>
+      <div id="mpextra"><b>Tu actividad</b><div class="sm">Cargando…</div></div>
+    </div>
+    <p class="sm" style="margin:10px 0 0">Tus permisos los gestiona administración. Debajo, las preferencias que puedes cambiar tú.</p></div>`);
+  const seguro = x => Promise.resolve(x).then(r => r || {}, () => ({}));
+  const [{ data: k }, { data: h }, { data: yo }] = await Promise.all([seguro(RPC_ORIG('panel_inicio', {})),
+    seguro(RPC_ORIG('historial_esquemas', { p_usuario: PERFIL.id })), seguro(db.from('perfiles').select('zonas').eq('id', PERFIL.id).single())]);
+  if (!$('mpextra')) return;
+  const kk = (k && (k.kpis || k)) || {}, esq = (h || []).find(x => !x.hasta);
+  $('mpextra').innerHTML = `<b>Tu actividad</b><ul class="mplist">
+    ${kk.medicos != null ? `<li>🩺 <b>${num(kk.medicos)}</b> médicos en tu cartera</li>` : ''}
+    ${kk.visitas_mes != null ? `<li>📝 <b>${num(kk.visitas_mes)}</b> visitas este mes</li>` : ''}
+    ${yo && yo.zonas && yo.zonas.length ? `<li>📍 Zona: ${esc(yo.zonas.map(z => z.charAt(0) + z.slice(1).toLowerCase()).join(', '))}</li>` : ''}
+    ${esq ? `<li>€ Comisión: ${esc(esq.esquema)}</li>` : ''}</ul>`;
+}
+
+function pintarPrefsBase() {
   const s = punto('salida') || { nombre: '', dir: '' };
   const l = punto('llegada');
   const caja = (k, x, titulo, sub) => `<div class="card" style="padding:16px">
@@ -1162,7 +1532,44 @@ let DUPS = null, PARES = null;
 
 /* ---------------- seguimiento ---------------- */
 
+/* cargarSeguimiento: la parte base y, en orden, cada paso que se le añade (antes eran 2 capas separadas). */
 async function cargarSeguimiento() {
+  await cargarSeguimientoBase();
+  await cargarSeguimientoPaso1();
+  await cargarSeguimientoPaso2();
+}
+
+async function cargarSeguimientoPaso1() {
+  const v = $('v-seguimiento');
+  v.querySelector('.saludo h1').firstChild.textContent = 'Calidad del dato';
+  v.querySelector('.saludo .fecha').textContent = 'Fichas completas, datos que faltan y avance de cada médico';
+  const { data: q } = await RPC_ORIG('calidad_datos', {});
+  if (!q || $('calidad')) return;
+  const pct = (a, b) => b ? Math.round(a / b * 100) : 0;
+  const item = (n, t, h) => `<div class="kpi ${n ? 'warn' : 'ok'}"><button class="ai" data-ayuda-txt="${esc(h)}" data-ayuda-tit="${esc(t)}" aria-label="Qué es">i</button><b>${num(n)}</b><span>${esc(t)}</span></div>`;
+  v.querySelector('.saludo').insertAdjacentHTML('afterend', `<div class="card" id="calidad" style="padding-bottom:6px">
+    <div class="manh" style="padding:14px 16px 0"><h2 style="padding:0">Fichas completas: ${pct(q.completas, q.total)}%</h2><span class="sm">${num(q.completas)} de ${num(q.total)} médicos</span></div>
+    <div class="barra" style="margin:8px 16px 10px"><i style="width:${pct(q.completas, q.total)}%"></i></div>
+    <div class="kpis" style="padding:0 16px 10px">
+      ${item(q.sin_ubicacion, 'sin ubicación', 'Sin coordenadas en ninguna consulta: no entran en rutas ni en el mapa.')}
+      ${item(q.sin_horario, 'sin horario de consulta', 'Sin días ni horas de consulta: las rutas no pueden ajustarse a su horario.')}
+      ${item(q.sin_especialidad, 'sin especialidad', 'Sin especialidad en la ficha: no se pueden filtrar ni analizar por especialidad.')}
+      ${item(q.sin_contacto, 'sin teléfono ni email', 'No hay forma de contactar con ellos fuera de la visita.')}
+      ${item(q.sin_provincia, 'sin provincia', 'Sin provincia no se pueden asignar por zona a un comercial.')}
+      ${item(q.sin_comercial, 'sin comercial', 'Médicos que no están en ninguna cartera.')}
+      ${item(q.duplicados, 'pendientes de unificar', 'Fichas marcadas como posibles duplicados.')}
+    </div>
+    <p class="sm" style="padding:0 16px 10px">Una ficha completa tiene ubicación, horario, especialidad y teléfono o email. Debajo, el avance de cada médico.</p></div>`);
+}
+
+async function cargarSeguimientoPaso2() {
+  const s = document.querySelector('#v-seguimiento .saludo');
+  if (s && !$('calvolver')) s.insertAdjacentHTML('beforebegin', '<button class="cfgvolver visible" id="calvolver" type="button">‹ Médicos</button>');
+  if ($('calvolver')) $('calvolver').onclick = () => ir('directorio');
+  document.querySelectorAll('nav.main [data-t]').forEach(b => b.setAttribute('aria-selected', String(b.dataset.t === 'directorio')));
+}
+
+async function cargarSeguimientoBase() {
   $('v-seguimiento').innerHTML = `
     <div class="saludo"><div><h1>Seguimiento</h1><div class="fecha">Cómo avanza cada médico</div></div>
       <div class="acts" style="margin:0">
@@ -1436,11 +1843,6 @@ $('bnav').addEventListener('click', e => {
   if (b) ir(b.dataset.t);
 });
 
-const irOriginal = ir;
-ir = function (t) {
-  irOriginal(t);
-  document.querySelectorAll('#bnav [data-t]').forEach(x => x.setAttribute('aria-selected', String(x.dataset.t === t)));
-};
 
 /* ---------------- mapa ---------------- */
 
@@ -1879,7 +2281,64 @@ async function tarjetaComision() {
 
 /* ---------------- esquemas de comisión (administración) ---------------- */
 
+/* pintarComisiones: la parte base y, en orden, cada paso que se le añade (antes eran 2 capas separadas). */
 async function pintarComisiones() {
+  await pintarComisionesBase();
+  await pintarComisionesPaso1();
+  await pintarComisionesPaso2();
+}
+
+async function pintarComisionesPaso1() {
+  const c = $('admcuerpo'); if (!c || $('asigesq')) return;
+  const { data } = await RPC_ORIG('asignaciones_esquema_lista', {});
+  const l = data || [];
+  c.insertAdjacentHTML('afterbegin', `<div class="card" id="asigesq" style="padding:16px 18px">
+    <div class="manh"><h2 style="padding:0">Quién cobra con cada esquema</h2><button class="btn" id="asignueva">+ Asignar esquema</button></div>
+    <p class="sm">Al asignar eliges desde cuándo se aplica: a partir de hoy, a todo el histórico de esa persona o desde una fecha concreta, pasada o futura. Cada liquidación usa el esquema vigente en ese mes.</p>
+    ${l.length ? `<div class="dgrid-wrap"><div class="dgrid asigs"><div class="dh"><span>Persona</span><span>Esquema</span><span>Desde</span><span>Hasta</span><span>Estado</span></div>
+      ${l.map(x => `<div class="dr" style="cursor:default"><span><b>${esc(x.persona)}</b><span class="sm">${esc(x.rol)}</span></span><span>${esc(x.esquema)}</span>
+        <span>${x.desde <= '2000-01-01' ? 'Todo el histórico' : fechaCorta(x.desde)}</span><span>${x.hasta ? fechaCorta(x.hasta) : '—'}</span>
+        <span><span class="pill ${x.vigente ? 'p-est' : x.desde > hoyISO() ? 'p-per' : 'p-anu'}">${x.vigente ? 'Vigente' : x.desde > hoyISO() ? 'Programado' : 'Terminado'}</span></span></div>`).join('')}</div></div>`
+      : '<div class="vacio">Nadie tiene todavía un esquema asignado.</div>'}</div>`);
+  $('asignueva').onclick = async () => {
+    if (!COMS.length) await cargarComerciales();
+    if (!ESQUEMAS.length) { const { data: e } = await db.rpc('esquemas_lista'); ESQUEMAS = e || []; }
+    $('dbody').innerHTML = `<div class="fh"><div><h2>Asignar esquema de comisión</h2><div class="sm">Sustituye al que tuviera esa persona desde la fecha elegida</div></div>
+        <button class="x" data-cerrar aria-label="Cerrar">✕</button></div>
+      <div class="g2"><div><label for="aep">Persona</label><select id="aep">${COMS.map(u => `<option value="${u.id}">${esc(u.nombre)} · ${esc(u.rol)}</option>`).join('')}</select></div>
+        <div><label for="aee">Esquema</label><select id="aee"><option value="">Sin comisión</option>${ESQUEMAS.map(e => `<option value="${e.id}">${esc(e.nombre)}</option>`).join('')}</select></div></div>
+      <label>Se aplica</label>
+      <div class="opciones" style="grid-template-columns:repeat(3,1fr)">
+        <label class="opt"><input type="radio" name="aem" value="hoy" checked> A partir de hoy</label>
+        <label class="opt"><input type="radio" name="aem" value="todo"> A todo el histórico</label>
+        <label class="opt"><input type="radio" name="aem" value="fecha"> Desde una fecha</label></div>
+      <div id="aefw" class="hide"><label for="aef">Fecha (puede ser pasada o futura)</label><input id="aef" type="date" value="${hoyISO()}"></div>
+      <div class="avisoh" id="aeinfo"><span>Las ventas desde hoy se liquidarán con este esquema.</span></div>
+      <div class="acts" style="justify-content:flex-end"><button class="btn sec" data-cerrar>Cancelar</button><button class="btn" id="aeok">Asignar</button></div>`;
+    $('dlg').showModal();
+    const info = () => {
+      const m = $('dbody').querySelector('[name=aem]:checked').value;
+      $('aefw').classList.toggle('hide', m !== 'fecha');
+      $('aeinfo').querySelector('span').textContent = m === 'todo' ? 'Todas sus ventas, también las pasadas, se liquidarán con este esquema. Las liquidaciones ya cerradas no cambian.'
+        : m === 'fecha' ? ($('aef').value < hoyISO() ? 'Las ventas desde esa fecha (pasada) se recalcularán con este esquema en las liquidaciones abiertas.' : 'Se aplicará automáticamente a partir de esa fecha; hasta entonces sigue el esquema actual.')
+        : 'Las ventas desde hoy se liquidarán con este esquema.';
+    };
+    $('dbody').querySelectorAll('[name=aem]').forEach(r => r.onchange = info); $('aef').onchange = info;
+    $('aeok').onclick = async () => {
+      const m = $('dbody').querySelector('[name=aem]:checked').value;
+      const desde = m === 'todo' ? '2000-01-01' : m === 'fecha' ? $('aef').value : hoyISO();
+      const { data: r, error } = await db.rpc('asignar_esquema', { p_usuario: $('aep').value, p_esquema: $('aee').value || null, p_quitar: !$('aee').value, p_desde: desde });
+      if (error || (r && r.ok === false)) { toast('No se ha podido asignar', true); return; }
+      $('dlg').close(); toast('Esquema asignado'); ESQUEMAS = []; pintarComisiones();
+    };
+  };
+}
+
+async function pintarComisionesPaso2() {
+  const a = $('asigesq'); if (a) a.remove();      // ya no va fuera: se gestiona dentro de cada esquema
+}
+
+async function pintarComisionesBase() {
   ($('admcuerpo') || document.createElement('div')).innerHTML = '<div class="skel"></div><div class="skel" style="width:60%"></div>';
   const [{ data: esq }, { data: liq }] = await Promise.all([
     db.rpc('esquemas_lista'), db.rpc('liquidaciones_lista', { p_periodo: null })
@@ -2071,7 +2530,29 @@ const selectorNav = () => `<select id="navsel" title="Navegador de mapas" style=
 
 /* ---------------- pantalla de rutas ---------------- */
 
+/* cargarRutas: la parte base y, en orden, cada paso que se le añade (antes eran 2 capas separadas). */
 async function cargarRutas() {
+  await cargarRutasBase();
+  await cargarRutasPaso1();
+  await cargarRutasPaso2();
+}
+
+async function cargarRutasPaso1() {
+ pintarRutaEnCurso();
+}
+
+async function cargarRutasPaso2() {
+  const acts = $('v-rutas').querySelector('.saludo .acts');
+  if (acts && !$('rhorario')) {
+    acts.insertAdjacentHTML('afterbegin', '<button class="btn sec" id="rhorario" title="Hora de salida, hora tope y minutos por visita">⚙ Horario de rutas</button>');
+    $('rhorario').onclick = abrirHorarioPlan;
+  }
+  const c = PLANCFG();
+  const sub = $('v-rutas').querySelector('.saludo .fecha');
+  if (sub) sub.textContent = `Crea, edita y planifica tus rutas · Horario ${c.salida}–${c.tope}, ${c.visita} min por médico`;
+}
+
+async function cargarRutasBase() {
   $('v-rutas').innerHTML = `
     <div class="saludo"><div><h1>Rutas</h1><div class="fecha">Crea, edita y planifica tus rutas</div></div>
       <div class="acts" style="margin:0"><button class="btn" id="rnueva">+ Nueva ruta</button></div></div>
@@ -3226,12 +3707,6 @@ db.from = function (tabla) {
 /* ---------------- navegación: recordar de dónde venimos ---------------- */
 
 let TAB_ANTERIOR = 'inicio';
-const irV216 = ir;
-ir = function (t) {
-  if (t !== TAB) TAB_ANTERIOR = TAB;
-  $('tools').classList.remove('abierto');
-  irV216(t);
-};
 
 /* ---------------- inicio: un único cargador hasta tenerlo todo ---------------- */
 
@@ -3807,7 +4282,118 @@ async function arrancar() {
 
 const skelCard = t => `<h2>${esc(t)}</h2><div class="skel" style="width:45%"></div><div class="skel"></div><div class="skel" style="width:70%"></div>`;
 
+/* pintarInicio: la parte base y, en orden, cada paso que se le añade (antes eran 5 capas separadas). */
 async function pintarInicio() {
+  await pintarInicioBase();
+  await inicioResumenSemanaYVentas();
+  await inicioOperativaPedidos();
+  await inicioVistazoEIndicadores();
+  await inicioLlamadasHoy();
+  await inicioFiltrarAlertas();
+}
+
+async function inicioResumenSemanaYVentas() {
+  if (TAB !== 'inicio') return;
+  if (!$('iniextra')) $('kpis').insertAdjacentHTML('afterend', '<div class="iniextra" id="iniextra"></div>');
+  const cont = $('iniextra');
+  const esTop = VE_TODO();
+  const desde = lunesDe(hoyISO()), hoy = hoyISO();
+  const mesIni = hoy.slice(0, 8) + '01', ant = new Date(mesIni + 'T12:00:00'); ant.setMonth(ant.getMonth() - 1);
+  const antIni = fechaLocal(ant), antFin = isoMas(mesIni, -1);
+  const antMismoDia = isoMas(antIni, +hoy.slice(8, 10) - 1) > antFin ? antFin : isoMas(antIni, +hoy.slice(8, 10) - 1);
+  cont.innerHTML = ['Mi semana', 'Ventas del mes', 'Alertas'].concat(esTop ? ['Equipo esta semana'] : []).map(t => `<div class="card">${skelCard(t)}</div>`).join('');
+  const [sem, v1, v0, mias, cruce, equipo, toca] = await Promise.all([
+    RPC_ORIG('agenda_rango', { p_desde: desde, p_hasta: isoMas(desde, 6), p_usuario: PERFIL.id }).then(r => r.data || []),
+    db.rpc('analitica_v2', { p_dim: 'producto', p_desde: mesIni, p_hasta: hoy }).then(r => (r.data || {}).totales || {}),
+    db.rpc('analitica_v2', { p_dim: 'producto', p_desde: antIni, p_hasta: antMismoDia }).then(r => (r.data || {}).totales || {}),
+    db.rpc('alertas_mias').then(r => r.data || []),
+    esTop ? Promise.all([db.rpc('alertas_cruce', { p_dias: 30 }), puedeCompras() || VE_TODO() ? db.rpc('alertas_stock') : Promise.resolve({ data: [] })])
+      .then(([a, b]) => (a.data || []).concat(b.data || [])) : Promise.resolve([]),
+    esTop ? db.rpc('supervision_equipo', { p_desde: desde, p_hasta: isoMas(desde, 6) }).then(r => r.data || []) : Promise.resolve([]),
+    db.rpc('toca_visitar', { p_usuario: PERFIL.id, lim: 300 }).then(r => (r.data || []).length)
+  ]);
+  if (TAB !== 'inicio' || !$('iniextra')) return;
+  const pasadas = sem.filter(c => c.fecha < hoy && !['Descartada'].includes(c.estado));
+  const cerradasOk = pasadas.filter(c => c.estado === 'Visitada').length;
+  const cumple = pasadas.length ? Math.round(cerradasOk / pasadas.length * 100) : null;
+  const semVis = sem.filter(c => c.estado === 'Visitada').length, semPend = sem.filter(c => CITA_ABIERTA.includes(c.estado) && c.fecha >= hoy).length;
+  const delta = (a, b) => !b ? '' : `<span class="delta ${a >= b ? 'up' : 'down'}">${a >= b ? '▲' : '▼'} ${Math.abs(Math.round((a - b) / b * 100))}%</span>`;
+  const alertas = cruce.map(x => Object.assign({ equipo: true }, x)).concat(mias);
+  const eqTot = equipo.reduce((t, x) => { ['visitadas', 'no_estaba', 'aplazadas', 'sin_hacer', 'atrasados'].forEach(k => t[k] = (t[k] || 0) + (+x[k] || 0)); return t; }, {});
+  const eqBase = (eqTot.visitadas || 0) + (eqTot.no_estaba || 0) + (eqTot.aplazadas || 0) + (eqTot.sin_hacer || 0);
+  cont.innerHTML = `
+    <div class="card"><h2>Mi semana</h2>
+      <div class="minis"><div><b>${num(semVis)}</b><span>visitadas</span></div><div><b>${num(semPend)}</b><span>por hacer</span></div>
+        <div><b style="${cumple != null && cumple < 60 ? 'color:var(--warn)' : ''}">${cumple == null ? '—' : cumple + '%'}</b><span>cumplimiento</span></div>
+        <div><b style="${toca ? 'color:var(--warn)' : ''}">${num(toca)}</b><span>les toca visita</span></div></div>
+      <div class="acts" style="padding:0 16px 14px"><button class="btn sec" data-inisem="semana">Ver mi semana</button>${toca ? '<button class="btn sec" data-inisem="plan">Planificarlos</button>' : ''}</div></div>
+    <div class="card"><h2>Ventas del mes</h2>
+      <div class="minis"><div><b>${num(v1.unidades || 0)}</b><span>unidades ${delta(+v1.unidades || 0, +v0.unidades || 0)}</span></div>
+        ${verImportes() ? `<div><b>${eurI(v1.importe || 0)}</b><span>sin IVA ${delta(+v1.importe || 0, +v0.importe || 0)}</span></div>` : ''}
+        <div><b>${num(v1.medicos || 0)}</b><span>médicos que prescriben</span></div></div>
+      <p class="sm" style="padding:0 16px 14px">Comparado con los mismos días del mes anterior (${num(v0.unidades || 0)} unidades).</p></div>
+    <div class="card"><h2>Alertas<span class="n">${alertas.reduce((n, a) => n + a.n, 0)}</span></h2>
+      ${alertas.length ? `<div class="lista">${alertas.map((a, i) => `<details class="alerta2 ${a.gravedad || ''}">
+        <summary><span class="an">${num(a.n)}</span> ${esc(a.titulo)}${a.equipo ? ' <span class="pill p-per">equipo</span>' : ''}</summary>
+        <div>${(a.items || []).map(it => `<button class="item" ${a.tipo === 'pedido_sin_medico' ? `data-iniped="${it.id}"` : a.tipo === 'citas_sin_hacer' ? ''
+          : ['stock_pedir', 'stock_minimo', 'caducidad', 'sin_lote'].includes(a.tipo) ? 'data-inistock="1"' : a.tipo === 'compra_retrasada' ? `data-inicomp="${it.id}"` : `data-inificha="${it.id}"`} style="padding:6px 8px">
+          <span class="tx"><b>${esc(it.nombre)}</b><span class="sm">${esc(it.quien || '')}</span></span></button>`).join('')}
+          ${a.n > (a.items || []).length ? `<div class="sm" style="padding:4px 8px">y ${num(a.n - a.items.length)} más</div>` : ''}</div></details>`).join('')}</div>`
+        : '<div class="vacio">Todo en orden: no hay cruces ni pendientes.</div>'}</div>
+    ${esTop ? `<div class="card"><h2>Equipo esta semana</h2>
+      <div class="minis"><div><b>${eqBase ? Math.round((eqTot.visitadas || 0) / eqBase * 100) + '%' : '—'}</b><span>cumplimiento</span></div>
+        <div><b>${num(eqTot.visitadas || 0)}</b><span>visitadas</span></div>
+        <div><b style="${eqTot.sin_hacer ? 'color:var(--warn)' : ''}">${num(eqTot.sin_hacer || 0)}</b><span>sin hacer</span></div>
+        <div><b style="${eqTot.atrasados ? 'color:var(--warn)' : ''}">${num(eqTot.atrasados || 0)}</b><span>les toca</span></div></div>
+      <div class="acts" style="padding:0 16px 14px"><button class="btn sec" id="iniequipo">Ver el equipo</button></div></div>` : ''}`;
+  cont.querySelectorAll('[data-inificha]').forEach(b => b.onclick = () => abrirFicha(b.dataset.inificha));
+  cont.querySelectorAll('[data-iniped]').forEach(b => b.onclick = () => verPedido(b.dataset.iniped));
+  cont.querySelectorAll('[data-inistock]').forEach(b => b.onclick = () => { PSEC = 'stock'; ir('productos'); });
+  cont.querySelectorAll('[data-inicomp]').forEach(b => b.onclick = () => editorCompra(b.dataset.inicomp));
+  cont.querySelectorAll('[data-inisem]').forEach(b => b.onclick = () => {
+    AG_MODO = 'semana'; AG_FECHA = hoyISO(); ir('agenda');
+    if (b.dataset.inisem === 'plan') setTimeout(() => $('semplan') && $('semplan').click(), 900);
+  });
+  if ($('iniequipo')) $('iniequipo').onclick = () => { AG_MODO = 'equipo'; ir('agenda'); };
+}
+
+async function inicioOperativaPedidos() {
+  if (TAB !== 'inicio' || !$('iniextra') || !(VE_TODO() && nivelDe2('V') >= 1)) return;
+  const { data } = await RPC_ORIG('operativa_pendiente', {});
+  const d = data || {}, n = k => (d[k] || []).length;
+  if (!(n('pago') + n('paquete') + n('email_factura') + n('email_pago')) || $('iniops')) return;
+  $('iniextra').insertAdjacentHTML('afterbegin', `<div class="card" id="iniops"><h2>Operativa de pedidos</h2>
+    <div class="minis"><div><b style="${n('pago') ? 'color:var(--warn)' : ''}">${num(n('pago'))}</b><span>pagos por validar</span></div>
+      <div><b>${num(n('paquete'))}</b><span>paquetes por preparar</span></div>
+      <div><b>${num(n('email_factura') + n('email_pago'))}</b><span>emails por enviar</span></div></div>
+    <div class="acts" style="padding:0 16px 14px"><button class="btn sec" id="iniopsver">Ver en Pedidos</button></div></div>`);
+  $('iniopsver').onclick = () => { PEDSEC = 'ventas'; ir('ventas'); };
+}
+
+async function inicioVistazoEIndicadores() {
+  if (TAB !== 'inicio') return;
+  // El aviso de duplicados ya está como indicador: se quita el cartel repetido
+  document.querySelectorAll('#v-inicio .avisoh').forEach(a => { if (/unificar|duplicad/i.test(a.textContent)) a.remove(); });
+  vistazoHoy();
+  indicadoresCompletos();
+}
+
+async function inicioLlamadasHoy() {
+  if (TAB !== 'inicio' || !VE_TODO() || !$('iniextra') || $('inillam')) return;
+  const { data } = await RPC_ORIG('llamadas_seguimiento', {});
+  const hoy = hoyISO(), pend = (data || []).filter(x => x.proxima_fecha <= hoy);
+  if (!pend.length || $('inillam')) return;
+  $('iniextra').insertAdjacentHTML('afterbegin', `<div class="card" id="inillam"><h2>Llamadas para hoy<span class="n">${pend.length}</span></h2>
+    <p class="sm" style="padding:0 16px">Clientes a los que quedaste en volver a llamar${pend.some(x => x.proxima_fecha < hoy) ? ', algunas atrasadas' : ''}.</p>
+    <div class="acts" style="padding:0 16px 14px"><button class="btn sec" id="inillamver">Ver llamadas</button></div></div>`);
+  $('inillamver').onclick = () => { PEDSEC = 'llamadas'; ir('ventas'); };
+}
+
+async function inicioFiltrarAlertas() {
+ if (TAB === 'inicio') await filtrarAlertasInicio();
+}
+
+async function pintarInicioBase() {
   const sec = $('v-inicio');
   sec.classList.remove('ini-cargando');
   if (!$('inialerta')) sec.querySelector('.saludo').insertAdjacentHTML('afterend', '<div id="inialerta"></div>');
@@ -4269,49 +4855,9 @@ function editorProducto(p) {
 
 /* ---------------- ficha del médico: comercial y pacientes ---------------- */
 
-abrirFicha = (orig => async function (id) {
-  FICHA_PAC = null;
-  await orig(id);
-  if (FICHA_ID !== id || !$('fbody').querySelector('.fh')) return;
-  const esAdmin = PERFIL.rol === 'Administrador';
-  if (esAdmin) {
-    $('fbody').insertAdjacentHTML('beforeend', `<div class="blk" id="fcomblk"><h3>Comercial asignado</h3>
-      <div style="display:flex;gap:8px"><select id="fcomsel" style="flex:1"><option>Cargando…</option></select>
-        <button class="btn sec" id="fcomok">Guardar</button></div>
-      <div class="sm" style="margin-top:6px">Las ventas nuevas se atribuyen al comercial asignado en ese momento. Las anteriores no cambian.</div></div>`);
-    const [{ data: us }, { data: act }] = await Promise.all([db.rpc('usuarios_lista'), RPC_ORIG('comercial_de_medico', { p_medico: id })]);
-    if (FICHA_ID !== id || !$('fcomsel')) return;
-    $('fcomsel').innerHTML = '<option value="">Sin comercial</option>' + (us || []).filter(u => u.activo && (u.rol === 'Comercial' || (act && act.id === u.id)))
-      .map(u => `<option value="${u.id}" ${act && act.id === u.id ? 'selected' : ''}>${esc(u.nombre)} · ${esc(u.rol)}</option>`).join('');
-    $('fcomok').onclick = async ev => {
-      ev.target.disabled = true;
-      const { data: r, error } = await db.rpc('asignar_comercial_medico', { p_medico: id, p_usuario: $('fcomsel').value || null });
-      ev.target.disabled = false;
-      if (error || (r && r.ok === false)) { toast('No se ha podido asignar', true); return; }
-      toast('Comercial asignado'); abrirFicha(id);
-    };
-  }
-  if (esAdmin || ((PERFIL.areas || {}).V || 0) >= 1) {
-    const { data } = await db.rpc('pacientes_lista', { q: null, p_medico: id, lim: 5, desplaz: 0 });
-    if (FICHA_ID !== id || !data || !data.total) return;
-    $('fbody').insertAdjacentHTML('beforeend', `<div class="blk"><h3>Pacientes<span class="n" style="margin-left:6px">${num(data.total)}</span></h3>
-      ${data.filas.map(x => `<button class="item" data-fmpac="${x.id}" style="padding:7px 4px"><span class="tx"><b>${esc(x.nombre)}</b>
-        <span class="sm">${num(x.unidades)} uds. · ${num(x.pedidos)} pedidos${x.ultimo_pedido ? ' · último ' + fechaCorta(x.ultimo_pedido) : ''}</span></span></button>`).join('')}
-      ${data.total > 5 ? `<button class="verlo" id="fmpactodos" style="border-radius:8px;margin-top:6px">Ver los ${num(data.total)} pacientes</button>` : ''}</div>`);
-    $('fbody').querySelectorAll('[data-fmpac]').forEach(b => b.onclick = () => fichaPaciente(b.dataset.fmpac));
-    const nombre = ($('fbody').querySelector('.fh h2') || {}).textContent || '';
-    if ($('fmpactodos')) $('fmpactodos').onclick = () => {
-      $('ficha').close(); Object.assign(PAC, { q: '', medico: id, medicoNombre: nombre.replace(/^Urgente\s*/, ''), pagina: 0 }); ir('pacientes');
-    };
-  }
-})(abrirFicha);
 
 /* ---------------- agenda: sugerencias para el día ---------------- */
 
-cargarAgenda = (orig => async function () {
-  await orig();
-  if (TAB === 'agenda' && AG_MODO === 'dia' && AG_FECHA >= hoyISO()) sugerenciasAgenda();
-})(cargarAgenda);
 
 async function sugerenciasAgenda() {
   if (!$('agsug')) $('agcuerpo').insertAdjacentHTML('afterend', '<div class="card sug" id="agsug"></div>');
@@ -4888,7 +5434,6 @@ function elegirOpcion(titulo, msg, botones) {
 
 
 
-cargarRutas = (orig => async function () { await orig(); pintarRutaEnCurso(); })(cargarRutas);
 
 // Tras registrar una visita, se actualizan la barra y la lista de la ruta
 $('dlg').addEventListener('close', () => {
@@ -5000,17 +5545,6 @@ const siguienteLaborable = () => {
 };
 
 
-cargarRutas = (orig => async function () {
-  await orig();
-  const acts = $('v-rutas').querySelector('.saludo .acts');
-  if (acts && !$('rhorario')) {
-    acts.insertAdjacentHTML('afterbegin', '<button class="btn sec" id="rhorario" title="Hora de salida, hora tope y minutos por visita">⚙ Horario de rutas</button>');
-    $('rhorario').onclick = abrirHorarioPlan;
-  }
-  const c = PLANCFG();
-  const sub = $('v-rutas').querySelector('.saludo .fecha');
-  if (sub) sub.textContent = `Crea, edita y planifica tus rutas · Horario ${c.salida}–${c.tope}, ${c.visita} min por médico`;
-})(cargarRutas);
 
 /* ---------------- ayudas ---------------- */
 
@@ -5592,10 +6126,6 @@ document.addEventListener('click', async e => {
 });
 
 // La vista de día de la agenda es «Tu día»
-cargarAgenda = (orig => async function () {
-  await orig();
-  if (TAB === 'agenda' && AG_MODO === 'dia') await pintarTuDia();
-})(cargarAgenda);
 
 // Al cerrar una visita o una cita, se refresca el día
 $('dlg').addEventListener('close', () => { if (TAB === 'agenda') setTimeout(() => { cargarAgenda(); pintarRutaBarra(); }, 350); });
@@ -5651,19 +6181,6 @@ async function empezarRuta() {
   ir('agenda');
 }
 
-pintarPlan = (orig => function () {
-  orig();
-  if ($('planag')) $('planag').onclick = async ev => {
-    ev.target.disabled = true;
-    const r = await planAAgenda(PLAN);
-    ev.target.disabled = false;
-    if (!r) return;
-    toast(`${r.n} citas en tu agenda del ${fechaCorta(r.fecha)}`);
-    AG_MODO = 'dia'; AG_FECHA = r.fecha; PLAN = null; ir('agenda');
-  };
-  if ($('planempezar')) { $('planempezar').textContent = '▶ Pasar a mi agenda y empezar'; $('planempezar').onclick = empezarRuta; }
-  if ($('planag')) $('planag').textContent = 'Guardar en mi agenda';
-})(pintarPlan);
 
 // En Rutas, la ruta en curso se ve en «Tu día»
 async function pintarRutaEnCurso() {
@@ -5906,26 +6423,6 @@ async function construirPlan(conXY, rutaId, btn, opts) {
   setTimeout(() => $('rplan') && $('rplan').scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
 }
 
-pintarPlan = (orig => function () {
-  orig();
-  if (!PLAN || !$('rplan')) return;
-  // Hora de cada médico y su franja de consulta
-  $('rplan').querySelectorAll('.lista > .item').forEach((el, i) => {
-    const p = PLAN.paradas[i]; if (!p) return;
-    const linea = el.querySelectorAll('.tx .sm')[1];
-    if (linea) linea.innerHTML = p.medicos.map(m => `<span class="pmed"><b>${m.horaPlan != null ? hm(m.horaPlan) : ''}</b> ${esc(m.nombre)}${
-      m.ventanas && m.ventanas.length ? ` <span class="pvent">consulta ${txtVentanas(m.ventanas)}</span>` : ''}</span>`).join('');
-  });
-  const fuera = PLAN.fuera || [];
-  if (fuera.length) {
-    $('rplan').querySelector('.card .lista').insertAdjacentHTML('afterend', `<div class="planfuera">
-      <h3>Se quedan fuera · ${fuera.length}</h3>
-      <div class="lista">${fuera.slice(0, 30).map(f => `<div class="item" style="cursor:default">
-        <span class="ic w">!</span><span class="tx"><b>${esc(f.m.nombre)}</b>
-          <span class="sm">${esc(f.motivo)}${f.m.municipio ? ' · ' + esc(f.m.municipio) : ''}</span></span></div>`).join('')}
-        ${fuera.length > 30 ? `<div class="sm" style="padding:6px 12px">y ${fuera.length - 30} más</div>` : ''}</div></div>`);
-  }
-})(pintarPlan);
 
 /* ---------------- Tu día: horas estimadas respetando las consultas ---------------- */
 
@@ -6040,20 +6537,6 @@ async function terminarJornada() {
 
 /* ---------------- enganches en la agenda ---------------- */
 
-cargarAgenda = (orig => async function () {
-  await orig();
-  if (TAB !== 'agenda') return;
-  if (AG_MODO === 'semana') await pintarSemanaAgenda();
-  // Pendientes de días anteriores: reprogramar todas de una vez
-  const pend = $('agpend');
-  if (pend && pend.querySelector('h2') && !$('agrepro')) {
-    pend.querySelector('p.sm').insertAdjacentHTML('afterend', '<div class="acts" style="padding:0 16px 8px"><button class="btn" id="agrepro">Reprogramar todas</button></div>');
-    $('agrepro').onclick = async () => {
-      const { data } = await RPC_ORIG('pendientes_ruta', {});
-      reprogramarCitas(data || [], 'Pendientes de días anteriores', `${(data || []).length} sin visitar`);
-    };
-  }
-})(cargarAgenda);
 
 /* ---------------- ayudas ---------------- */
 
@@ -6408,24 +6891,6 @@ async function editorFrecuencia() {
 
 /* ---------------- cabecera de la agenda: de quién es y equipo ---------------- */
 
-cargarAgenda = (orig => async function () {
-  const modo = AG_MODO;
-  if (modo === 'equipo') AG_MODO = 'semana';           // la base se pinta como semana y luego se sustituye
-  await orig();
-  AG_MODO = modo;
-  if (TAB !== 'agenda') return;
-  const acts = $('v-agenda').querySelector('.saludo .acts');
-  if (acts && VE_TODO() && !$('agvista')) {
-    if (!COMS.length) await cargarComerciales();
-    acts.insertAdjacentHTML('afterbegin', `<select id="agvista" aria-label="Agenda de" title="Ver la agenda de otra persona">
-        <option value="">Mi agenda</option>${COMS.filter(u => u.id !== PERFIL.id).map(u => `<option value="${u.id}" ${AG_VISTA && AG_VISTA.id === u.id ? 'selected' : ''}>${esc(u.nombre)}</option>`).join('')}</select>
-      <button class="btn ${modo === 'equipo' ? '' : 'sec'}" data-ag="equipo">Equipo</button>`);
-    $('agvista').onchange = e => verAgendaDe(e.target.value);
-    if (modo === 'equipo') acts.querySelectorAll('[data-ag="semana"]').forEach(b => b.classList.add('sec'));
-  }
-  if (AG_VISTA && $('agtit')) $('agtit').textContent += ' · agenda de ' + AG_VISTA.nombre;
-  if (modo === 'equipo') { $('agtit').textContent = 'Cumplimiento del equipo'; await pintarEquipo(); }
-})(cargarAgenda);
 
 document.addEventListener('click', e => {
   const b = e.target.closest('[data-ag="equipo"]');
@@ -6435,8 +6900,6 @@ document.addEventListener('click', e => {
 }, true);
 
 // Al salir de la agenda se vuelve a la propia
-const irV2250 = ir;
-ir = function (t) { if (t !== 'agenda') AG_VISTA = null; irV2250(t); };
 
 /* ---------------- aviso: falta el horario de consulta ---------------- */
 
@@ -6446,15 +6909,6 @@ async function faltaHorario(id) {
   return data && data.medico && data.medico.tipo !== 'Centro' && !cons.some(c => c.dias && Object.keys(c.dias).some(k => c.dias[k]));
 }
 
-abrirFicha = (orig => async function (id) {
-  await orig(id);
-  if (FICHA_ID !== id || !$('fbody').querySelector('.fh')) return;
-  if (!await faltaHorario(id) || FICHA_ID !== id || $('fhorario')) return;
-  $('fbody').querySelector('.fh').insertAdjacentHTML('afterend', `<div class="avisoh" id="fhorario">
-    <span>⚠ <b>Falta su horario de consulta.</b> Sin él, las rutas y el planificador no saben qué días y horas pasa consulta.</span>
-    ${puedeEditar() ? '<button class="btn sec" id="fhcompletar">Completar horario</button>' : ''}</div>`);
-  if ($('fhcompletar')) $('fhcompletar').onclick = () => abrirEditor(id);
-})(abrirFicha);
 
 abrirVisita = (orig => async function (id) {
   await orig(id);
@@ -6638,35 +7092,9 @@ abrirClasificador = (orig => function (id) {
 
 /* ---------------- ficha: material y datos en el historial de visitas ---------------- */
 
-abrirFicha = (orig => async function (id) {
-  await orig(id);
-  if (FICHA_ID !== id) return;
-  // Material y datos bajo cada visita del historial
-  $('fbody').querySelectorAll('[data-editv]').forEach(b => {
-    let v; try { v = JSON.parse(b.dataset.editv); } catch (e) { return; }
-    const t = detTxt(v); if (!t) return;
-    const span = b.parentElement.querySelector(':scope > span');
-    if (span && !span.querySelector('.vdet')) span.insertAdjacentHTML('beforeend', `<div class="sm vdet">📎 ${esc(t)}</div>`);
-  });
-})(abrirFicha);
 
 /* ---------------- plan: mapa con su propio botón y «Descartar plan» ---------------- */
 
-pintarPlan = (orig => function () {
-  orig();
-  if (!PLAN || !$('rplan')) return;
-  const fuera = $('rplan').querySelector('.planfuera'), mapa = $('planmapa');
-  if (fuera && mapa) mapa.insertAdjacentElement('afterend', fuera);
-  if ($('plancerrar')) { $('plancerrar').textContent = '✕ Descartar plan'; $('plancerrar').title = 'Descarta este plan (la ruta guardada no cambia)'; }
-  if ($('planver')) $('planver').onclick = () => {
-    const m = $('planmapa');
-    if (m.dataset.on && m.style.height !== '0px') {
-      m.style.height = '0px'; m.style.marginTop = '0'; $('planver').textContent = 'Ver la ruta en el mapa';
-    } else {
-      mapaDelPlan(); m.style.height = 'min(55vh,460px)'; m.style.marginTop = '12px'; $('planver').textContent = 'Ocultar el mapa';
-    }
-  };
-})(pintarPlan);
 
 /* ---------------- columnas dentro del panel lateral ---------------- */
 
@@ -6966,18 +7394,6 @@ const FAQ = [
 
 /* ---------------- navegación: manual y barra de suplantación ---------------- */
 
-const irV2270 = ir;
-ir = function (t) {
-  if (t === 'manual') {
-    irV2270('manual');
-    document.querySelectorAll('main > section').forEach(s => s.classList.toggle('hide', s.id !== 'v-manual'));
-    cargarManual();
-  } else {
-    $('v-manual').classList.add('hide');
-    irV2270(t);
-  }
-  pintarBnav();
-};
 
 document.addEventListener('click', e => {
   if (e.target.closest('#manbtn')) { e.stopPropagation(); document.querySelectorAll('.umenu').forEach(m => m.classList.add('hide')); ir('manual'); }
@@ -7049,47 +7465,8 @@ citaRepetida = (orig => async function (medicoId, fecha) {
 })(citaRepetida);
 
 // Plan de ruta: marca a quien ya se ha visto hace poco y permite quitarlo
-pintarPlan = (orig => function () {
-  orig();
-  if (!PLAN || !$('rplan') || PLAN.__recientes === undefined && !PLAN.__pedido) {
-    if (PLAN && !PLAN.__pedido) {
-      PLAN.__pedido = true;
-      const ids = PLAN.paradas.flatMap(p => p.medicos.map(m => m.id));
-      recientesDe(ids, PLAN.fecha || hoyISO()).then(por => { if (!PLAN) return; PLAN.__recientes = por; pintarPlan(); });
-    }
-    return;
-  }
-  const por = PLAN.__recientes || {};
-  const ids = Object.keys(por);
-  if (!ids.length) return;
-  $('rplan').querySelectorAll('.pmed').forEach(el => {
-    const m = PLAN.paradas.flatMap(p => p.medicos).find(x => el.textContent.includes(x.nombre));
-    if (m && por[m.id] && !el.querySelector('.prec')) el.insertAdjacentHTML('beforeend', ` <span class="prec">⚠ ${esc(txtReciente(por[m.id].slice(0, 2)))}</span>`);
-  });
-  const card = $('rplan').querySelector('.card');
-  if (card && !$('planrec')) {
-    card.querySelector('h2').insertAdjacentHTML('afterend', `<div class="avisoh" id="planrec"><span>⚠ ${ids.length} ${ids.length === 1 ? 'médico del plan ya se ha' : 'médicos del plan ya se han'} visitado o tienen cita en los últimos ${avisoRevisita().dias} días.</span>
-      <button class="btn sec" id="planquitar">Quitarlos del plan</button></div>`);
-    $('planquitar').onclick = () => {
-      const u = ULTIMO_PLAN; if (!u) return;
-      construirPlan(u.conXY.filter(m => !ids.includes(m.id)), u.rutaId, null, u.opts);
-    };
-  }
-})(pintarPlan);
 
 // Preferencias: el aviso se puede activar, desactivar y ajustar
-pintarPrefs = (orig => function () {
-  orig();
-  const acts = $('pfguardar') && $('pfguardar').closest('.acts');
-  if (!acts || $('pfaviso')) return;
-  const a = avisoRevisita();
-  acts.insertAdjacentHTML('beforebegin', `<div class="blk" id="pfaviso"><h3>Avisos</h3>
-    <label class="opt"><input type="checkbox" id="pfrev" ${a.on ? 'checked' : ''}>
-      <span><b>Avisarme si un médico ya se ha visitado hace poco</b><br><span class="sm">Al añadir una cita, al planificar una ruta o la semana. Cuenta visitas y citas de cualquier persona.</span></span></label>
-    <div class="g2"><div><label for="pfrevd">Cuántos días cuentan como «hace poco»</label><input id="pfrevd" type="number" min="1" max="60" value="${a.dias}"></div></div></div>`);
-  const guardar = () => guardarAvisoRevisita({ on: $('pfrev').checked, dias: Math.max(1, +$('pfrevd').value || 7) }).then(ok => ok && toast('Aviso guardado'));
-  $('pfrev').onchange = guardar; $('pfrevd').onchange = guardar;
-})(pintarPrefs);
 
 /* ---------------- servicios en Productos ---------------- */
 
@@ -7222,71 +7599,6 @@ async function resumenRutas() {
 
 /* ---------------- Inicio: mi semana, ventas, alertas y equipo ---------------- */
 
-pintarInicio = (orig => async function () {
-  await orig();
-  if (TAB !== 'inicio') return;
-  if (!$('iniextra')) $('kpis').insertAdjacentHTML('afterend', '<div class="iniextra" id="iniextra"></div>');
-  const cont = $('iniextra');
-  const esTop = VE_TODO();
-  const desde = lunesDe(hoyISO()), hoy = hoyISO();
-  const mesIni = hoy.slice(0, 8) + '01', ant = new Date(mesIni + 'T12:00:00'); ant.setMonth(ant.getMonth() - 1);
-  const antIni = fechaLocal(ant), antFin = isoMas(mesIni, -1);
-  const antMismoDia = isoMas(antIni, +hoy.slice(8, 10) - 1) > antFin ? antFin : isoMas(antIni, +hoy.slice(8, 10) - 1);
-  cont.innerHTML = ['Mi semana', 'Ventas del mes', 'Alertas'].concat(esTop ? ['Equipo esta semana'] : []).map(t => `<div class="card">${skelCard(t)}</div>`).join('');
-  const [sem, v1, v0, mias, cruce, equipo, toca] = await Promise.all([
-    RPC_ORIG('agenda_rango', { p_desde: desde, p_hasta: isoMas(desde, 6), p_usuario: PERFIL.id }).then(r => r.data || []),
-    db.rpc('analitica_v2', { p_dim: 'producto', p_desde: mesIni, p_hasta: hoy }).then(r => (r.data || {}).totales || {}),
-    db.rpc('analitica_v2', { p_dim: 'producto', p_desde: antIni, p_hasta: antMismoDia }).then(r => (r.data || {}).totales || {}),
-    db.rpc('alertas_mias').then(r => r.data || []),
-    esTop ? Promise.all([db.rpc('alertas_cruce', { p_dias: 30 }), puedeCompras() || VE_TODO() ? db.rpc('alertas_stock') : Promise.resolve({ data: [] })])
-      .then(([a, b]) => (a.data || []).concat(b.data || [])) : Promise.resolve([]),
-    esTop ? db.rpc('supervision_equipo', { p_desde: desde, p_hasta: isoMas(desde, 6) }).then(r => r.data || []) : Promise.resolve([]),
-    db.rpc('toca_visitar', { p_usuario: PERFIL.id, lim: 300 }).then(r => (r.data || []).length)
-  ]);
-  if (TAB !== 'inicio' || !$('iniextra')) return;
-  const pasadas = sem.filter(c => c.fecha < hoy && !['Descartada'].includes(c.estado));
-  const cerradasOk = pasadas.filter(c => c.estado === 'Visitada').length;
-  const cumple = pasadas.length ? Math.round(cerradasOk / pasadas.length * 100) : null;
-  const semVis = sem.filter(c => c.estado === 'Visitada').length, semPend = sem.filter(c => CITA_ABIERTA.includes(c.estado) && c.fecha >= hoy).length;
-  const delta = (a, b) => !b ? '' : `<span class="delta ${a >= b ? 'up' : 'down'}">${a >= b ? '▲' : '▼'} ${Math.abs(Math.round((a - b) / b * 100))}%</span>`;
-  const alertas = cruce.map(x => Object.assign({ equipo: true }, x)).concat(mias);
-  const eqTot = equipo.reduce((t, x) => { ['visitadas', 'no_estaba', 'aplazadas', 'sin_hacer', 'atrasados'].forEach(k => t[k] = (t[k] || 0) + (+x[k] || 0)); return t; }, {});
-  const eqBase = (eqTot.visitadas || 0) + (eqTot.no_estaba || 0) + (eqTot.aplazadas || 0) + (eqTot.sin_hacer || 0);
-  cont.innerHTML = `
-    <div class="card"><h2>Mi semana</h2>
-      <div class="minis"><div><b>${num(semVis)}</b><span>visitadas</span></div><div><b>${num(semPend)}</b><span>por hacer</span></div>
-        <div><b style="${cumple != null && cumple < 60 ? 'color:var(--warn)' : ''}">${cumple == null ? '—' : cumple + '%'}</b><span>cumplimiento</span></div>
-        <div><b style="${toca ? 'color:var(--warn)' : ''}">${num(toca)}</b><span>les toca visita</span></div></div>
-      <div class="acts" style="padding:0 16px 14px"><button class="btn sec" data-inisem="semana">Ver mi semana</button>${toca ? '<button class="btn sec" data-inisem="plan">Planificarlos</button>' : ''}</div></div>
-    <div class="card"><h2>Ventas del mes</h2>
-      <div class="minis"><div><b>${num(v1.unidades || 0)}</b><span>unidades ${delta(+v1.unidades || 0, +v0.unidades || 0)}</span></div>
-        ${verImportes() ? `<div><b>${eurI(v1.importe || 0)}</b><span>sin IVA ${delta(+v1.importe || 0, +v0.importe || 0)}</span></div>` : ''}
-        <div><b>${num(v1.medicos || 0)}</b><span>médicos que prescriben</span></div></div>
-      <p class="sm" style="padding:0 16px 14px">Comparado con los mismos días del mes anterior (${num(v0.unidades || 0)} unidades).</p></div>
-    <div class="card"><h2>Alertas<span class="n">${alertas.reduce((n, a) => n + a.n, 0)}</span></h2>
-      ${alertas.length ? `<div class="lista">${alertas.map((a, i) => `<details class="alerta2 ${a.gravedad || ''}">
-        <summary><span class="an">${num(a.n)}</span> ${esc(a.titulo)}${a.equipo ? ' <span class="pill p-per">equipo</span>' : ''}</summary>
-        <div>${(a.items || []).map(it => `<button class="item" ${a.tipo === 'pedido_sin_medico' ? `data-iniped="${it.id}"` : a.tipo === 'citas_sin_hacer' ? ''
-          : ['stock_pedir', 'stock_minimo', 'caducidad', 'sin_lote'].includes(a.tipo) ? 'data-inistock="1"' : a.tipo === 'compra_retrasada' ? `data-inicomp="${it.id}"` : `data-inificha="${it.id}"`} style="padding:6px 8px">
-          <span class="tx"><b>${esc(it.nombre)}</b><span class="sm">${esc(it.quien || '')}</span></span></button>`).join('')}
-          ${a.n > (a.items || []).length ? `<div class="sm" style="padding:4px 8px">y ${num(a.n - a.items.length)} más</div>` : ''}</div></details>`).join('')}</div>`
-        : '<div class="vacio">Todo en orden: no hay cruces ni pendientes.</div>'}</div>
-    ${esTop ? `<div class="card"><h2>Equipo esta semana</h2>
-      <div class="minis"><div><b>${eqBase ? Math.round((eqTot.visitadas || 0) / eqBase * 100) + '%' : '—'}</b><span>cumplimiento</span></div>
-        <div><b>${num(eqTot.visitadas || 0)}</b><span>visitadas</span></div>
-        <div><b style="${eqTot.sin_hacer ? 'color:var(--warn)' : ''}">${num(eqTot.sin_hacer || 0)}</b><span>sin hacer</span></div>
-        <div><b style="${eqTot.atrasados ? 'color:var(--warn)' : ''}">${num(eqTot.atrasados || 0)}</b><span>les toca</span></div></div>
-      <div class="acts" style="padding:0 16px 14px"><button class="btn sec" id="iniequipo">Ver el equipo</button></div></div>` : ''}`;
-  cont.querySelectorAll('[data-inificha]').forEach(b => b.onclick = () => abrirFicha(b.dataset.inificha));
-  cont.querySelectorAll('[data-iniped]').forEach(b => b.onclick = () => verPedido(b.dataset.iniped));
-  cont.querySelectorAll('[data-inistock]').forEach(b => b.onclick = () => { PSEC = 'stock'; ir('productos'); });
-  cont.querySelectorAll('[data-inicomp]').forEach(b => b.onclick = () => editorCompra(b.dataset.inicomp));
-  cont.querySelectorAll('[data-inisem]').forEach(b => b.onclick = () => {
-    AG_MODO = 'semana'; AG_FECHA = hoyISO(); ir('agenda');
-    if (b.dataset.inisem === 'plan') setTimeout(() => $('semplan') && $('semplan').click(), 900);
-  });
-  if ($('iniequipo')) $('iniequipo').onclick = () => { AG_MODO = 'equipo'; ir('agenda'); };
-})(pintarInicio);
 
 /* ---------------- ayudas ---------------- */
 
@@ -7327,12 +7639,6 @@ volverAMiSesion = (orig => async function () {
 /* ---------------- agenda: una sola transición al cambiar de vista ---------------- */
 
 let ABRIR_PLAN_SEMANA = false;
-cargarAgenda = (orig => async function () {
-  await orig();
-  const c = $('agcuerpo');
-  if (c) c.dataset.modo = AG_MODO + '|' + (AG_MODO === 'dia' ? AG_FECHA : lunesDe(AG_FECHA || hoyISO())) + '|' + agUid();
-  if (ABRIR_PLAN_SEMANA && AG_MODO === 'semana' && $('semplan')) { ABRIR_PLAN_SEMANA = false; $('semplan').click(); }
-})(cargarAgenda);
 
 // «Hoy» lleva siempre a «Tu día» de hoy (en el mes, al mes actual)
 document.addEventListener('click', e => {
@@ -7967,17 +8273,6 @@ const pillCobro = e => `<span class="pill ${e === 'Cobrada' ? 'p-est' : e === 'V
 
 /* ---------------- navegación ---------------- */
 
-const irV2300 = ir;
-ir = function (t) {
-  if (t === 'facturacion') {
-    irV2300('facturacion');
-    document.querySelectorAll('main > section').forEach(s => s.classList.toggle('hide', s.id !== 'v-facturacion'));
-    cargarFacturacion();
-  } else {
-    if ($('v-facturacion')) $('v-facturacion').classList.add('hide');
-    irV2300(t);
-  }
-};
 
 /* ---------------- módulo ---------------- */
 
@@ -8481,17 +8776,38 @@ const puedeModulo = t => {
   const a = MODULO_AREA[t];
   return !a || nivelDe2(a) >= 1;
 };
+/* aplicarPermisosMenu: la parte base y, en orden, cada paso que se le añade (antes eran 3 capas separadas). */
 function aplicarPermisosMenu() {
+  aplicarPermisosMenuBase();
+  aplicarPermisosMenuPaso1();
+  aplicarPermisosMenuPaso2();
+  aplicarPermisosMenuPaso3();
+}
+
+function aplicarPermisosMenuPaso1() {
+  document.querySelectorAll('nav.main [data-t]').forEach(b => {
+    const t = b.dataset.t; if (!(t in MODULO_AREA)) return;
+    const bloqueado = puedeModuloV2400(t) && !planIncluye(t);
+    b.classList.toggle('bloq', bloqueado);
+    if (bloqueado) { b.classList.remove('hide'); if (!b.querySelector('.cand')) b.insertAdjacentHTML('beforeend', '<span class="cand">🔒</span>'); }
+    else { const c = b.querySelector('.cand'); if (c) c.remove(); }
+  });
+}
+
+function aplicarPermisosMenuPaso2() {
+ iconosMenu();
+}
+
+function aplicarPermisosMenuPaso3() {
+ ordenarMenu(); const c = document.querySelector('nav.main [data-t="seguimiento"]'); if (c) c.classList.add('hide');
+}
+
+function aplicarPermisosMenuBase() {
   document.querySelectorAll('nav.main [data-t]').forEach(b => {
     if (b.dataset.t in MODULO_AREA) b.classList.toggle('hide', !puedeModulo(b.dataset.t));
   });
   if (typeof pintarBnav === 'function') pintarBnav();
 }
-const irV2330 = ir;
-ir = function (t) {
-  if (t in MODULO_AREA && !puedeModulo(t)) { toast('No tienes permiso para ese módulo', true); t = puedeModulo('inicio') ? 'inicio' : 'agenda'; }
-  irV2330(t);
-};
 
 /* ---------------- indicadores con su categoría y permiso ---------------- */
 
@@ -8742,73 +9058,14 @@ async function editorLlamada(l) {
 
 /* ---------------- Inicio: operativa pendiente para televenta y administración ---------------- */
 
-pintarInicio = (orig => async function () {
-  await orig();
-  if (TAB !== 'inicio' || !$('iniextra') || !(VE_TODO() && nivelDe2('V') >= 1)) return;
-  const { data } = await RPC_ORIG('operativa_pendiente', {});
-  const d = data || {}, n = k => (d[k] || []).length;
-  if (!(n('pago') + n('paquete') + n('email_factura') + n('email_pago')) || $('iniops')) return;
-  $('iniextra').insertAdjacentHTML('afterbegin', `<div class="card" id="iniops"><h2>Operativa de pedidos</h2>
-    <div class="minis"><div><b style="${n('pago') ? 'color:var(--warn)' : ''}">${num(n('pago'))}</b><span>pagos por validar</span></div>
-      <div><b>${num(n('paquete'))}</b><span>paquetes por preparar</span></div>
-      <div><b>${num(n('email_factura') + n('email_pago'))}</b><span>emails por enviar</span></div></div>
-    <div class="acts" style="padding:0 16px 14px"><button class="btn sec" id="iniopsver">Ver en Pedidos</button></div></div>`);
-  $('iniopsver').onclick = () => { PEDSEC = 'ventas'; ir('ventas'); };
-})(pintarInicio);
 
 /* ---------------- Agenda: ver varios meses ---------------- */
 
 let AG_MESES = 1;
-cargarAgenda = (orig => async function () {
-  await orig();
-  if (TAB !== 'agenda' || AG_MODO !== 'mes') return;
-  const acts = $('v-agenda').querySelector('.saludo .acts');
-  if (acts && !$('agmeses')) {
-    acts.insertAdjacentHTML('beforeend', `<select id="agmeses" aria-label="Meses a la vista" title="Meses a la vista">
-      ${[1, 2, 3, 6].map(n => `<option value="${n}" ${AG_MESES === n ? 'selected' : ''}>${n} ${n === 1 ? 'mes' : 'meses'}</option>`).join('')}</select>`);
-    $('agmeses').onchange = e => { AG_MESES = +e.target.value; cargarAgenda(); };
-  }
-  if (AG_MESES <= 1) return;
-  const base = AG_FECHA.slice(0, 7), bloques = [];
-  for (let i = 0; i < AG_MESES; i++) {
-    const d = new Date(base + '-01T12:00:00'); d.setMonth(d.getMonth() + i);
-    await pintarMesAgenda(fechaLocal(d).slice(0, 7));
-    const w = document.createElement('div'); w.className = 'mesbloque';
-    while ($('agcuerpo').firstChild) w.appendChild($('agcuerpo').firstChild);
-    bloques.push(w);
-  }
-  bloques.forEach(w => $('agcuerpo').appendChild(w));
-  $('agcuerpo').classList.add('varios');
-  const fin = new Date(base + '-01T12:00:00'); fin.setMonth(fin.getMonth() + AG_MESES - 1);
-  $('agtit').textContent = periodoTxt(base) + ' – ' + periodoTxt(fechaLocal(fin).slice(0, 7));
-})(cargarAgenda);
 
 /* ---------------- «Seguimiento» pasa a «Calidad del dato» ---------------- */
 
 document.querySelectorAll('[data-t="seguimiento"]').forEach(b => { if (b.closest('nav.main')) b.textContent = 'Calidad del dato'; });
-cargarSeguimiento = (orig => async function () {
-  await orig();
-  const v = $('v-seguimiento');
-  v.querySelector('.saludo h1').firstChild.textContent = 'Calidad del dato';
-  v.querySelector('.saludo .fecha').textContent = 'Fichas completas, datos que faltan y avance de cada médico';
-  const { data: q } = await RPC_ORIG('calidad_datos', {});
-  if (!q || $('calidad')) return;
-  const pct = (a, b) => b ? Math.round(a / b * 100) : 0;
-  const item = (n, t, h) => `<div class="kpi ${n ? 'warn' : 'ok'}"><button class="ai" data-ayuda-txt="${esc(h)}" data-ayuda-tit="${esc(t)}" aria-label="Qué es">i</button><b>${num(n)}</b><span>${esc(t)}</span></div>`;
-  v.querySelector('.saludo').insertAdjacentHTML('afterend', `<div class="card" id="calidad" style="padding-bottom:6px">
-    <div class="manh" style="padding:14px 16px 0"><h2 style="padding:0">Fichas completas: ${pct(q.completas, q.total)}%</h2><span class="sm">${num(q.completas)} de ${num(q.total)} médicos</span></div>
-    <div class="barra" style="margin:8px 16px 10px"><i style="width:${pct(q.completas, q.total)}%"></i></div>
-    <div class="kpis" style="padding:0 16px 10px">
-      ${item(q.sin_ubicacion, 'sin ubicación', 'Sin coordenadas en ninguna consulta: no entran en rutas ni en el mapa.')}
-      ${item(q.sin_horario, 'sin horario de consulta', 'Sin días ni horas de consulta: las rutas no pueden ajustarse a su horario.')}
-      ${item(q.sin_especialidad, 'sin especialidad', 'Sin especialidad en la ficha: no se pueden filtrar ni analizar por especialidad.')}
-      ${item(q.sin_contacto, 'sin teléfono ni email', 'No hay forma de contactar con ellos fuera de la visita.')}
-      ${item(q.sin_provincia, 'sin provincia', 'Sin provincia no se pueden asignar por zona a un comercial.')}
-      ${item(q.sin_comercial, 'sin comercial', 'Médicos que no están en ninguna cartera.')}
-      ${item(q.duplicados, 'pendientes de unificar', 'Fichas marcadas como posibles duplicados.')}
-    </div>
-    <p class="sm" style="padding:0 16px 10px">Una ficha completa tiene ubicación, horario, especialidad y teléfono o email. Debajo, el avance de cada médico.</p></div>`);
-})(cargarSeguimiento);
 
 /* ---------------- ayudas y manual ---------------- */
 
@@ -9119,7 +9376,66 @@ const PRIMEROS_PASOS = {
     ['📊', 'Analiza los resultados', 'Analítica → Resumen, con gráficos explicados.', 'analitica']]
 };
 
+/* cargarManual: la parte base y, en orden, cada paso que se le añade (antes eran 3 capas separadas). */
 async function cargarManual() {
+  await cargarManualBase();
+  await cargarManualPaso1();
+  await cargarManualPaso2();
+  await cargarManualPaso3();
+}
+
+async function cargarManualPaso1() {
+  const q = $('manq'); if (!q) return;
+  q.insertAdjacentHTML('afterend', '<div class="manres hide" id="manres"></div>');
+  const quitar = s => String(s).replace(/<[^>]+>/g, '');
+  const norm = s => quitar(s).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const indice = [];
+  MANUAL.forEach(s => {
+    indice.push({ sec: s.id, mod: s.t, txt: s.para });
+    s.hacer.forEach(h => indice.push({ sec: s.id, mod: s.t, txt: h[1] }));
+    (s.config || []).forEach(c => indice.push({ sec: s.id, mod: s.t, txt: 'Dónde se configura: ' + c }));
+    const ay = AYUDA[s.id]; if (ay && ay[2]) ay[2].forEach(x => indice.push({ sec: s.id, mod: s.t, txt: quitar(x) }));
+  });
+  FAQ.forEach(([p, r]) => indice.push({ sec: null, mod: 'Pregunta frecuente', txt: p + ' — ' + r }));
+  q.oninput = () => {
+    const t = norm(q.value.trim()), res = $('manres');
+    document.querySelectorAll('.mancard').forEach(c => c.classList.remove('hide'));
+    if (t.length < 2) { res.classList.add('hide'); return; }
+    const palabras = t.split(/\s+/);
+    const hits = indice.filter(x => palabras.every(p => norm(x.txt + ' ' + x.mod).includes(p))).slice(0, 12);
+    res.classList.remove('hide');
+    res.innerHTML = hits.length ? hits.map(h => {
+      let txt = esc(quitar(h.txt)); palabras.forEach(p => { txt = txt.replace(new RegExp('(' + p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'ig'), '<mark>$1</mark>'); });
+      return `<button class="manhit" ${h.sec ? `data-mansec2="${h.sec}"` : ''}><span class="mhm">${esc(h.mod)}</span><span>${txt}</span></button>`;
+    }).join('') : `<div class="manhit">No hay resultados para «${esc(q.value)}». Prueba con otra palabra: cita, ruta, pedido, factura…</div>`;
+    res.querySelectorAll('[data-mansec2]').forEach(b => b.onclick = () => { res.classList.add('hide'); const c = document.querySelector(`.mancard[data-mansec="${b.dataset.mansec2}"]`); if (c) c.click(); });
+  };
+}
+
+async function cargarManualPaso2() {
+  const v = $('v-manual');
+  v.onclick = e => {
+    const m = e.target.closest('[data-mira]'); if (!m) return;
+    const i = [...v.querySelectorAll('.manpaso')].indexOf(m.closest('.manpaso'));
+    const pasos = PRIMEROS_PASOS[PERFIL.rol] || PRIMEROS_PASOS.default;
+    if (i >= 0 && pasos[i]) infoManual(null, pasos[i]);
+  };
+  v.querySelectorAll('.mancard').forEach(c => c.onclick = () => infoManual(c.dataset.mansec));
+  if ($('mandet')) $('mandet').remove();
+  const res = $('manres');
+  if (res) res.addEventListener('click', e => { const b = e.target.closest('[data-mansec2]'); if (b) { e.stopImmediatePropagation(); res.classList.add('hide'); infoManual(b.dataset.mansec2); } }, true);
+}
+
+async function cargarManualPaso3() {
+  document.querySelectorAll('.mancard').forEach(c => {
+    const mod = MOD_DE_MANUAL[c.dataset.mansec]; if (!mod || planIncluye(mod)) return;
+    const p = planMinimo(mod), pill = c.querySelector('.pill');
+    if (pill) { pill.className = 'pill p-plan'; pill.innerHTML = `${svgIco(ICON_NOM.lock)} Incluido en el plan ${esc(p ? p.nombre : 'Premium')}`; }
+    c.classList.add('bloq'); c.onclick = () => avisoPlan(mod);
+  });
+}
+
+async function cargarManualBase() {
   const v = $('v-manual');
   const accesoTxt = s => s.a ? NIVEL_TXT[nivelDe2(s.a)] : (PERFIL.rol === 'Administrador' ? 'Completo' : '—');
   const nivelSec = s => s.a ? nivelDe2(s.a) : (PERFIL.rol === 'Administrador' ? 3 : (s.id === 'roles' || s.id === 'permisos') ? 1 : 0);
@@ -9176,8 +9492,6 @@ AYUDA.facturacion[2].push('<b>⬇ PDF</b> descarga la factura en PDF, lista para
 AYUDA.ventas[2].push('El listado va por páginas y se guarda en el dispositivo: si vuelves a él, aparece al momento mientras se actualiza. Filtra por operativa para ver pagos por validar, paquetes por preparar o facturas por enviar.');
 
 // Aviso de punto de salida en el plan y en «Tu día»
-pintarPlan = (orig => function () { orig(); if (PLAN && $('rplan')) avisoSinSalida($('rplan').querySelector('.card')); })(pintarPlan);
-cargarAgenda = (orig => async function () { await orig(); if (TAB === 'agenda' && AG_MODO === 'dia' && !AG_VISTA) avisoSinSalida($('agcuerpo')); })(cargarAgenda);
 
 
 /* ============================================================
@@ -9349,52 +9663,6 @@ document.addEventListener('click', e => {
 
 /* ---------------- comisiones: asignar esquema con fecha desde Comisiones ---------------- */
 
-pintarComisiones = (orig => async function () {
-  await orig();
-  const c = $('admcuerpo'); if (!c || $('asigesq')) return;
-  const { data } = await RPC_ORIG('asignaciones_esquema_lista', {});
-  const l = data || [];
-  c.insertAdjacentHTML('afterbegin', `<div class="card" id="asigesq" style="padding:16px 18px">
-    <div class="manh"><h2 style="padding:0">Quién cobra con cada esquema</h2><button class="btn" id="asignueva">+ Asignar esquema</button></div>
-    <p class="sm">Al asignar eliges desde cuándo se aplica: a partir de hoy, a todo el histórico de esa persona o desde una fecha concreta, pasada o futura. Cada liquidación usa el esquema vigente en ese mes.</p>
-    ${l.length ? `<div class="dgrid-wrap"><div class="dgrid asigs"><div class="dh"><span>Persona</span><span>Esquema</span><span>Desde</span><span>Hasta</span><span>Estado</span></div>
-      ${l.map(x => `<div class="dr" style="cursor:default"><span><b>${esc(x.persona)}</b><span class="sm">${esc(x.rol)}</span></span><span>${esc(x.esquema)}</span>
-        <span>${x.desde <= '2000-01-01' ? 'Todo el histórico' : fechaCorta(x.desde)}</span><span>${x.hasta ? fechaCorta(x.hasta) : '—'}</span>
-        <span><span class="pill ${x.vigente ? 'p-est' : x.desde > hoyISO() ? 'p-per' : 'p-anu'}">${x.vigente ? 'Vigente' : x.desde > hoyISO() ? 'Programado' : 'Terminado'}</span></span></div>`).join('')}</div></div>`
-      : '<div class="vacio">Nadie tiene todavía un esquema asignado.</div>'}</div>`);
-  $('asignueva').onclick = async () => {
-    if (!COMS.length) await cargarComerciales();
-    if (!ESQUEMAS.length) { const { data: e } = await db.rpc('esquemas_lista'); ESQUEMAS = e || []; }
-    $('dbody').innerHTML = `<div class="fh"><div><h2>Asignar esquema de comisión</h2><div class="sm">Sustituye al que tuviera esa persona desde la fecha elegida</div></div>
-        <button class="x" data-cerrar aria-label="Cerrar">✕</button></div>
-      <div class="g2"><div><label for="aep">Persona</label><select id="aep">${COMS.map(u => `<option value="${u.id}">${esc(u.nombre)} · ${esc(u.rol)}</option>`).join('')}</select></div>
-        <div><label for="aee">Esquema</label><select id="aee"><option value="">Sin comisión</option>${ESQUEMAS.map(e => `<option value="${e.id}">${esc(e.nombre)}</option>`).join('')}</select></div></div>
-      <label>Se aplica</label>
-      <div class="opciones" style="grid-template-columns:repeat(3,1fr)">
-        <label class="opt"><input type="radio" name="aem" value="hoy" checked> A partir de hoy</label>
-        <label class="opt"><input type="radio" name="aem" value="todo"> A todo el histórico</label>
-        <label class="opt"><input type="radio" name="aem" value="fecha"> Desde una fecha</label></div>
-      <div id="aefw" class="hide"><label for="aef">Fecha (puede ser pasada o futura)</label><input id="aef" type="date" value="${hoyISO()}"></div>
-      <div class="avisoh" id="aeinfo"><span>Las ventas desde hoy se liquidarán con este esquema.</span></div>
-      <div class="acts" style="justify-content:flex-end"><button class="btn sec" data-cerrar>Cancelar</button><button class="btn" id="aeok">Asignar</button></div>`;
-    $('dlg').showModal();
-    const info = () => {
-      const m = $('dbody').querySelector('[name=aem]:checked').value;
-      $('aefw').classList.toggle('hide', m !== 'fecha');
-      $('aeinfo').querySelector('span').textContent = m === 'todo' ? 'Todas sus ventas, también las pasadas, se liquidarán con este esquema. Las liquidaciones ya cerradas no cambian.'
-        : m === 'fecha' ? ($('aef').value < hoyISO() ? 'Las ventas desde esa fecha (pasada) se recalcularán con este esquema en las liquidaciones abiertas.' : 'Se aplicará automáticamente a partir de esa fecha; hasta entonces sigue el esquema actual.')
-        : 'Las ventas desde hoy se liquidarán con este esquema.';
-    };
-    $('dbody').querySelectorAll('[name=aem]').forEach(r => r.onchange = info); $('aef').onchange = info;
-    $('aeok').onclick = async () => {
-      const m = $('dbody').querySelector('[name=aem]:checked').value;
-      const desde = m === 'todo' ? '2000-01-01' : m === 'fecha' ? $('aef').value : hoyISO();
-      const { data: r, error } = await db.rpc('asignar_esquema', { p_usuario: $('aep').value, p_esquema: $('aee').value || null, p_quitar: !$('aee').value, p_desde: desde });
-      if (error || (r && r.ok === false)) { toast('No se ha podido asignar', true); return; }
-      $('dlg').close(); toast('Esquema asignado'); ESQUEMAS = []; pintarComisiones();
-    };
-  };
-})(pintarComisiones);
 
 /* ---------------- entorno de pruebas: solo restablece la persona responsable ---------------- */
 
@@ -9475,19 +9743,6 @@ async function pintarAvisos() {
   };
 }
 
-const irV2350 = ir;
-ir = function (t) {
-  if (ES_MEDICO() && !['informe', 'manual', 'config'].includes(t)) t = 'informe';
-  if (t === 'informe') {
-    irV2350('informe');
-    document.querySelectorAll('main > section').forEach(s => s.classList.toggle('hide', s.id !== 'v-informe'));
-    document.querySelectorAll('nav.main [data-t]').forEach(b => b.setAttribute('aria-selected', String(b.dataset.t === 'informe')));
-    cargarInforme();
-    return;
-  }
-  if ($('v-informe')) $('v-informe').classList.add('hide');
-  irV2350(t);
-};
 if (typeof pintarBnav === 'function') pintarBnav = (orig => function () {
   if (ES_MEDICO()) { const b = $('bnav'); if (b) b.innerHTML = '<button data-t="informe" aria-selected="true"><span>◉</span>Mi informe</button>'; if (b) b.firstChild.onclick = () => ir('informe'); return; }
   orig();
@@ -9557,12 +9812,6 @@ const ES_MOVIL = () => matchMedia('(max-width: 760px)').matches;
 /* ---------------- navegación: cada cambio de módulo descarta lo pendiente ---------------- */
 
 let NAV_CTRL = new AbortController(), NAV_GEN = 0;
-const irV2361 = ir;
-ir = function (t) {
-  NAV_CTRL.abort(); NAV_CTRL = new AbortController(); NAV_GEN++;
-  cerrarSelector && cerrarSelector();
-  irV2361(t);
-};
 // Las consultas de lectura de un módulo que ya no está en pantalla se descartan: nunca pintan ni devuelven la vista
 const TURNOS = {};
 const pedirTurno = k => (TURNOS[k] = (TURNOS[k] || 0) + 1);
@@ -9670,11 +9919,6 @@ window.addEventListener('resize', () => { if (!ES_MOVIL()) document.querySelecto
 
 /* ---------------- agenda: sin recargar la página en cada acción ---------------- */
 
-cargarAgenda = (orig => async function () {
-  const y = window.scrollY, mismo = TAB === 'agenda' && $('agcuerpo') && $('agcuerpo').children.length;
-  await orig();
-  if (mismo && TAB === 'agenda') window.scrollTo(0, y);
-})(cargarAgenda);
 
 /* ---------------- menú «Más» del móvil con el mismo estilo ---------------- */
 
@@ -9722,14 +9966,6 @@ async function vistazoHoy() {
     : `<span>Hoy no tienes citas.</span> <button class="lnk" data-irplan>Planifica tu día</button>`;
   const b = v.querySelector('[data-irplan]'); if (b) b.onclick = () => ir('rutas');
 }
-pintarInicio = (orig => async function () {
-  await orig();
-  if (TAB !== 'inicio') return;
-  // El aviso de duplicados ya está como indicador: se quita el cartel repetido
-  document.querySelectorAll('#v-inicio .avisoh').forEach(a => { if (/unificar|duplicad/i.test(a.textContent)) a.remove(); });
-  vistazoHoy();
-  indicadoresCompletos();
-})(pintarInicio);
 
 // Indicadores con icono, explicación breve y, cuando se puede, comparación
 const KPI_ICO = { citas: '📅', urgentes: '⚠️', visitas_sem: '📝', visitas_mes: '🗓️', interesados: '✨', sin_contactar: '📇', cartera: '🩺', dups: '🧩',
@@ -9838,20 +10074,6 @@ new MutationObserver(() => {
 
 /* ---------------- ficha del médico: unidades por periodo ---------------- */
 
-abrirFicha = (orig => async function (id, ...r) {
-  await orig(id, ...r);
-  if (FICHA_ID !== id || !$('fbody') || $('fundades')) return;
-  const { data: u } = await RPC_ORIG('unidades_medico', { p_medico: id });
-  if (!u || FICHA_ID !== id || $('fundades')) return;
-  const max = Math.max(1, ...(u.meses || []).map(m => m.unidades));
-  const bloque = `<div class="blk" id="fundades"><h3>Unidades pautadas</h3>
-    <div class="uper">${[['Hoy', u.hoy], ['Semana', u.semana], ['Mes', u.mes], ['Trimestre', u.trimestre], ['Año', u.anio], ['Total', u.total]]
-      .map(([t, v]) => `<div><b>${num(v)}</b><span>${t}</span></div>`).join('')}</div>
-    <div class="spark" title="Últimos 12 meses">${(u.meses || []).map(m => `<i style="height:${Math.round(m.unidades / max * 100)}%" title="${periodoTxt(m.mes)}: ${num(m.unidades)}"></i>`).join('')}</div>
-    <div class="sm">${u.total ? `${num(u.pautas)} pautas · última el ${fechaCorta(u.ultima)} · barras: últimos 12 meses` : 'Todavía sin pautas registradas.'}</div></div>`;
-  const ref = $('fbody').querySelector('.blk:nth-of-type(2)') || $('fbody').lastElementChild;
-  ref.insertAdjacentHTML('beforebegin', bloque);
-})(abrirFicha);
 
 /* ---------------- Analítica: la tabla mensual explicada ---------------- */
 
@@ -9874,34 +10096,6 @@ pintarTablaAnalitica = (orig => async function () {
 
 /* ---------------- Manual: buscador con resultados directos ---------------- */
 
-cargarManual = (orig => async function () {
-  await orig();
-  const q = $('manq'); if (!q) return;
-  q.insertAdjacentHTML('afterend', '<div class="manres hide" id="manres"></div>');
-  const quitar = s => String(s).replace(/<[^>]+>/g, '');
-  const norm = s => quitar(s).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-  const indice = [];
-  MANUAL.forEach(s => {
-    indice.push({ sec: s.id, mod: s.t, txt: s.para });
-    s.hacer.forEach(h => indice.push({ sec: s.id, mod: s.t, txt: h[1] }));
-    (s.config || []).forEach(c => indice.push({ sec: s.id, mod: s.t, txt: 'Dónde se configura: ' + c }));
-    const ay = AYUDA[s.id]; if (ay && ay[2]) ay[2].forEach(x => indice.push({ sec: s.id, mod: s.t, txt: quitar(x) }));
-  });
-  FAQ.forEach(([p, r]) => indice.push({ sec: null, mod: 'Pregunta frecuente', txt: p + ' — ' + r }));
-  q.oninput = () => {
-    const t = norm(q.value.trim()), res = $('manres');
-    document.querySelectorAll('.mancard').forEach(c => c.classList.remove('hide'));
-    if (t.length < 2) { res.classList.add('hide'); return; }
-    const palabras = t.split(/\s+/);
-    const hits = indice.filter(x => palabras.every(p => norm(x.txt + ' ' + x.mod).includes(p))).slice(0, 12);
-    res.classList.remove('hide');
-    res.innerHTML = hits.length ? hits.map(h => {
-      let txt = esc(quitar(h.txt)); palabras.forEach(p => { txt = txt.replace(new RegExp('(' + p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'ig'), '<mark>$1</mark>'); });
-      return `<button class="manhit" ${h.sec ? `data-mansec2="${h.sec}"` : ''}><span class="mhm">${esc(h.mod)}</span><span>${txt}</span></button>`;
-    }).join('') : `<div class="manhit">No hay resultados para «${esc(q.value)}». Prueba con otra palabra: cita, ruta, pedido, factura…</div>`;
-    res.querySelectorAll('[data-mansec2]').forEach(b => b.onclick = () => { res.classList.add('hide'); const c = document.querySelector(`.mancard[data-mansec="${b.dataset.mansec2}"]`); if (c) c.click(); });
-  };
-})(cargarManual);
 
 /* ---------------- Configuración: todo en un único sitio ---------------- */
 
@@ -10165,24 +10359,9 @@ cargarVentas = (orig => async function () {
 })(cargarVentas);
 
 // Inicio: llamadas de seguimiento para hoy (televenta y administración)
-pintarInicio = (orig => async function () {
-  await orig();
-  if (TAB !== 'inicio' || !VE_TODO() || !$('iniextra') || $('inillam')) return;
-  const { data } = await RPC_ORIG('llamadas_seguimiento', {});
-  const hoy = hoyISO(), pend = (data || []).filter(x => x.proxima_fecha <= hoy);
-  if (!pend.length || $('inillam')) return;
-  $('iniextra').insertAdjacentHTML('afterbegin', `<div class="card" id="inillam"><h2>Llamadas para hoy<span class="n">${pend.length}</span></h2>
-    <p class="sm" style="padding:0 16px">Clientes a los que quedaste en volver a llamar${pend.some(x => x.proxima_fecha < hoy) ? ', algunas atrasadas' : ''}.</p>
-    <div class="acts" style="padding:0 16px 14px"><button class="btn sec" id="inillamver">Ver llamadas</button></div></div>`);
-  $('inillamver').onclick = () => { PEDSEC = 'llamadas'; ir('ventas'); };
-})(pintarInicio);
 
 /* ---------------- comisiones: quién cobra, dentro del propio esquema ---------------- */
 
-pintarComisiones = (orig => async function () {
-  await orig();
-  const a = $('asigesq'); if (a) a.remove();      // ya no va fuera: se gestiona dentro de cada esquema
-})(pintarComisiones);
 
 async function personasEsquema(id) {
   const ref = $('eguardaresq') && $('eguardaresq').closest('.acts');
@@ -10276,26 +10455,6 @@ if (window.L && L.map) {
 
 /* ---------------- plan: cada parada con la ficha y una nota ---------------- */
 
-pintarPlan = (orig => function () {
-  orig();
-  if (!PLAN || !$('rplan')) return;
-  const items = $('rplan').querySelectorAll('.lista > .item');
-  PLAN.paradas.forEach((p, i) => {
-    const it = items[i]; if (!it || it.dataset.ext) return;
-    it.dataset.ext = '1';
-    const tx = it.querySelector('.tx'), meds = tx.querySelectorAll('.sm')[1];
-    if (meds) meds.innerHTML = p.medicos.map(m => `<button type="button" class="lnkmed" data-pfm="${m.id}" title="Abrir la ficha">${esc(m.nombre)}</button>`).join('');
-    if (p.nota) tx.insertAdjacentHTML('beforeend', `<span class="sm notapar">📝 ${esc(p.nota)}</span>`);
-    const acts = it.querySelector('.acts');
-    acts.insertAdjacentHTML('afterbegin', `${p.medicos.length === 1 ? `<button class="btn sec" data-pfm="${p.medicos[0].id}">Ficha</button>` : ''}<button class="btn sec" data-pnota="${i}">${p.nota ? 'Editar nota' : 'Nota'}</button>`);
-  });
-  $('rplan').querySelectorAll('[data-pfm]').forEach(b => b.onclick = () => abrirFicha(b.dataset.pfm));
-  $('rplan').querySelectorAll('[data-pnota]').forEach(b => b.onclick = async () => {
-    const p = PLAN.paradas[+b.dataset.pnota];
-    const t = await pedirTexto('Se guardará en la cita de cada médico de esta parada al pasar el plan a tu agenda.', p.nota || '', { titulo: 'Nota para ' + p.centro, ok: 'Guardar nota' });
-    if (t === null) return; p.nota = t.trim(); pintarPlan();
-  });
-})(pintarPlan);
 
 /* ---------------- Configuración: todo se muestra en el panel de la derecha ---------------- */
 
@@ -10329,8 +10488,6 @@ function panelDeModulo(sec) {
     cerrar(v);
   };
 })();
-const irV2380 = ir;
-ir = function (t) { if (t !== 'config') salirPanel(); irV2380(t); };
 
 cargarConfig = async function () {
   salirPanel();
@@ -10378,32 +10535,6 @@ cargarConfig = async function () {
 
 /* ---------------- Mi perfil: contexto de la persona ---------------- */
 
-pintarPrefs = (orig => async function () {
-  await orig();
-  if (!$('cfgcuerpo') || $('miperfil')) return;
-  const mods = Object.keys(MODULO_AREA).filter(puedeModulo);
-  const nombres = { inicio: 'Inicio', agenda: 'Agenda', rutas: 'Rutas', directorio: 'Directorio', pacientes: 'Clientes', productos: 'Productos', seguimiento: 'Calidad del dato',
-    ventas: 'Pedidos', analitica: 'Analítica', facturacion: 'Facturación' };
-  $('cfgcuerpo').insertAdjacentHTML('afterbegin', `<div class="card miperfil" id="miperfil">
-    <div class="mpcab"><span class="mpav">${esc(iniciales(PERFIL.nombre))}</span>
-      <div><h2 style="padding:0;margin:0">${esc(PERFIL.nombre)}</h2><div class="sm">${esc(PERFIL.email || '')}</div>
-        <div class="mpchips"><span class="pill p-est">${esc(PERFIL.rol)}</span></div></div></div>
-    <div class="mpgrid">
-      <div><b>Tus módulos</b><div class="mpmods">${mods.map(m => `<span>${ICO_MOD[m] || '•'} ${esc(nombres[m] || m)}</span>`).join('')}</div></div>
-      <div id="mpextra"><b>Tu actividad</b><div class="sm">Cargando…</div></div>
-    </div>
-    <p class="sm" style="margin:10px 0 0">Tus permisos los gestiona administración. Debajo, las preferencias que puedes cambiar tú.</p></div>`);
-  const seguro = x => Promise.resolve(x).then(r => r || {}, () => ({}));
-  const [{ data: k }, { data: h }, { data: yo }] = await Promise.all([seguro(RPC_ORIG('panel_inicio', {})),
-    seguro(RPC_ORIG('historial_esquemas', { p_usuario: PERFIL.id })), seguro(db.from('perfiles').select('zonas').eq('id', PERFIL.id).single())]);
-  if (!$('mpextra')) return;
-  const kk = (k && (k.kpis || k)) || {}, esq = (h || []).find(x => !x.hasta);
-  $('mpextra').innerHTML = `<b>Tu actividad</b><ul class="mplist">
-    ${kk.medicos != null ? `<li>🩺 <b>${num(kk.medicos)}</b> médicos en tu cartera</li>` : ''}
-    ${kk.visitas_mes != null ? `<li>📝 <b>${num(kk.visitas_mes)}</b> visitas este mes</li>` : ''}
-    ${yo && yo.zonas && yo.zonas.length ? `<li>📍 Zona: ${esc(yo.zonas.map(z => z.charAt(0) + z.slice(1).toLowerCase()).join(', '))}</li>` : ''}
-    ${esq ? `<li>€ Comisión: ${esc(esq.esquema)}</li>` : ''}</ul>`;
-})(pintarPrefs);
 
 /* ---------------- VeriFactu: explicado y claro ---------------- */
 
@@ -10480,20 +10611,6 @@ function infoManual(id, paso) {
   if ($('manirmod')) $('manirmod').onclick = () => { $('dlg').close(); ir(destino); };
   if ($('manircfg')) $('manircfg').onclick = () => { $('dlg').close(); CFG_SEC = cfg; ir('config'); };
 }
-cargarManual = (orig => async function () {
-  await orig();
-  const v = $('v-manual');
-  v.onclick = e => {
-    const m = e.target.closest('[data-mira]'); if (!m) return;
-    const i = [...v.querySelectorAll('.manpaso')].indexOf(m.closest('.manpaso'));
-    const pasos = PRIMEROS_PASOS[PERFIL.rol] || PRIMEROS_PASOS.default;
-    if (i >= 0 && pasos[i]) infoManual(null, pasos[i]);
-  };
-  v.querySelectorAll('.mancard').forEach(c => c.onclick = () => infoManual(c.dataset.mansec));
-  if ($('mandet')) $('mandet').remove();
-  const res = $('manres');
-  if (res) res.addEventListener('click', e => { const b = e.target.closest('[data-mansec2]'); if (b) { e.stopImmediatePropagation(); res.classList.add('hide'); infoManual(b.dataset.mansec2); } }, true);
-})(cargarManual);
 document.addEventListener('click', e => { const r = $('manres'); if (r && !e.target.closest('.manbusca')) r.classList.add('hide'); });
 
 
@@ -10520,10 +10637,6 @@ editarUsuario = (orig => async function (...a) {
   const d = $('dlg'); d.classList.add('cargando'); const s = setTimeout(() => d.classList.remove('cargando'), 8000);
   try { return await orig.apply(this, a); } finally { clearTimeout(s); requestAnimationFrame(() => d.classList.remove('cargando')); }
 })(editarUsuario);
-abrirFicha = (orig => async function (...a) {
-  const d = $('ficha'); d.classList.add('cargando'); const s = setTimeout(() => d.classList.remove('cargando'), 8000);
-  try { return await orig.apply(this, a); } finally { clearTimeout(s); requestAnimationFrame(() => d.classList.remove('cargando')); }
-})(abrirFicha);
 abrirVisita = (orig => async function (...a) {
   const d = $('dlg'); d.classList.add('cargando'); const s = setTimeout(() => d.classList.remove('cargando'), 8000);
   try { return await orig.apply(this, a); } finally { clearTimeout(s); requestAnimationFrame(() => d.classList.remove('cargando')); }
@@ -10539,20 +10652,6 @@ db.rpc = function (fn, params, opts) {
   PEND++; let hecho = false; const fin = () => { if (!hecho) { hecho = true; PEND = Math.max(0, PEND - 1); } };
   Promise.resolve(b).then(fin, fin); setTimeout(fin, 8000);
   return b;
-};
-const irV2390 = ir;
-ir = function (t) {
-  document.querySelectorAll('main > section.cargando').forEach(s => s.classList.remove('cargando'));
-  PEND = 0;
-  irV2390(t);
-  const sec = $('v-' + t); if (!sec || ES_MEDICO()) return;
-  sec.classList.add('cargando');
-  const t0 = Date.now(); let quietos = 0;
-  const w = setInterval(() => {
-    if (TAB !== t) { clearInterval(w); sec.classList.remove('cargando'); return; }
-    quietos = PEND === 0 ? quietos + 1 : 0;
-    if ((quietos >= 3 && Date.now() - t0 > 300) || Date.now() - t0 > 8000) { clearInterval(w); requestAnimationFrame(() => sec.classList.remove('cargando')); }
-  }, 80);
 };
 
 /* ---------------- alertas: ocultar y recuperar ---------------- */
@@ -10604,7 +10703,6 @@ async function verOcultas() {
     if (TAB === 'inicio') cargarInicio();
   });
 }
-pintarInicio = (orig => async function () { await orig(); if (TAB === 'inicio') await filtrarAlertasInicio(); })(pintarInicio);
 
 // Ocultar desde la ventana de la alerta
 document.addEventListener('click', async e => {
@@ -10739,16 +10837,6 @@ Promise.resolve(RPC_ORIG('plan_uso', {})).then(r => { if (r && r.data && r.data.
 
 // Los módulos que no entran en el plan se ven con candado y explican cómo conseguirlos
 const puedeModuloV2400 = puedeModulo;
-aplicarPermisosMenu = (orig => function () {
-  orig();
-  document.querySelectorAll('nav.main [data-t]').forEach(b => {
-    const t = b.dataset.t; if (!(t in MODULO_AREA)) return;
-    const bloqueado = puedeModuloV2400(t) && !planIncluye(t);
-    b.classList.toggle('bloq', bloqueado);
-    if (bloqueado) { b.classList.remove('hide'); if (!b.querySelector('.cand')) b.insertAdjacentHTML('beforeend', '<span class="cand">🔒</span>'); }
-    else { const c = b.querySelector('.cand'); if (c) c.remove(); }
-  });
-})(aplicarPermisosMenu);
 function avisoPlan(mod) {
   const p = planMinimo(mod), n = (document.querySelector(`nav.main [data-t="${mod}"]`) || {}).textContent || mod;
   $('dbody').innerHTML = `<div class="fh"><div><h2>🔒 ${esc(n.replace('🔒', '').trim())}</h2><div class="sm">No está incluido en tu plan ${esc(planDe(PLAN_ACTUAL.plan).nombre)}</div></div>
@@ -10827,20 +10915,6 @@ nuevoUsuario = (orig => function (pre) {
 })(nuevoUsuario);
 
 // Desde la ficha del médico: darle acceso a su espacio
-abrirFicha = (orig => async function (id, ...r) {
-  await orig(id, ...r);
-  if (PERFIL.rol !== 'Administrador' || FICHA_ID !== id || !$('fbody') || $('facceso')) return;
-  const { data: us } = await RPC_ORIG('usuarios_resumen', {});
-  const ya = (us || []).find(u => u.medico_id === id);
-  $('fbody').insertAdjacentHTML('beforeend', `<div class="blk" id="facceso"><h3>Acceso a la plataforma</h3>
-    ${ya ? `<p class="sm">Tiene acceso como <b>${esc(ya.email || '')}</b>${ya.activo ? '' : ' (desactivado)'}: ve su informe y recibe un aviso con cada pauta.</p>`
-      : `<p class="sm">Puede tener acceso a su informe de prescripción y recibir un aviso con cada pauta a su nombre. No verá importes ni datos de pacientes.</p>
-         <button class="btn sec" id="fdaracc">Dar acceso</button>`}</div>`);
-  if ($('fdaracc')) $('fdaracc').onclick = async () => {
-    const { data: f } = await db.rpc('ficha_medico', { p_id: id });
-    $('ficha').close(); nuevoUsuario({ medico: { id, nombre: f.medico.nombre }, nombre: f.medico.nombre, email: f.medico.email || '' });
-  };
-})(abrirFicha);
 
 /* ---------------- Usuarios renovado ---------------- */
 
@@ -10958,11 +11032,6 @@ async function pintarRoles() {
 /* ---------------- Configuración única (Administración queda integrada) ---------------- */
 
 const CFG_ADMIN = { usuarios: 'usuarios', comisiones: 'comis', accesos: 'accesos', auditoria: 'auditoria' };
-const irV2400 = ir;
-ir = function (t) {
-  if (t === 'admin') { CFG_SEC = CFG_ADMIN[ADM_SEC] || 'usuarios'; t = 'config'; }
-  irV2400(t);
-};
 document.querySelectorAll('[data-u="adm"]').forEach(b => b.classList.add('hide'));
 // Dentro de Configuración no se repiten menús interiores
 panelDeModulo = (orig => function (sec) {
@@ -11008,11 +11077,6 @@ abrirMasMovil = (orig => function () {
 })(abrirMasMovil);
 
 // Intentar entrar en un módulo que no incluye el plan
-const irV2401 = ir;
-ir = function (t) {
-  if (t in MODULO_AREA && PERFIL && puedeModuloV2400(t) && !planIncluye(t)) { avisoPlan(t); return; }
-  irV2401(t);
-};
 
 
 /* ============================================================
@@ -11049,7 +11113,26 @@ function irEnlace(e) {
   if (t === 'ficha' && id) abrirFicha(id); else if (t === 'pedido' && id) verPedido(id);
   else if (t === 'informe') ir('informe'); else if (t === 'directorio') ir('directorio');
 }
+/* panelNotificaciones: la parte base y, en orden, cada paso que se le añade (antes eran 2 capas separadas). */
 function panelNotificaciones(l) {
+  panelNotificacionesBase(l);
+  panelNotificacionesPaso1(l);
+  panelNotificacionesPaso2(l);
+}
+
+function panelNotificacionesPaso1(l) {
+  const b = $('notcfg');
+  if (b) b.onclick = () => { $('dlg').close(); CFG_SEC = 'notif'; window.__CFG_DIRECTO = true; ir('config'); };
+}
+
+function panelNotificacionesPaso2(l) {
+  $('dbody').querySelectorAll('.notit').forEach((b, i) => {
+    const x = l[i], e = x && EXPLICA_NOTIF[x.tipo]; if (!e || b.querySelector('.notacc')) return;
+    b.querySelector('.tx').insertAdjacentHTML('beforeend', `<span class="notacc">${esc(e[1])}</span>`);
+  });
+}
+
+function panelNotificacionesBase(l) {
   const ico = t => (TIPOS_NOTIF.find(x => x[0] === t) || [])[1] || '🔔';
   $('dbody').innerHTML = `<div class="fh"><div><h2>Notificaciones</h2><div class="sm">${NOTIF_N ? NOTIF_N + ' sin leer' : 'Estás al día'}</div></div>
     <button class="x" data-cerrar aria-label="Cerrar">✕</button></div>
@@ -11084,7 +11167,68 @@ function pintarNotif() {
 
 /* ---------------- Mi perfil ---------------- */
 
+/* pintarPerfil: la parte base y, en orden, cada paso que se le añade (antes eran 4 capas separadas). */
 function pintarPerfil() {
+  pintarPerfilBase();
+  pintarPerfilPaso1();
+  pintarPerfilPaso2();
+  pintarPerfilPaso3();
+  pintarPerfilPaso4();
+}
+
+function pintarPerfilPaso1() {
+  const g = $('pfi') && $('pfi').closest('.g2'); if (!g) return;
+  const vacio = g.children[1];
+  vacio.innerHTML = `<label for="pfl">Idioma</label><select id="pfl" data-notr>${IDIOMAS.map(([k, n]) => `<option value="${k}" ${IDIOMA === k ? 'selected' : ''}>${n}</option>`).join('')}</select>`;
+  $('pfl').onchange = async () => {
+    const id = $('pfl').value;
+    const prefs = Object.assign({}, PERFIL.preferencias || {}, { idioma: id });
+    const { data, error } = await db.rpc('guardar_preferencias', { p: prefs });
+    if (error) { toast('No se ha podido guardar', true); return; }
+    PERFIL.preferencias = data || prefs;
+    try { localStorage.setItem('app-idioma', id); } catch (e) {}
+    // Al volver al castellano se recarga para recuperar los textos originales
+    if (id === 'es') { location.reload(); return; }
+    aplicarIdioma(id); toast('✓');
+  };
+}
+
+function pintarPerfilPaso2() {
+  const ok = $('pfok');
+  if (ok) {
+    // Siempre con las preferencias actuales: antes, guardar «Mis datos» podía borrar el idioma elegido
+    ok.onclick = async () => {
+      const nombre = $('pfn').value.trim(); if (!nombre) { toast('El nombre no puede quedar vacío', true); return; }
+      const prefs = Object.assign({}, PERFIL.preferencias || {}, { telefono: $('pft').value.trim(), inicio: $('pfi').value });
+      const [a, b] = await Promise.all([db.rpc('guardar_preferencias', { p: prefs }), db.from('perfiles').update({ nombre }).eq('id', PERFIL.id)]);
+      if (a.error) { toast('No se ha podido guardar', true); return; }
+      PERFIL.preferencias = a.data || prefs;
+      if (!b.error) { PERFIL.nombre = nombre; $('uname').textContent = nombre.split(' ')[0]; $('av').textContent = iniciales(nombre); }
+      toast('Datos guardados');
+    };
+  }
+  const sel = $('pfl');
+  if (sel) sel.onchange = async () => {
+    const id = sel.value;
+    const prefs = Object.assign({}, PERFIL.preferencias || {}, { idioma: id });
+    const { data, error } = await db.rpc('guardar_preferencias', { p: prefs });
+    if (error) { toast('No se ha podido guardar', true); return; }
+    PERFIL.preferencias = data || prefs;
+    try { localStorage.setItem('app-idioma', id); sessionStorage.removeItem('app-idioma-recarga'); } catch (e) {}
+    pantallaCarga(IDIOMAS.find(x => x[0] === id)[1] + '…');
+    location.reload();
+  };
+}
+
+function pintarPerfilPaso3() {
+ medidorClave($('pfp1'), $('pfp2'), $('pfpok'));
+}
+
+function pintarPerfilPaso4() {
+ const c = $('pfp1') && $('pfp1').closest('.card'); if (c) c.remove();
+}
+
+function pintarPerfilBase() {
   const pr = PERFIL.preferencias || {};
   const inicios = [['inicio', 'Inicio'], ['agenda', 'Agenda'], ['rutas', 'Rutas'], ['directorio', 'Directorio'], ['ventas', 'Pedidos']].filter(([k]) => puedeModulo(k));
   $('cfgcuerpo').innerHTML = `<div id="perfilcab"></div>
@@ -11456,23 +11600,6 @@ function aplicarIdioma(id) {
 prepararIdioma((() => { try { return localStorage.getItem('app-idioma') || 'es'; } catch (e) { return 'es'; } })());
 if (MAPA_I18N) traducir(document.body);
 // Selector de idioma en Mi perfil
-pintarPerfil = (orig => function () {
-  orig();
-  const g = $('pfi') && $('pfi').closest('.g2'); if (!g) return;
-  const vacio = g.children[1];
-  vacio.innerHTML = `<label for="pfl">Idioma</label><select id="pfl" data-notr>${IDIOMAS.map(([k, n]) => `<option value="${k}" ${IDIOMA === k ? 'selected' : ''}>${n}</option>`).join('')}</select>`;
-  $('pfl').onchange = async () => {
-    const id = $('pfl').value;
-    const prefs = Object.assign({}, PERFIL.preferencias || {}, { idioma: id });
-    const { data, error } = await db.rpc('guardar_preferencias', { p: prefs });
-    if (error) { toast('No se ha podido guardar', true); return; }
-    PERFIL.preferencias = data || prefs;
-    try { localStorage.setItem('app-idioma', id); } catch (e) {}
-    // Al volver al castellano se recarga para recuperar los textos originales
-    if (id === 'es') { location.reload(); return; }
-    aplicarIdioma(id); toast('✓');
-  };
-})(pintarPerfil);
 
 
 /* ============================================================
@@ -11489,33 +11616,6 @@ pintarPerfil = (orig => function () {
 /* ---------------- idioma ---------------- */
 
 // El idioma se guarda en el perfil y se aplica al recargar, para que todo salga ya traducido
-pintarPerfil = (orig => function () {
-  orig();
-  const ok = $('pfok');
-  if (ok) {
-    // Siempre con las preferencias actuales: antes, guardar «Mis datos» podía borrar el idioma elegido
-    ok.onclick = async () => {
-      const nombre = $('pfn').value.trim(); if (!nombre) { toast('El nombre no puede quedar vacío', true); return; }
-      const prefs = Object.assign({}, PERFIL.preferencias || {}, { telefono: $('pft').value.trim(), inicio: $('pfi').value });
-      const [a, b] = await Promise.all([db.rpc('guardar_preferencias', { p: prefs }), db.from('perfiles').update({ nombre }).eq('id', PERFIL.id)]);
-      if (a.error) { toast('No se ha podido guardar', true); return; }
-      PERFIL.preferencias = a.data || prefs;
-      if (!b.error) { PERFIL.nombre = nombre; $('uname').textContent = nombre.split(' ')[0]; $('av').textContent = iniciales(nombre); }
-      toast('Datos guardados');
-    };
-  }
-  const sel = $('pfl');
-  if (sel) sel.onchange = async () => {
-    const id = sel.value;
-    const prefs = Object.assign({}, PERFIL.preferencias || {}, { idioma: id });
-    const { data, error } = await db.rpc('guardar_preferencias', { p: prefs });
-    if (error) { toast('No se ha podido guardar', true); return; }
-    PERFIL.preferencias = data || prefs;
-    try { localStorage.setItem('app-idioma', id); sessionStorage.removeItem('app-idioma-recarga'); } catch (e) {}
-    pantallaCarga(IDIOMAS.find(x => x[0] === id)[1] + '…');
-    location.reload();
-  };
-})(pintarPerfil);
 // Al entrar se usa el idioma del perfil; como mucho una recarga por sesión, para no quedar en bucle
 
 /* ---------------- Configuración en el móvil: primero la lista, después el apartado ---------------- */
@@ -11547,11 +11647,6 @@ new MutationObserver(() => { if (TAB === 'config' && ES_MOVIL() && $('cfgcuerpo'
   .observe(document.querySelector('main'), { childList: true, subtree: true });
 window.addEventListener('resize', () => { if (TAB === 'config') cfgMovil(); });
 // «Elegir qué notificaciones recibo» abre ese apartado directamente
-panelNotificaciones = (orig => function (l) {
-  orig(l);
-  const b = $('notcfg');
-  if (b) b.onclick = () => { $('dlg').close(); CFG_SEC = 'notif'; window.__CFG_DIRECTO = true; ir('config'); };
-})(panelNotificaciones);
 
 /* ---------------- ubicación de centros y consultas ---------------- */
 
@@ -11875,7 +11970,6 @@ pantallaRecuperacion = (orig => function () {
 // Si la pantalla ya se abrió al cargar (antes de este punto), se completa ahora
 if ($('rform')) { $('rform').noValidate = true; medidorClave($('rp1'), $('rp2'), $('rok')); }
 // Mi perfil → contraseña
-pintarPerfil = (orig => function () { orig(); medidorClave($('pfp1'), $('pfp2'), $('pfpok')); })(pintarPerfil);
 
 // Acceso: «Entrar» se activa al rellenar correo y contraseña; avisos con el diseño de la plataforma
 (function () {
@@ -11978,7 +12072,6 @@ function iconosMenu() {
     b.insertAdjacentHTML('afterbegin', `<span class="navico">${svgIco(ICON_NOM[ICO_NAV[b.dataset.t]])}</span>`);
   });
 }
-aplicarPermisosMenu = (orig => function () { orig(); iconosMenu(); })(aplicarPermisosMenu);
 // El menú «Más» del móvil usa exactamente los mismos iconos
 Object.keys(ICO_NAV).forEach(k => { ICO_MOD[k] = svgIco(ICON_NOM[ICO_NAV[k]]); });
 iconosMenu();
@@ -11990,7 +12083,6 @@ new MutationObserver(() => { if (document.querySelector('nav.main [data-t]:not(:
 document.querySelectorAll('[data-u="pass"]').forEach(b => b.remove());
 new MutationObserver(() => document.querySelectorAll('[data-u="pass"]').forEach(b => b.remove())).observe(document.body, { childList: true, subtree: true });
 // En el perfil no se cambia la contraseña (se hace con «He olvidado la contraseña» en el acceso)
-pintarPerfil = (orig => function () { orig(); const c = $('pfp1') && $('pfp1').closest('.card'); if (c) c.remove(); })(pintarPerfil);
 
 
 /* ============================================================
@@ -12030,7 +12122,6 @@ function ordenarMenu() {
   const dir = nav.querySelector('[data-t="directorio"]');
   if (dir) [...dir.childNodes].forEach(n => { if (n.nodeType === 3 && /Directorio/.test(n.nodeValue)) n.nodeValue = n.nodeValue.replace('Directorio', 'Médicos'); });
 }
-aplicarPermisosMenu = (orig => function () { orig(); ordenarMenu(); const c = document.querySelector('nav.main [data-t="seguimiento"]'); if (c) c.classList.add('hide'); })(aplicarPermisosMenu);
 ordenarMenu();
 // «Calidad del dato» pasa a ser un botón dentro de Médicos
 function botonCalidad() {
@@ -12039,13 +12130,6 @@ function botonCalidad() {
     <div class="acts">${puedeModulo('seguimiento') ? `<button class="btn sec" id="dircalidad">${svgIco(ICON_NOM['shield-check'])} Calidad del dato</button>` : ''}</div></div>`);
   if ($('dircalidad')) $('dircalidad').onclick = () => ir('seguimiento');
 }
-cargarSeguimiento = (orig => async function () {
-  await orig();
-  const s = document.querySelector('#v-seguimiento .saludo');
-  if (s && !$('calvolver')) s.insertAdjacentHTML('beforebegin', '<button class="cfgvolver visible" id="calvolver" type="button">‹ Médicos</button>');
-  if ($('calvolver')) $('calvolver').onclick = () => ir('directorio');
-  document.querySelectorAll('nav.main [data-t]').forEach(b => b.setAttribute('aria-selected', String(b.dataset.t === 'directorio')));
-})(cargarSeguimiento);
 
 /* ---------------- menú de usuario: Mi perfil y Plan ---------------- */
 
@@ -12156,15 +12240,6 @@ cfgMovil = function () {
 /* ---------------- manual: qué incluye tu plan ---------------- */
 
 const MOD_DE_MANUAL = { agenda: 'agenda', rutas: 'rutas', directorio: 'directorio', ventas: 'ventas', facturacion: 'facturacion', analitica: 'analitica', productos: 'productos', pacientes: 'pacientes', seguimiento: 'seguimiento' };
-cargarManual = (orig => async function () {
-  await orig();
-  document.querySelectorAll('.mancard').forEach(c => {
-    const mod = MOD_DE_MANUAL[c.dataset.mansec]; if (!mod || planIncluye(mod)) return;
-    const p = planMinimo(mod), pill = c.querySelector('.pill');
-    if (pill) { pill.className = 'pill p-plan'; pill.innerHTML = `${svgIco(ICON_NOM.lock)} Incluido en el plan ${esc(p ? p.nombre : 'Premium')}`; }
-    c.classList.add('bloq'); c.onclick = () => avisoPlan(mod);
-  });
-})(cargarManual);
 
 /* ---------------- notificaciones mejor explicadas ---------------- */
 
@@ -12191,13 +12266,6 @@ const EXPLICA_NOTIF = {
   esquema: ['Cuando te asignan un esquema de comisión.', 'Consulta desde cuándo se aplica.']
 };
 TIPOS_NOTIF.forEach(t => { if (EXPLICA_NOTIF[t[0]]) t[3] = EXPLICA_NOTIF[t[0]][0]; });
-panelNotificaciones = (orig => function (l) {
-  orig(l);
-  $('dbody').querySelectorAll('.notit').forEach((b, i) => {
-    const x = l[i], e = x && EXPLICA_NOTIF[x.tipo]; if (!e || b.querySelector('.notacc')) return;
-    b.querySelector('.tx').insertAdjacentHTML('beforeend', `<span class="notacc">${esc(e[1])}</span>`);
-  });
-})(panelNotificaciones);
 
 
 /* ============================================================
