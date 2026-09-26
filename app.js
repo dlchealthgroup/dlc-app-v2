@@ -42,50 +42,6 @@ $('lform').addEventListener('submit', async e => {
   arrancar();
 });
 
-async function arrancar() {
-  const { data: { user } } = await db.auth.getUser();
-  if (!user) { $('login').classList.remove('hide'); $('app').classList.add('hide'); return; }
-
-  const { data: perfil, error } = await db.from('perfiles').select('*').eq('id', user.id).single();
-  if (error || !perfil || !perfil.activo) {
-    $('lmsg').textContent = perfil && !perfil.activo
-      ? 'Tu usuario está desactivado.'
-      : 'Tu usuario no tiene perfil en la plataforma. Avisa a administración.';
-    await db.auth.signOut();
-    $('login').classList.remove('hide'); $('app').classList.add('hide');
-    return;
-  }
-
-  PERFIL = perfil;
-  $('login').classList.add('hide');
-  $('app').classList.remove('hide');
-  $('av').textContent = iniciales(perfil.nombre);
-  $('uname').textContent = String(perfil.nombre).split(' ')[0];
-  $('umnom').textContent = perfil.nombre;
-  $('umrol').textContent = perfil.rol + ' · ' + perfil.email;
-  if (perfil.rol === 'Administrador') document.querySelector('[data-u="adm"]').classList.remove('hide');
-
-  const nombre = String(perfil.nombre).split(' ')[0];
-  const h = new Date().getHours();
-  $('hola').textContent = (h < 13 ? 'Buenos días' : h < 20 ? 'Buenas tardes' : 'Buenas noches') + ', ' + nombre;
-  $('hoyfecha').textContent = fechaLarga(new Date()).replace(/^./, c => c.toUpperCase());
-
-  $('nuevoBtn').classList.toggle('hide', !puedeCrear());
-  $('dupBtn').classList.toggle('hide', PERFIL.rol !== 'Administrador');
-  {
-    window.__dlDir = async fmt => {
-      const { data } = await db.rpc('exportar_medicos', { q: F.q || null, f_provincia: F.prov || null,
-        f_municipio: F.muni || null, f_estado: F.est || null, f_especialidad: F.esp || null, f_urgentes: !!F.urg });
-      descargar(data || [], 'Exportacion_medicos', fmt);
-    };
-  }
-  document.querySelectorAll('#nav [data-t="ventas"]').forEach(b => b.classList.toggle('hide', !veVentas()));
-  cargarCatalogos();
-  pintarRutaBarra();
-  db.rpc('registrar_acceso', { p_evento: 'Entrada', p_agente: navigator.userAgent }).catch(() => {});
-  cargarInicio();
-  cargarFiltros();
-}
 
 /* ---------------- menú de usuario ---------------- */
 
@@ -140,60 +96,6 @@ const itemHTML = (id, ico, clase, titulo, sub) =>
   `<button class="item" data-id="${id}"><span class="ic ${clase || ''}">${ico}</span>
    <span class="tx"><b>${esc(titulo)}</b><span class="sm">${sub}</span></span></button>`;
 
-async function cargarInicio() {
-  ['c-agenda', 'c-acciones', 'c-urgentes', 'c-ultimas'].forEach(id =>
-    $(id).innerHTML = '<div class="skel" style="width:40%"></div><div class="skel"></div><div class="skel" style="width:70%"></div>');
-
-  const res = await rpcCache('panel_inicio', { lim: 6 }, 'inicio');
-  const data = res.data;
-  if (!data) { $('c-agenda').innerHTML = '<div class="vacio">Sin conexión y sin copia guardada todavía.</div>'; return; }
-  const k = data.kpis;
-
-  const kpi = (n, t, cls, accion, extra) =>
-    `<div class="kpi ${cls || ''} ${accion ? 'click' : ''}" ${accion ? `data-k="${accion}"` : ''}>
-       <b>${typeof n === 'string' ? n : num(n)}</b><span>${esc(t.charAt(0).toUpperCase() + t.slice(1))}</span>${extra || ''}</div>`;
-
-  const cfg = kpiConfig().filter(x => x.on);
-  $('kpis').innerHTML = cfg.map(x => {
-    if (x.filtro) return `<div class="kpi click" data-kf="${esc(JSON.stringify(x.filtro))}"><b class="cont">…</b>
-      <span>${esc(x.t || textoFiltro(x.filtro))}</span></div>`;
-    const c = KPI_CAT.find(y => y.id === x.id);
-    if (!kpiPermitido(c)) return '';
-    return kpi(c.v(k), x.t || c.t, c.cls ? c.cls(k) : '', c.h);
-  }).join('') + `<div class="kpi" style="display:grid;place-items:center;border-style:dashed">
-      <button class="kcfg" data-k="cfgkpis">⚙ Personalizar indicadores</button></div>`;
-
-  if (res.cache) avisoCache($('kpis'), res.fecha);
-
-  document.querySelectorAll('#kpis [data-kf]').forEach(async el => {
-    const n = await contarFiltro(JSON.parse(el.dataset.kf));
-    const b = el.querySelector('.cont'); if (b) b.textContent = num(n);
-  });
-
-  tarjetaComision();
-  tarjetasRuta();
-  tarjeta($('c-agenda'), 'Tu agenda de hoy', data.agenda_hoy.length,
-    data.agenda_hoy.map(a => itemHTML(a.medico_id, a.hora ? esc(a.hora).slice(0, 5) : '·',
-      a.estado === 'Visitada' ? 'o' : '', a.nombre,
-      `${esc(a.centro_nombre || '')} · <b style="color:${a.estado === 'Visitada' ? 'var(--ok)' : 'var(--navy)'}">${esc(a.estado)}</b>`)),
-    '', 'No tienes citas para hoy. Planifica una ruta desde Rutas.');
-
-  tarjeta($('c-acciones'), 'Próximas acciones', data.acciones.length,
-    data.acciones.map(a => itemHTML(a.medico_id, '↻', a.proxima_fecha < hoyISO() ? 'w' : '', a.nombre,
-      `<b style="color:${a.proxima_fecha < hoyISO() ? 'var(--warn)' : 'var(--navy)'}">${fechaCorta(a.proxima_fecha)}</b> · ${esc(a.proxima_accion || 'Seguimiento')}`)),
-    '', 'Sin acciones pendientes en los próximos 7 días.');
-
-  tarjeta($('c-urgentes'), 'Urgentes sin visitar', k.urgentes,
-    data.urgentes.map(u => itemHTML(u.medico_id, '!', 'w', u.nombre,
-      `${esc(u.especialidad || '')} · ${esc(u.centro_nombre || u.municipio || '')}`)),
-    k.urgentes > 6 ? `<button class="verlo" data-k="urgentes">Ver los ${num(k.urgentes)} urgentes</button>` : '',
-    'Todos los urgentes están visitados.');
-
-  tarjeta($('c-ultimas'), 'Últimas visitas', null,
-    data.ultimas_visitas.map(v => itemHTML(v.medico_id, '✓', 'o', v.nombre,
-      `${fechaCorta(v.fecha)} · ${esc((v.resultados || []).join(' + ') || 'Sin resultado')}`)),
-    '', 'Todavía no hay visitas registradas.');
-}
 
 $('v-inicio').addEventListener('click', e => {
   const kf = e.target.closest('[data-kf]');
@@ -504,62 +406,6 @@ function repintarDp(cont, idx, st) {
 
 /* ---------------- registrar visita ---------------- */
 
-async function abrirVisita(id) {
-  const { data, error } = await db.rpc('ficha_medico', { p_id: id });
-  if (error) { toast('No se ha podido abrir: ' + error.message, true); return; }
-  const m = data.medico, cons = data.consultas || [];
-  const pos = CAT.RESULTADO.filter(r => r.extra !== 'neg'), neg = CAT.RESULTADO.filter(r => r.extra === 'neg');
-
-  $('dbody').innerHTML = `
-    <div class="fh"><div><h2>Registrar visita</h2><div class="sm">${esc(m.nombre)}</div></div>
-      <button class="x" data-cerrar aria-label="Cerrar">✕</button></div>
-    <div class="g2">
-      <div><label for="vf">Fecha</label><input id="vf" type="date" value="${hoyISO()}"></div>
-      <div><label for="vc">Centro de la visita</label><select id="vc">
-        ${cons.map(c => `<option value="${c.id}">${esc(c.centro_nombre || 'Consulta privada')}${c.municipio ? ' · ' + esc(c.municipio) : ''}</option>`).join('')}
-      </select></div>
-    </div>
-    <label>Resultado <span class="sm">· puedes marcar varios de "visita realizada"</span></label>
-    <div class="opciones">${pos.map(r => `<button type="button" class="opt" data-res="${esc(r.valor)}" aria-pressed="false"><span class="mk"></span>${esc(r.valor)}</button>`).join('')}</div>
-    <div class="opciones" style="margin-top:8px">${neg.map(r => `<button type="button" class="opt neg" data-res="${esc(r.valor)}" data-neg="1" aria-pressed="false"><span class="mk"></span>${esc(r.valor)}</button>`).join('')}</div>
-    <div class="g2" style="margin-top:6px">
-      <div><label for="vm">Muestras entregadas</label><input id="vm" type="number" min="0" max="99" value="0"></div>
-      <div><label for="vpf">Próxima acción · fecha</label><input id="vpf" type="date"></div>
-    </div>
-    <label for="vpa">Próxima acción</label><input id="vpa" placeholder="p. ej. Llevar reporting">
-    <label for="vn">Nota</label><textarea id="vn" rows="3"></textarea>
-    <div class="acts" style="justify-content:flex-end">
-      <button class="btn sec" data-cerrar>Cancelar</button>
-      <button class="btn" id="vguardar">Guardar visita</button>
-    </div>`;
-
-  $('dbody').querySelectorAll('[data-res]').forEach(b => b.onclick = () => {
-    const esNeg = b.dataset.neg === '1', on = b.getAttribute('aria-pressed') === 'true';
-    $('dbody').querySelectorAll('[data-res]').forEach(x => {
-      if (esNeg || x.dataset.neg === '1') x.setAttribute('aria-pressed', 'false');
-    });
-    b.setAttribute('aria-pressed', String(!on));
-  });
-
-  $('vguardar').onclick = async ev => {
-    const res = [...$('dbody').querySelectorAll('[data-res][aria-pressed=true]')].map(b => b.dataset.res);
-    if (!res.length) { toast('Elige al menos un resultado', true); return; }
-    ev.target.disabled = true; ev.target.textContent = 'Guardando…';
-    const { data: r, error: err } = await db.rpc('registrar_visita', { p: {
-      medico_id: id, consulta_id: $('vc').value || null, fecha: $('vf').value,
-      resultados: res, muestras: +$('vm').value || 0, nota: $('vn').value.trim(),
-      proxima_accion: $('vpa').value.trim(), proxima_fecha: $('vpf').value || null,
-      op_id: 'v-' + id + '-' + Date.now()
-    }});
-    ev.target.disabled = false; ev.target.textContent = 'Guardar visita';
-    if (err) { toast('No se ha podido guardar: ' + err.message, true); return; }
-    $('dlg').close();
-    toast('Visita registrada' + (r && r.estado ? ' · estado: ' + r.estado : ''));
-    cargarInicio();
-    if (FICHA_ID === id) abrirFicha(id);
-  };
-  $('dlg').showModal();
-}
 
 /* ---------------- editar ficha y altas ---------------- */
 
@@ -1161,62 +1007,6 @@ function pintarPrefs() {
 
 /* ---------------- clasificadores ---------------- */
 
-async function pintarCatalogos() {
-  $('cfgcuerpo').innerHTML = '<div class="card"><div class="skel"></div><div class="skel" style="width:50%"></div></div>';
-  const { data } = await db.rpc('catalogos_todos');
-  CATS = data || [];
-  const completo = PERFIL.rol === 'Administrador' || ((PERFIL.areas || {}).K || 0) >= 3;
-
-  $('cfgcuerpo').innerHTML = `
-    <p class="sm">Listas que usan todos los usuarios en fichas, visitas y filtros.</p>
-    ${completo ? '<div class="acts"><button class="btn" id="cnuevo">+ Nuevo clasificador</button></div>' : ''}
-    <div class="cols" style="grid-template-columns:repeat(auto-fit,minmax(320px,1fr))">
-      ${CATS.map(c => `<div class="card" style="padding:16px">
-        <h2 style="padding:0">${esc(c.nombre)}</h2>
-        <p class="sm" style="padding:0">${c.valores.filter(v => v.activo).length} valores activos</p>
-        <div class="lista" style="padding:8px 0 0">${c.valores.map(v => `<div class="item" style="cursor:default;padding:6px 8px">
-          <span class="tx"><b style="${v.activo ? '' : 'opacity:.5;text-decoration:line-through'}">${esc(v.valor)}</b>
-            ${v.extra ? `<span class="sm">${v.extra === 'neg' ? 'sin visita' : 'visita realizada'}</span>` : ''}</span>
-          <span class="acts" style="margin:0">
-            <button class="btn sec" data-vtog="${v.id}|${v.activo ? 0 : 1}">${v.activo ? 'Desactivar' : 'Activar'}</button>
-            ${completo ? `<button class="btn sec" data-vdel="${v.id}">Eliminar</button>` : ''}</span></div>`).join('')}</div>
-        <div class="acts"><input data-vnew="${c.id}" placeholder="Nuevo valor" style="flex:1;min-width:140px">
-          <button class="btn sec" data-vadd="${c.id}">Añadir</button></div>
-      </div>`).join('')}
-    </div>`;
-
-  $('cfgcuerpo').querySelectorAll('[data-vadd]').forEach(b => b.onclick = async () => {
-    const inp = $('cfgcuerpo').querySelector(`[data-vnew="${b.dataset.vadd}"]`);
-    if (!inp.value.trim()) return;
-    const { error } = await db.rpc('guardar_valor', { p: { clasificador_id: b.dataset.vadd, valor: inp.value.trim() } });
-    if (error) { toast('No se ha podido: ' + error.message, true); return; }
-    toast('Valor añadido'); cargarCatalogos(); pintarCatalogos();
-  });
-  $('cfgcuerpo').querySelectorAll('[data-vtog]').forEach(b => b.onclick = async () => {
-    const [id, activo] = b.dataset.vtog.split('|');
-    await db.rpc('guardar_valor', { p: { id, activo: activo === '1' } });
-    cargarCatalogos();
-  pintarRutaBarra();
-  db.rpc('registrar_acceso', { p_evento: 'Entrada', p_agente: navigator.userAgent }).catch(() => {}); pintarCatalogos();
-  });
-  $('cfgcuerpo').querySelectorAll('[data-vdel]').forEach(b => b.onclick = async () => {
-    if (!await preguntar('Las fichas y visitas que ya lo usan lo conservan, pero dejará de aparecer en los desplegables.', { titulo: '¿Eliminar este valor?', ok: 'Eliminar', peligro: true })) return;
-    const { data: r } = await db.rpc('borrar_valor', { p_id: b.dataset.vdel });
-    if (r && r.ok === false) { toast('No tienes permiso', true); return; }
-    toast('Valor eliminado'); cargarCatalogos(); pintarCatalogos();
-  });
-  const cn = $('cnuevo');
-  if (cn) cn.onclick = async () => {
-    const nombre = await pedirTexto('Nombre del clasificador', '', { titulo: 'Nuevo clasificador', placeholder: 'p. ej. Tipo de centro', ok: 'Siguiente' });
-    if (!nombre) return;
-    const valores = await pedirTexto('Valores separados por comas', '', { titulo: nombre, placeholder: 'Hospital, Clínica, Consulta privada', ok: 'Crear' });
-    const { data: r } = await db.rpc('crear_clasificador', {
-      p_nombre: nombre.trim(), p_valores: (valores || '').split(',').map(x => x.trim()).filter(Boolean)
-    });
-    if (r && r.ok === false) { toast('No tienes permiso', true); return; }
-    toast('Clasificador creado'); pintarCatalogos();
-  };
-}
 
 /* ---------------- administración de usuarios ---------------- */
 
@@ -1360,53 +1150,6 @@ function nuevoUsuario() {
   $('dlg').showModal();
 }
 
-async function asignarCartera(id) {
-  const u = USUARIOS.find(x => x.id === id); if (!u) return;
-  const { data: op } = await db.rpc('opciones_filtros', {});
-  const sel = lista => '<option value=""></option>' + (lista || []).map(o => `<option>${esc(o.v)}</option>`).join('');
-  $('dbody').innerHTML = `
-    <div class="fh"><div><h2>Cartera de ${esc(u.nombre)}</h2>
-      <div class="sm">Ahora tiene ${num(u.medicos)} médicos asignados</div></div>
-      <button class="x" data-cerrar aria-label="Cerrar">✕</button></div>
-    <p class="sm">Elige los filtros y asigna en bloque. Un médico puede tener varios comerciales.</p>
-    <div class="g2">
-      <div><label for="aprov">Provincia</label><select id="aprov">${sel(op.provincias)}</select></div>
-      <div><label for="amuni">Municipio</label><select id="amuni">${sel(op.municipios)}</select></div>
-    </div>
-    <div class="g2">
-      <div><label for="aesp">Especialidad</label><select id="aesp">${sel(op.especialidades)}</select></div>
-      <div><label for="aest">Estado</label><select id="aest">${sel(op.estados)}</select></div>
-    </div>
-    <label class="opt" style="margin-top:10px"><input type="checkbox" id="aurg"> Solo urgentes</label>
-    <div id="amsg" class="sm" style="margin-top:10px"></div>
-    <div class="acts" style="justify-content:flex-end">
-      <button class="btn sec" id="acont">Ver cuántos</button>
-      <button class="btn sec" id="aquitar">Quitar</button>
-      <button class="btn" id="aasignar">Asignar</button></div>`;
-
-  const filtros = () => ({
-    f_provincia: $('aprov').value || null, f_municipio: $('amuni').value || null,
-    f_especialidad: $('aesp').value || null, f_estado: $('aest').value || null,
-    f_urgentes: $('aurg').checked
-  });
-  const ids = async () => (await db.rpc('ids_filtrados', filtros())).data || [];
-
-  $('acont').onclick = async () => { const l = await ids(); $('amsg').innerHTML = `<b>${num(l.length)}</b> médicos con estos filtros.`; };
-  const aplicar = async (quitar, ev) => {
-    const l = await ids();
-    if (!l.length) { toast('Ningún médico con esos filtros', true); return; }
-    if (!await preguntar(`Se van a ${quitar ? 'quitar' : 'asignar'} ${num(l.length)} médicos ${quitar ? 'de' : 'a'} ${u.nombre}.`, { titulo: quitar ? 'Quitar cartera' : 'Asignar cartera', ok: quitar ? 'Quitar' : 'Asignar', peligro: quitar })) return;
-    ev.target.disabled = true;
-    const { data: r, error } = await db.rpc('asignar_cartera', { p: { usuario_id: id, medicos: l, quitar } });
-    ev.target.disabled = false;
-    if (error || (r && r.ok === false)) { toast('No se ha podido: ' + ((error && error.message) || 'sin permiso'), true); return; }
-    toast(`${num(r.filas)} médicos ${quitar ? 'retirados' : 'asignados'}`);
-    $('dlg').close(); cargarAdmin();
-  };
-  $('aasignar').onclick = ev => aplicar(false, ev);
-  $('aquitar').onclick = ev => aplicar(true, ev);
-  $('dlg').showModal();
-}
 
 
 
@@ -1524,30 +1267,7 @@ async function listaSeguimiento(reinicia) {
 
 /* ---------------- exportar ---------------- */
 
-function aCSV(filas) {
-  if (!filas.length) return '';
-  const cols = Object.keys(filas[0]);
-  const val = v => v == null ? '' : /[";\n]/.test(String(v)) ? '"' + String(v).replace(/"/g, '""') + '"' : String(v);
-  return '\uFEFF' + [cols.join(';')].concat(filas.map(f => cols.map(c => val(f[c])).join(';'))).join('\n');
-}
 
-async function descargarCSV(btn) {
-  btn.disabled = true; btn.textContent = 'Preparando…';
-  const { data, error } = await db.rpc('exportar_medicos', {
-    q: F.q || null, f_provincia: SEG.prov || F.prov || null, f_municipio: SEG.muni || F.muni || null,
-    f_estado: SEG.estado || F.est || null, f_especialidad: F.esp || null, f_urgentes: !!F.urg
-  });
-  btn.disabled = false; btn.textContent = 'Descargar CSV';
-  if (error) { toast('No se ha podido exportar: ' + error.message, true); return; }
-  const csv = aCSV(data || []);
-  if (!csv) { toast('No hay nada que exportar', true); return; }
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
-  a.download = 'Medicos_' + hoyISO() + '.csv';
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
-  {const n=(data||[]).length;toast(`${num(n)} ${n === 1 ? 'médico exportado' : 'médicos exportados'}`);}
-}
 
 /* ---------------- duplicados ---------------- */
 
@@ -1857,79 +1577,10 @@ async function contarFiltro(f) {
   return data ? data.total : 0;
 }
 
-function textoFiltro(f) {
-  const p = [];
-  if (f.urg) p.push('urgentes');
-  if (f.sin) p.push('sin visitar');
-  if (f.est) p.push(f.est);
-  if (f.esp) p.push(f.esp);
-  if (f.muni) p.push(f.muni); else if (f.prov) p.push(f.prov);
-  if (f.q) p.push('“' + f.q + '”');
-  return p.join(' · ') || 'todos los médicos';
-}
 
-function abrirKpis() {
-  let D = kpiConfig().slice();
-  KPI_CAT.forEach(k => { if (!D.some(x => x.id === k.id)) D.push({ id: k.id, on: false, t: '' }); });
-
-  const pinta = () => {
-    $('dbody').innerHTML = `
-      <div class="fh"><div><h2>Personalizar indicadores</h2>
-        <div class="sm">Elige cuáles ver en Inicio, ordénalos y cambia su texto si quieres</div></div>
-        <button class="x" data-cerrar aria-label="Cerrar">✕</button></div>
-      <div class="lista">${D.map((x, i) => {
-        const k = KPI_CAT.find(y => y.id === x.id);
-        if (k && k.admin && PERFIL.rol !== 'Administrador') return '';
-        return `<div class="item" style="cursor:default;${x.on ? '' : 'opacity:.55'}">
-          <input type="checkbox" data-kon="${i}" ${x.on ? 'checked' : ''} style="width:18px;height:18px;min-height:0">
-          <span class="tx"><input data-kt="${i}" value="${esc(x.t)}" placeholder="${esc(k ? k.t : (x.filtro ? textoFiltro(x.filtro) : ''))}">
-            ${x.filtro ? `<span class="sm">Filtro guardado · ${esc(textoFiltro(x.filtro))}</span>` : ''}</span>
-          <span class="acts" style="margin:0">
-            <button class="btn sec" data-kmv="${i}|-1">↑</button>
-            <button class="btn sec" data-kmv="${i}|1">↓</button>
-            ${x.filtro ? `<button class="btn sec" data-kdel="${i}">Eliminar</button>` : ''}</span></div>`;
-      }).join('')}</div>
-      <div class="acts" style="justify-content:flex-end">
-        <button class="btn sec" id="kres">Restaurar</button>
-        <button class="btn" id="kok">Guardar</button></div>`;
-
-    const leer = () => {
-      $('dbody').querySelectorAll('[data-kt]').forEach(i => D[+i.dataset.kt].t = i.value.trim());
-      $('dbody').querySelectorAll('[data-kon]').forEach(i => D[+i.dataset.kon].on = i.checked);
-    };
-    $('dbody').querySelectorAll('[data-kmv]').forEach(b => b.onclick = () => {
-      leer();
-      const [i, dir] = b.dataset.kmv.split('|').map(Number);
-      const j = i + dir; if (j < 0 || j >= D.length) return;
-      [D[i], D[j]] = [D[j], D[i]]; pinta();
-    });
-    $('dbody').querySelectorAll('[data-kdel]').forEach(b => b.onclick = () => { leer(); D.splice(+b.dataset.kdel, 1); pinta(); });
-    $('dbody').querySelectorAll('[data-kon]').forEach(c => c.onchange = () => { leer(); pinta(); });
-    $('kres').onclick = () => { D = KPI_CAT.map(k => ({ id: k.id, on: KPI_DEF.includes(k.id), t: '' })); pinta(); };
-    $('kok').onclick = async ev => {
-      leer(); ev.target.disabled = true; ev.target.textContent = 'Guardando…';
-      const ok = await guardarKpis(D.map(x => ({ id: x.id, on: x.on, t: x.t, ...(x.filtro ? { filtro: x.filtro } : {}) })));
-      ev.target.disabled = false; ev.target.textContent = 'Guardar';
-      if (!ok) return;
-      $('dlg').close(); toast('Indicadores guardados'); cargarInicio();
-    };
-  };
-  pinta();
-  $('dlg').showModal();
-}
 
 /* ---------------- guardar el filtro actual como indicador ---------------- */
 
-function filtroActual() {
-  const f = {};
-  if (F.q) f.q = F.q;
-  if (F.prov) f.prov = F.prov;
-  if (F.muni) f.muni = F.muni;
-  if (F.esp) f.esp = F.esp;
-  if (F.est) f.est = F.est;
-  if (F.urg) f.urg = true;
-  return f;
-}
 
 $('guardarFiltro').addEventListener('click', async ev => {
   const f = filtroActual();
@@ -1943,13 +1594,6 @@ $('guardarFiltro').addEventListener('click', async ev => {
   if (ok) { toast('Guardado como indicador en Inicio'); cargarInicio(); }
 });
 
-function aplicarFiltroGuardado(f) {
-  Object.assign(F, { q: '', prov: '', muni: '', esp: '', est: '', urg: false, orden: 'nombre', pagina: 0 });
-  if (f.q) { F.q = f.q; $('q').value = f.q; }
-  ['prov', 'muni', 'esp', 'est'].forEach(k => { if (f[k]) { F[k] = f[k]; const s = $('f' + k); if (s) s.value = f[k]; } });
-  if (f.urg) F.urg = true;
-  ir('directorio'); buscar(true);
-}
 
 /* ---------------- ruta en curso ---------------- */
 
@@ -1957,38 +1601,7 @@ const RKEY = () => 'dlc-ruta-' + (PERFIL ? PERFIL.id : '');
 const rutaActiva = () => { try { return JSON.parse(localStorage.getItem(RKEY()) || 'null'); } catch (e) { return null; } };
 const durTxt = ms => { const m = Math.floor(ms / 60000); return (m >= 60 ? Math.floor(m / 60) + ' h ' : '') + (m % 60) + ' min'; };
 
-async function pintarRutaBarra() {
-  const a = rutaActiva(), el = $('rutabar');
-  if (!a) { el.classList.add('hide'); document.body.classList.remove('conruta'); return; }
-  el.classList.remove('hide'); document.body.classList.add('conruta');
 
-  let hechas = a.hechas || 0;
-  if (navigator.onLine) {
-    const { data } = await db.from('visitas').select('medico_id').eq('fecha', a.fecha);
-    if (data) hechas = new Set(data.filter(v => a.codes.includes(v.medico_id)).map(v => v.medico_id)).size;
-  }
-  el.innerHTML = `<span>● <b>En ruta: ${esc(a.nombre)}</b> · <span class="rt">${durTxt(Date.now() - a.inicio)}</span> · ${hechas} de ${a.codes.length} visitados</span>
-    <span class="acts" style="margin:0"><button class="btn sec" id="rbver">Ver ruta</button><button class="btn dang" id="rbfin">Finalizar</button></span>`;
-  $('rbver').onclick = () => { ir('rutas'); if (PLAN) pintarPlan(); };
-  $('rbfin').onclick = async () => {
-    if (!await preguntar(`Tiempo: ${durTxt(Date.now() - a.inicio)}\nVisitados: ${hechas} de ${a.codes.length}\n\nNo se puede reanudar.`, { titulo: `¿Finalizar "${a.nombre}"?`, ok: 'Finalizar', peligro: true })) return;
-    localStorage.removeItem(RKEY());
-    pintarRutaBarra();
-    toast(`Ruta finalizada · ${durTxt(Date.now() - a.inicio)} · ${hechas} de ${a.codes.length}`);
-  };
-}
-
-function empezarRuta() {
-  if (rutaActiva()) { toast('Ya tienes una ruta en curso. Finalízala antes de empezar otra.', true); return; }
-  if (!PLAN) return;
-  const codes = PLAN.paradas.flatMap(p => p.medicos.map(m => m.id));
-  const nombre = (RUTAS.find(r => r.id === PLAN.rutaId) || {}).nombre || 'Ruta del día';
-  localStorage.setItem(RKEY(), JSON.stringify({ nombre, inicio: Date.now(), fecha: hoyISO(), codes }));
-  pintarRutaBarra();
-  toast('Ruta iniciada. ¡Buena ruta!');
-  const p = PLAN.paradas[0];
-  if (p) window.open(enlaceNav(p.xy), '_blank', 'noopener');
-}
 
 setInterval(() => { if (rutaActiva()) pintarRutaBarra(); }, 60000);
 
@@ -2045,24 +1658,8 @@ const COLS = [
 const COLS_DEF = ['nombre', 'especialidad', 'centro_nombre', 'municipio', 'dias', 'estado_comercial'];
 const colKey = () => 'dlc-cols-' + (PERFIL ? PERFIL.id : '');
 
-function colsConfig() {
-  try {
-    const g = JSON.parse(localStorage.getItem(colKey()) || 'null');
-    if (g && g.length) return g;
-  } catch (e) {}
-  return COLS.map(c => ({ k: c.k, on: COLS_DEF.includes(c.k), w: c.w }));
-}
 const colsGuardar = c => localStorage.setItem(colKey(), JSON.stringify(c));
 
-function celda(m, k) {
-  if (k === 'nombre') return `<span class="nm">${m.urgente ? '<span class="pill p-urg">Urgente</span> ' : ''}${esc(m.nombre)}</span>`;
-  if (k === 'dias') return `<span class="dias">${['L','M','X','J','V'].map(d =>
-    `<span class="${(m.dias || {})[d] ? 'on' : ''}" title="${esc((m.dias || {})[d] || '')}">${d}</span>`).join('')}</span>`;
-  if (k === 'estado_comercial') return `<span class="pill p-est">${esc(m.estado_comercial)}</span>`;
-  if (k === 'ultima_visita') return `<span class="sm">${m.ultima_visita ? fechaCorta(m.ultima_visita) : '—'}</span>`;
-  if (k === 'telefono') return `<span class="sm">${esc(m.telefono || m.consulta_telefono || '')}</span>`;
-  return `<span class="sm">${esc(m[k] || '')}</span>`;
-}
 
 function filaTabla(m) {
   const cfg = colsConfig().filter(c => c.on);
@@ -2107,42 +1704,6 @@ document.addEventListener('pointermove', e => {
 });
 document.addEventListener('pointerup', () => { if (ARR) { ARR = null; document.body.style.cursor = ''; } });
 
-function abrirColumnas() {
-  let D = colsConfig();
-  const pinta = () => {
-    $('dbody').innerHTML = `
-      <div class="fh"><div><h2>Columnas</h2>
-        <div class="sm">Elige cuáles ver y en qué orden. El ancho se ajusta arrastrando el borde de cada cabecera.</div></div>
-        <button class="x" data-cerrar aria-label="Cerrar">✕</button></div>
-      <div class="lista">${D.map((c, i) => {
-        const col = COLS.find(x => x.k === c.k) || { t: c.k };
-        return `<div class="item" style="cursor:default">
-          <input type="checkbox" data-con="${i}" ${c.on ? 'checked' : ''} ${col.fijo ? 'disabled' : ''} style="width:18px;height:18px;min-height:0">
-          <span class="tx"><b>${esc(col.t)}</b>${col.fijo ? '<span class="sm">siempre visible</span>' : ''}</span>
-          <span class="acts" style="margin:0">
-            <button class="btn sec" data-cmv="${i}|-1">↑</button>
-            <button class="btn sec" data-cmv="${i}|1">↓</button></span></div>`;
-      }).join('')}</div>
-      <div class="acts" style="justify-content:flex-end">
-        <button class="btn sec" id="cres">Restaurar</button>
-        <button class="btn" id="cok">Guardar</button></div>`;
-
-    const leer = () => $('dbody').querySelectorAll('[data-con]').forEach(i => { if (!i.disabled) D[+i.dataset.con].on = i.checked; });
-    $('dbody').querySelectorAll('[data-cmv]').forEach(b => b.onclick = () => {
-      leer(); const [i, dir] = b.dataset.cmv.split('|').map(Number);
-      const j = i + dir; if (j < 0 || j >= D.length) return;
-      [D[i], D[j]] = [D[j], D[i]]; pinta();
-    });
-    $('cres').onclick = () => { localStorage.removeItem(colKey()); D = colsConfig(); pinta(); };
-    $('cok').onclick = () => {
-      leer();
-      if (!D.some(c => c.on)) { toast('Deja al menos una columna', true); return; }
-      colsGuardar(D); $('dlg').close(); toast('Columnas guardadas'); buscar(true);
-    };
-  };
-  pinta();
-  $('dlg').showModal();
-}
 
 $('cercaBtn').addEventListener('click', e => cercaDeMi(e.target));
 $('dupBtn').addEventListener('click', () => ir('duplicados'));
@@ -2161,64 +1722,10 @@ const AN = { dim: 'medico', desde: '', hasta: '', canal: '', producto: '' };
 const puedeVentas = () => PERFIL && (PERFIL.rol === 'Administrador' || (((PERFIL.areas || {}).V || 0) >= 2 && PERFIL.rol === 'Televenta'));
 const veVentas = () => PERFIL && (PERFIL.rol === 'Administrador' || ((PERFIL.areas || {}).V || 0) >= 1 || PERFIL.rol === 'Comercial');
 
-async function cargarProductos() {
-  const { data } = await db.rpc('productos_lista');
-  PRODUCTOS = data || [];
-}
 
 /* ---------------- pedidos ---------------- */
 
-async function cargarVentas() {
-  $('v-ventas').innerHTML = `
-    <div class="saludo"><div><h1>Ventas</h1><div class="fecha">Pedidos y unidades atribuidas</div></div>
-      <div class="acts" style="margin:0">
-        ${puedeVentas() ? '<button class="btn" id="pednuevo">+ Nuevo pedido</button>' : ''}
-        ${PERFIL.rol === 'Administrador' ? '<button class="btn sec" id="prodbtn">Productos</button>' : ''}
-      </div></div>
-    <div class="card" id="cardsinatr"></div>
-    <div class="panel">
-      <div class="filtros">
-        <div><label for="pdesde">Desde</label><input id="pdesde" type="date"></div>
-        <div><label for="phasta">Hasta</label><input id="phasta" type="date"></div>
-        <div><label for="pcanal">Canal</label><select id="pcanal">
-          <option value="">Todos</option><option value="paciente">Recomendación a paciente</option>
-          <option value="centro">Venta a centro</option></select></div>
-        <div><label for="pq">Buscar</label><input id="pq" placeholder="Médico, contacto o nº de pedido"></div>
-      </div>
-      <div class="cuenta" id="pcuenta">Cargando…</div>
-      <div id="pedlista"></div>
-    </div>`;
 
-  if ($('pednuevo')) $('pednuevo').onclick = () => editorPedido();
-  if ($('prodbtn')) $('prodbtn').onclick = editorProductos;
-  ['pdesde', 'phasta', 'pcanal'].forEach(id => $(id).onchange = listaPedidos);
-  let tq; $('pq').oninput = () => { clearTimeout(tq); tq = setTimeout(listaPedidos, 350); };
-  await cargarProductos();
-  listaPedidos();
-  pintarSinAtribuir();
-}
-
-async function listaPedidos() {
-  cargando($('pedlista'), 'Cargando pedidos…');
-  const { data, error } = await db.rpc('pedidos_lista', {
-    p_desde: $('pdesde').value || null, p_hasta: $('phasta').value || null,
-    p_canal: $('pcanal').value || null, q: ($('pq') && $('pq').value.trim()) || null, lim: 200
-  });
-  if (error) { $('pcuenta').textContent = 'No se ha podido cargar: ' + error.message; return; }
-  PEDIDOS = data || [];
-  const unidades = PEDIDOS.reduce((n, p) => n + (p.unidades || 0), 0);
-  $('pcuenta').innerHTML = `<b>${num(PEDIDOS.length)}</b> pedidos · <b>${num(unidades)}</b> unidades`;
-  $('pedlista').innerHTML = PEDIDOS.length ? PEDIDOS.map(p => `
-    <button class="fila" data-ped="${p.id}" style="grid-template-columns:minmax(0,1.4fr) minmax(0,1.4fr) auto auto;${p.estado === 'Anulado' ? 'opacity:.55' : ''}">
-      <span><span class="nm">${esc(p.medico || p.centro || p.contacto || 'Sin atribuir')}</span>
-        <span class="sm">${fechaCorta(p.fecha)} · ${p.canal === 'centro' ? 'Venta a centro' : 'Recomendación'}${p.comercial ? ' · ' + esc(p.comercial) : ''}</span></span>
-      <span class="c2"><span class="sm">${esc(p.productos || '')}</span>
-        <span class="sm">${p.numero ? 'Nº ' + esc(p.numero) : ''} ${esc(p.contacto || '')}</span></span>
-      <span class="c3"><span class="pill p-est">${esc(p.estado)}</span></span>
-      <span><b style="font-size:17px;color:var(--navy)">${num(p.unidades)}</b> <span class="sm">uds.</span></span>
-    </button>`).join('') : '<div class="vacio">Todavía no hay pedidos registrados.</div>';
-  $('pedlista').querySelectorAll('[data-ped]').forEach(b => b.onclick = () => verPedido(b.dataset.ped));
-}
 
 async function pintarSinAtribuir() {
   if (!$('cardsinatr')) return;
@@ -2274,150 +1781,6 @@ async function atribuir(lineaId, texto) {
 
 /* ---------------- alta de pedido ---------------- */
 
-async function editorPedido(pedido) {
-  let lineas = pedido && pedido.lineas && pedido.lineas.length
-    ? pedido.lineas.map(l => ({ producto_id: l.producto_id, unidades: l.unidades, importe: l.importe, descuento: l.descuento || 0 }))
-    : [{ producto_id: (PRODUCTOS[0] || {}).id || '', unidades: 1 }];
-  let medico = pedido && pedido.lineas && pedido.lineas[0] && pedido.lineas[0].medico_id
-    ? { id: pedido.lineas[0].medico_id, nombre: pedido.lineas[0].medico } : null;
-  let contacto = pedido && pedido.contacto ? pedido.contacto : null;
-
-  const pinta = () => {
-    $('dbody').innerHTML = `
-      <div class="fh"><div><h2>${pedido ? 'Editar pedido' : 'Nuevo pedido'}</h2><div class="sm">Las unidades se atribuyen al médico y a su comercial</div></div>
-        <button class="x" data-cerrar aria-label="Cerrar">✕</button></div>
-      <div class="g2">
-        <div><label for="pfecha">Fecha</label><input id="pfecha" type="date" value="${hoyISO()}"></div>
-        <div><label for="pcan">Canal</label><select id="pcan">
-          <option value="paciente">Recomendación a paciente</option>
-          <option value="centro">Venta a centro (con descuento)</option></select></div>
-      </div>
-      <div id="zonapac">
-        <label for="pcont">Paciente o contacto</label>
-        <div style="display:flex;gap:8px"><input id="pcont" placeholder="Busca por nombre o teléfono" value="${esc(contacto ? contacto.nombre : '')}" style="flex:1">
-          <button type="button" class="btn sec" id="pcontnuevo">+ Nuevo</button></div>
-        <div id="pcontcand" class="lista"></div>
-        <label for="pmed">Médico que lo recomienda</label>
-        <input id="pmed" placeholder="Código o nombre" value="${esc(medico ? medico.nombre : '')}">
-        <div id="pmedcand" class="sm" style="margin-top:6px">${medico
-          ? `<b style="color:var(--ok)">✓ ${esc(medico.nombre)}</b> · código ${esc(medico.codigo)}`
-          : 'Escribe y elige de la lista. Si no aparece, el pedido queda pendiente de atribuir.'}</div>
-      </div>
-      <label>Líneas</label>
-      <div id="plineas">${lineas.map((l, i) => {
-        const pr = PRODUCTOS.find(p => p.id === l.producto_id) || {};
-        return `<div class="g2" style="margin-bottom:8px;grid-template-columns:2fr .8fr 1fr .7fr auto">
-        <select data-lp="${i}">${PRODUCTOS.map(p => `<option value="${p.id}" ${l.producto_id === p.id ? 'selected' : ''}>${esc(p.nombre)}</option>`).join('')
-          || '<option value="">Sin productos: créalos primero</option>'}</select>
-        <input data-lu="${i}" type="number" min="1" value="${l.unidades}" placeholder="Unidades">
-        <input data-li="${i}" type="number" step="0.01" min="0" value="${l.importe != null ? l.importe : (pr.precio ? (pr.precio * l.unidades).toFixed(2) : '')}" placeholder="Importe €">
-        <input data-ld="${i}" type="number" step="1" min="0" max="100" value="${l.descuento || 0}" placeholder="% dto" title="Descuento de esta línea">
-        ${lineas.length > 1 ? `<button type="button" class="btn sec" data-lx="${i}">✕</button>` : ''}</div>`; }).join('')}</div>
-      <div class="acts"><button type="button" class="btn sec" id="plmas">+ Añadir línea</button></div>
-      <div class="g2">
-        <div><label for="ppago">Forma de pago</label><select id="ppago"><option value=""></option>
-          ${(CAT.FORMA_PAGO || []).map(x => `<option ${pedido && pedido.pedido && pedido.pedido.forma_pago === x.valor ? 'selected' : ''}>${esc(x.valor)}</option>`).join('')}</select></div>
-        <div><label for="pdto">Descuento general</label>
-          <div style="display:flex;gap:6px"><input id="pdto" type="number" min="0" step="0.01" value="${pedido && pedido.pedido ? (pedido.pedido.descuento || 0) : 0}">
-            <select id="pdtot" style="max-width:110px"><option value="porcentaje">%</option><option value="importe">€</option></select></div></div>
-      </div>
-      <div class="totbox" id="ptot"></div>
-      <label for="pnota">Nota</label><input id="pnota">
-      <div class="acts" style="justify-content:flex-end">
-        <button class="btn sec" data-cerrar>Cancelar</button>
-        <button class="btn" id="pguardar">Guardar pedido</button></div>`;
-
-    const leer = () => lineas = [...$('plineas').children].map((d, i) => ({
-      producto_id: d.querySelector(`[data-lp="${i}"]`).value,
-      unidades: +d.querySelector(`[data-lu="${i}"]`).value || 1,
-      importe: d.querySelector(`[data-li="${i}"]`) && d.querySelector(`[data-li="${i}"]`).value !== ''
-        ? +d.querySelector(`[data-li="${i}"]`).value : null,
-      descuento: d.querySelector(`[data-ld="${i}"]`) ? +d.querySelector(`[data-ld="${i}"]`).value || 0 : 0
-    }));
-
-    $('plmas').onclick = () => { leer(); lineas.push({ producto_id: (PRODUCTOS[0] || {}).id || '', unidades: 1 }); pinta(); };
-    $('plineas').querySelectorAll('[data-lx]').forEach(b => b.onclick = () => { leer(); lineas.splice(+b.dataset.lx, 1); pinta(); });
-    $('pcan').onchange = () => $('zonapac').classList.toggle('hide', $('pcan').value === 'centro');
-
-    const totales = () => {
-      leer();
-      const base = lineas.reduce((n, l) => {
-        const pr = PRODUCTOS.find(p => p.id === l.producto_id) || {};
-        const imp = l.importe != null ? +l.importe : (pr.precio ? pr.precio * l.unidades : 0);
-        return n + imp * (1 - (+l.descuento || 0) / 100);
-      }, 0);
-      const dto = $('pdtot').value === 'porcentaje' ? base * (+$('pdto').value || 0) / 100 : (+$('pdto').value || 0);
-      const uds = lineas.reduce((n, l) => n + (+l.unidades || 0), 0);
-      $('ptot').innerHTML = `<div><span>Unidades</span><b>${num(uds)}</b></div>
-        <div><span>Base</span><b>${eur(base)}</b></div>
-        ${dto ? `<div><span>Descuento</span><b>−${eur(dto)}</b></div>` : ''}
-        <div class="tot"><span>Total</span><b>${eur(Math.max(0, base - dto))}</b></div>`;
-    };
-    ['pdto', 'pdtot'].forEach(id => { if ($(id)) $(id).oninput = totales; });
-    $('plineas').oninput = totales;
-    totales();
-
-    let tc;
-    if ($('pcont')) {
-      $('pcont').oninput = e => {
-        contacto = null;
-        clearTimeout(tc);
-        tc = setTimeout(async () => {
-          const q = e.target.value.trim();
-          if (q.length < 2) { $('pcontcand').innerHTML = ''; return; }
-          const { data } = await db.rpc('contactos_lista', { q, lim: 6 });
-          $('pcontcand').innerHTML = (data || []).map(x => `<button class="item" data-pc='${esc(JSON.stringify(x))}'>
-            <span class="ic">👤</span><span class="tx"><b>${esc(x.nombre)}</b>
-              <span class="sm">${esc(x.telefono || '')} · ${num(x.pedidos)} pedidos</span></span></button>`).join('')
-            || '<div class="vacio">Sin coincidencias. Créalo con + Nuevo.</div>';
-          $('pcontcand').querySelectorAll('[data-pc]').forEach(b => b.onclick = () => {
-            contacto = JSON.parse(b.dataset.pc);
-            $('pcont').value = contacto.nombre; $('pcontcand').innerHTML = '';
-          });
-        }, 300);
-      };
-      $('pcontnuevo').onclick = () => editorContacto({ nombre: $('pcont').value.trim() }, c => {
-        contacto = c; $('pcont').value = c.nombre; $('pcontcand').innerHTML = '';
-      });
-    }
-
-    let t;
-    $('pmed').oninput = e => {
-      clearTimeout(t);
-      t = setTimeout(async () => {
-        const { data } = await db.rpc('resolver_medico', { p_texto: e.target.value });
-        const c = data || [];
-        $('pmedcand').innerHTML = c.length
-          ? c.map(x => `<button type="button" class="chip" data-pm='${esc(JSON.stringify(x))}'>${esc(x.nombre)} · ${x.pct}%</button>`).join(' ')
-          : 'Sin coincidencias: quedará pendiente de atribuir.';
-        $('pmedcand').querySelectorAll('[data-pm]').forEach(b => b.onclick = () => {
-          medico = JSON.parse(b.dataset.pm); leer(); pinta();
-        });
-      }, 300);
-    };
-
-    $('pguardar').onclick = async ev => {
-      leer();
-      ev.target.disabled = true; ev.target.textContent = 'Guardando…';
-      const { data: r, error } = await db.rpc('guardar_pedido', { p: {
-        id: pedido && pedido.pedido ? pedido.pedido.id : null,
-        fecha: $('pfecha').value, canal: $('pcan').value,
-        medico_id: medico ? medico.id : null, medico_texto: $('pmed') ? $('pmed').value.trim() : '',
-        contacto_id: contacto ? contacto.id : null, nota: $('pnota').value.trim(),
-        forma_pago: $('ppago').value || null,
-        descuento: +$('pdto').value || 0, descuento_tipo: $('pdtot').value,
-        lineas: lineas.filter(l => l.producto_id), op_id: 'p-' + Date.now()
-      }});
-      ev.target.disabled = false; ev.target.textContent = 'Guardar pedido';
-      if (error || (r && r.ok === false)) { toast('No se ha podido guardar: ' + ((error && error.message) || 'sin permiso'), true); return; }
-      $('dlg').close();
-      toast(medico ? 'Pedido guardado y atribuido' : 'Pedido guardado · pendiente de atribuir');
-      listaPedidos(); pintarSinAtribuir();
-    };
-  };
-  pinta();
-  $('dlg').showModal();
-}
 
 /* ---------------- productos ---------------- */
 
@@ -2474,79 +1837,7 @@ async function editorProductos() {
 
 /* ---------------- analítica ---------------- */
 
-async function cargarAnalitica() {
-  $('v-analitica').innerHTML = `
-    <div class="saludo"><div><h1>Analítica</h1><div class="fecha">Unidades por médico, comercial, producto o zona</div></div>
-      </div>
-    <div class="panel">
-      <div class="filtros">
-        <div><label for="adim">Ver por</label><select id="adim">
-          <option value="medico">Médico</option><option value="comercial">Comercial</option>
-          <option value="producto">Producto</option><option value="municipio">Municipio</option>
-          <option value="mes">Mes</option><option value="canal">Canal</option></select></div>
-        <div><label for="adesde">Desde</label><input id="adesde" type="date"></div>
-        <div><label for="ahasta">Hasta</label><input id="ahasta" type="date"></div>
-        <div><label for="acanal">Canal</label><select id="acanal">
-          <option value="">Todos</option><option value="paciente">Recomendación</option>
-          <option value="centro">Venta a centro</option></select></div>
-        <div><label for="amedida">Medida</label><select id="amedida">
-          <option value="unidades">Unidades</option><option value="importe">Importe</option></select></div>
-      </div>
-      <div class="cuenta" id="acuenta">Calculando…</div>
-      <div class="subnav" style="padding:12px 14px 0"><button data-avista="rank" aria-pressed="true">Ranking</button>
-        <button data-avista="tabla" aria-pressed="false">Tabla por meses</button></div>
-      <div id="aserie" style="padding:14px"></div>
-      <div id="atabla"></div>
-      <div id="atabla2"></div>
-    </div>`;
 
-  ['adim', 'adesde', 'ahasta', 'acanal', 'amedida'].forEach(id => $(id).onchange = () => { pintarAnalitica(); pintarTablaAnalitica(); });
-  $('v-analitica').querySelectorAll('[data-avista]').forEach(b => b.onclick = () => {
-    const tabla = b.dataset.avista === 'tabla';
-    $('v-analitica').querySelectorAll('[data-avista]').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
-    $('atabla').classList.toggle('hide', tabla); $('aserie').classList.toggle('hide', tabla);
-    $('atabla2').classList.toggle('hide', !tabla);
-    if (tabla) pintarTablaAnalitica();
-  });
-  $('atabla2').classList.add('hide');
-  window.__dlAn = fmt => descargar(window.__ANTABLA || (window.__AN || []).map(f => ({ concepto: f.nombre, unidades: f.unidades })), 'Exportacion_unidades', fmt);
-  pintarAnalitica();
-}
-
-async function pintarAnalitica() {
-  $('acuenta').textContent = 'Calculando…';
-  cargando($('atabla'), 'Calculando…');
-  const { data, error } = await db.rpc('analitica_unidades', {
-    p_dim: $('adim').value, p_desde: $('adesde').value || null, p_hasta: $('ahasta').value || null,
-    p_canal: $('acanal').value || null, lim: 50
-  });
-  if (error) { $('acuenta').textContent = 'No se ha podido calcular: ' + error.message; return; }
-
-  const filas = data.filas || [];
-  window.__AN = filas;
-  $('acuenta').innerHTML = `<b>${num(data.total)}</b> unidades · ${filas.length} ${$('adim').value === 'medico' ? 'médicos' : 'conceptos'}`;
-
-  const serie = data.serie || [];
-  if (serie.length > 1) {
-    const max = Math.max(...serie.map(s => s.unidades));
-    $('aserie').innerHTML = `<div style="display:flex;gap:6px;align-items:flex-end;height:120px">${
-      serie.map(s => `<div style="flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:4px">
-        <span class="sm">${num(s.unidades)}</span>
-        <div style="width:100%;background:var(--sky);border-radius:6px 6px 0 0;height:${Math.round(s.unidades / max * 84)}px"></div>
-        <span class="sm">${esc(s.mes.slice(5))}/${esc(s.mes.slice(2, 4))}</span></div>`).join('')}</div>`;
-  } else $('aserie').innerHTML = '';
-
-  const max = filas.length ? filas[0].unidades : 1;
-  $('atabla').innerHTML = filas.length ? filas.map((f, i) => `
-    <div class="fila" style="cursor:default;grid-template-columns:36px minmax(0,1fr) 120px auto">
-      <span class="sm">${i + 1}</span>
-      <span><span class="nm">${esc(f.nombre)}</span>
-        <span style="display:block;height:5px;border-radius:3px;background:var(--sky-soft);margin-top:5px">
-          <span style="display:block;height:5px;border-radius:3px;background:var(--sky);width:${Math.round(f.unidades / max * 100)}%"></span></span></span>
-      <span class="sm">${Math.round(f.unidades / (data.total || 1) * 100)}% del total</span>
-      <span><b style="font-size:17px;color:var(--navy)">${num(f.unidades)}</b> <span class="sm">uds.</span></span>
-    </div>`).join('') : '<div class="vacio">Sin unidades en este periodo.</div>';
-}
 
 
 
@@ -3057,31 +2348,6 @@ async function planDesdeLista(lista, nombre, btn) {
   construirPlan(conXY, nombre, btn);
 }
 
-function construirPlan(conXY, rutaId, btn) {
-  const cfg = PLANCFG();
-  const salida = salidaUsuario();
-  const paradas = {};
-  conXY.forEach(m => {
-    const k = (m.centro_nombre || 'Consulta') + '|' + (m.municipio || '');
-    (paradas[k] = paradas[k] || { centro: m.centro_nombre || 'Consulta privada', municipio: m.municipio,
-      dir: m.direccion, xy: [m.lat, m.lon], medicos: [] }).medicos.push(m);
-  });
-
-  const t0 = +cfg.salida.slice(0, 2) * 60 + +cfg.salida.slice(3), tope = +cfg.tope.slice(0, 2) * 60 + +cfg.tope.slice(3);
-  let pos = [salida.lat, salida.lon], t = t0, libres = Object.values(paradas), orden = [];
-  while (libres.length && t < tope && orden.length < 14) {
-    libres.sort((a, b) => km(pos, a.xy) - km(pos, b.xy));
-    const p = libres.shift();
-    const viaje = minutosEntre(pos, p.xy);
-    const dura = cfg.parada + cfg.visita * Math.min(p.medicos.length, 8);
-    if (t + viaje + dura > tope) break;
-    orden.push({ ...p, llegada: t + viaje, fin: t + viaje + dura, viaje });
-    t += viaje + dura; pos = p.xy;
-  }
-  PLAN = { rutaId, salida, paradas: orden, fin: t + minutosEntre(pos, [salida.lat, salida.lon]), fecha: hoyISO() };
-  pintarPlan();
-  window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
-}
 
 function abrirHorarioPlan() {
   const c = PLANCFG();
@@ -3197,82 +2463,9 @@ async function cercaDeMi(btn) {
   }, { enableHighAccuracy: true, timeout: 15000 });
 }
 
-function pintarCerca() {
-  const l = CERCA.lista;
-  $('thead').innerHTML = '';
-  $('cuenta').innerHTML = `<b>${num(l.length)}</b> ${l.length === 1 ? 'médico' : 'médicos'} a menos de 10 km de ti
-    <button class="kcfg" id="cercacerrar" style="margin-left:10px">Volver a la búsqueda</button>`;
-  $('lista').innerHTML = l.length ? l.map(m => `<button class="trow" data-id="${m.id}" style="padding:10px 14px;gap:12px">
-      <span class="tcell" style="width:70px;min-width:70px"><b style="color:var(--navy)">${m.km} km</b></span>
-      <span class="tcell" style="flex:1;width:auto">
-        <span class="nm">${m.urgente ? '<span class="pill p-urg">Urgente</span> ' : ''}${esc(m.nombre)}</span>
-        <span class="sm">${esc(m.especialidad || '')} · ${esc(m.centro_nombre || '')} ${esc(m.municipio || '')}</span></span>
-      <span class="tcell" style="width:140px;min-width:140px"><span class="pill p-est">${esc(m.estado_comercial)}</span></span>
-    </button>`).join('') : '<div class="vacio">No hay médicos con ubicación a menos de 10 km.</div>';
-  $('mas').classList.add('hide');
-  $('cercacerrar').onclick = () => { CERCA = null; buscar(true); };
-}
 
 /* ---------------- agenda: crear cita, hora y mes ---------------- */
 
-async function nuevaCita(medicoId, fecha) {
-  let m = null;
-  if (medicoId) {
-    const { data } = await db.rpc('ficha_medico', { p_id: medicoId });
-    m = data && data.medico;
-  }
-  $('dbody').innerHTML = `
-    <div class="fh"><div><h2>Nueva cita</h2><div class="sm">Se añade a tu agenda</div></div>
-      <button class="x" data-cerrar aria-label="Cerrar">✕</button></div>
-    <label for="ncm">Médico</label>
-    <input id="ncm" value="${esc(m ? m.nombre : '')}" placeholder="Busca por nombre, centro o municipio">
-    <div id="nccand" class="lista"></div>
-    <div class="g2">
-      <div><label for="ncf">Día</label><input id="ncf" type="date" value="${esc(fecha || hoyISO())}"></div>
-      <div><label for="nch">Hora</label><input id="nch" type="time"></div>
-    </div>
-    <label for="ncn">Nota</label><input id="ncn" placeholder="p. ej. llevar reporting">
-    <div class="acts" style="justify-content:flex-end">
-      <button class="btn sec" data-cerrar>Cancelar</button>
-      <button class="btn" id="ncok">Añadir a la agenda</button></div>`;
-
-  let elegido = m ? { id: m.id, nombre: m.nombre } : null;
-  let t;
-  $('ncm').oninput = e => {
-    elegido = null;
-    clearTimeout(t);
-    t = setTimeout(async () => {
-      const q = e.target.value.trim();
-      if (q.length < 2) { $('nccand').innerHTML = ''; return; }
-      const { data } = await db.rpc('buscar_medicos', { q, f_provincia: null, f_municipio: null, f_estado: null,
-        f_especialidad: null, f_area: null, f_urgentes: false, f_mios: false, f_sin_visitar: false,
-        orden: 'nombre', lim: 6, desplaz: 0 });
-      const res = (data && data.filas) || [];
-      $('nccand').innerHTML = res.map(x => `<button class="item" data-nc='${esc(JSON.stringify({ id: x.id, nombre: x.nombre, centro: x.centro_nombre }))}'>
-        <span class="ic">+</span><span class="tx"><b>${esc(x.nombre)}</b>
-          <span class="sm">${esc(x.especialidad || '')} · ${esc(x.centro_nombre || '')} ${esc(x.municipio || '')}</span></span></button>`).join('')
-        || '<div class="vacio">Sin coincidencias.</div>';
-      $('nccand').querySelectorAll('[data-nc]').forEach(b => b.onclick = () => {
-        elegido = JSON.parse(b.dataset.nc);
-        $('ncm').value = elegido.nombre; $('nccand').innerHTML = '';
-      });
-    }, 300);
-  };
-
-  $('ncok').onclick = async ev => {
-    if (!elegido) { toast('Elige un médico de la lista', true); return; }
-    ev.target.disabled = true;
-    const r = await escribir('guardar_cita', { p: {
-      medico_id: elegido.id, fecha: $('ncf').value, hora: $('nch').value || null,
-      centro_nombre: elegido.centro || null, estado: 'Planificada', origen: 'Agenda',
-      nota: $('ncn').value.trim(), op_id: 'c-' + elegido.id + '-' + $('ncf').value + '-' + Date.now()
-    }});
-    ev.target.disabled = false;
-    if (r.error) { toast('No se ha podido: ' + r.error.message, true); return; }
-    $('dlg').close(); toast('Cita añadida'); cargarAgenda(); cargarInicio();
-  };
-  $('dlg').showModal();
-}
 
 async function cambiarHoraCita(id, hora) {
   const h = await appVentana({ titulo: 'Hora de la cita', ok: 'Guardar', campo: { valor: hora || '', tipo: 'time' } });
@@ -3318,11 +2511,6 @@ async function pintarMesAgenda(mes) {
 const cargando = (el, texto) => { if (el) el.innerHTML =
   `<div class="cargador"><span class="spin"></span><span class="sm">${esc(texto || 'Cargando…')}</span></div>`; };
 
-function menuDescarga(id, opciones) {
-  return `<div class="dl-wrap"><button class="btn sec dl-btn" data-dl="${id}" title="Descargar">⭳</button>
-    <div class="dl-menu hide" id="dlm-${id}">${opciones.map(o =>
-      `<button data-dlo="${id}|${o.k}"><span>${o.ico}</span>${esc(o.t)}</button>`).join('')}</div></div>`;
-}
 
 document.addEventListener('click', e => {
   const o = e.target.closest('[data-dlo]');
@@ -3339,26 +2527,7 @@ document.addEventListener('click', e => {
   if (b) $('dlm-' + b.dataset.dl).classList.toggle('hide');
 });
 
-function aXLS(filas, titulo) {
-  if (!filas.length) return '';
-  const cols = Object.keys(filas[0]);
-  const tr = f => '<tr>' + cols.map(c => `<td>${String(f[c] == null ? '' : f[c]).replace(/[<>&]/g, '')}</td>`).join('') + '</tr>';
-  return `<html xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="utf-8"></head><body>
-    <table border="1"><thead><tr>${cols.map(c => `<th>${c}</th>`).join('')}</tr></thead>
-    <tbody>${filas.map(tr).join('')}</tbody></table></body></html>`;
-}
 
-function descargar(filas, nombre, formato) {
-  if (!filas || !filas.length) { toast('No hay nada que descargar', true); return; }
-  const esXls = formato === 'xls';
-  const cont = esXls ? aXLS(filas, nombre) : aCSV(filas);
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([cont], { type: esXls ? 'application/vnd.ms-excel' : 'text/csv;charset=utf-8' }));
-  a.download = nombre + '_' + hoyISO() + (esXls ? '.xls' : '.csv');
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
-  toast(`${num(filas.length)} ${filas.length === 1 ? 'fila descargada' : 'filas descargadas'}`);
-}
 
 /* ---------------- buscador global agrupado ---------------- */
 
@@ -3406,67 +2575,7 @@ document.addEventListener('click', e => {
 
 /* ---------------- ventas: detalle, edición y anulación ---------------- */
 
-async function verPedido(id) {
-  cargando($('dbody'), 'Abriendo el pedido…');
-  $('dlg').showModal();
-  const { data, error } = await db.rpc('pedido_detalle', { p_id: id });
-  if (error) { $('dbody').innerHTML = `<div class="vacio">${esc(error.message)}</div>`; return; }
-  const p = data.pedido, l = data.lineas || [], c = data.contacto;
-  const uds = l.reduce((n, x) => n + x.unidades, 0);
-  const imp = l.reduce((n, x) => n + (+x.importe || 0), 0);
 
-  $('dbody').innerHTML = `
-    <div class="fh"><div><h2>Pedido ${esc(p.numero || '')}</h2>
-      <div class="sm">${fechaCorta(p.fecha)} · ${p.canal === 'centro' ? 'Venta a centro' : 'Recomendación'} · ${esc(p.estado)}</div></div>
-      <button class="x" data-cerrar aria-label="Cerrar">✕</button></div>
-    ${c ? `<div class="blk"><h3>Contacto</h3><div><b>${esc(c.nombre)}</b></div>
-      <div class="sm">${esc(c.telefono || '')} ${esc(c.email || '')}</div>
-      <div class="acts"><button class="btn sec" data-contacto="${c.id}">Ver historial del contacto</button></div></div>` : ''}
-    <div class="blk"><h3>Líneas</h3>
-      ${l.map(x => `<div style="display:flex;justify-content:space-between;gap:10px;padding:6px 0;border-top:1px solid var(--line)">
-        <span><b>${esc(x.producto || 'Sin producto')}</b>
-          <div class="sm">${x.medico ? 'Médico: ' + esc(x.medico) : 'Sin atribuir'}${x.comercial ? ' · ' + esc(x.comercial) : ''}</div></span>
-        <span style="text-align:right"><b>${num(x.unidades)}</b> uds.${x.importe ? `<div class="sm">${eur(x.importe)}</div>` : ''}</span>
-      </div>`).join('') || '<div class="sm">Sin líneas.</div>'}
-      <div style="display:flex;justify-content:space-between;padding-top:8px;border-top:2px solid var(--line);margin-top:6px">
-        <b>Total</b><b>${num(uds)} uds.${imp ? ' · ' + eur(imp) : ''}</b></div></div>
-    ${p.nota ? `<div class="blk"><h3>Nota</h3><div>${esc(p.nota)}</div></div>` : ''}
-    <div class="acts" style="justify-content:flex-end">
-      ${p.estado !== 'Anulado' && puedeVentas() ? `<button class="btn sec dang" id="pdanular">Anular pedido</button>
-        <button class="btn sec" id="pdeditar">Editar</button>` : ''}
-      <button class="btn sec" data-cerrar>Cerrar</button></div>`;
-
-  const ct = $('dbody').querySelector('[data-contacto]');
-  if (ct) ct.onclick = () => verContacto(ct.dataset.contacto);
-  if ($('pdanular')) $('pdanular').onclick = async () => {
-    const motivo = await pedirTexto('Motivo de la anulación (opcional)', '', { titulo: '¿Anular el pedido?', ok: 'Anular' });
-    if (motivo === null) return;
-    const { data: r } = await db.rpc('anular_pedido', { p_id: id, p_motivo: motivo || null });
-    if (r && r.ok === false) { toast('No se ha podido anular', true); return; }
-    $('dlg').close(); toast('Pedido anulado'); listaPedidos(); pintarSinAtribuir();
-  };
-  if ($('pdeditar')) $('pdeditar').onclick = () => editorPedido(data);
-}
-
-async function verContacto(id) {
-  cargando($('dbody'), 'Cargando el contacto…');
-  $('dlg').showModal();
-  const { data } = await db.rpc('contacto_detalle', { p_id: id });
-  if (!data || !data.contacto) { $('dbody').innerHTML = '<div class="vacio">No se ha encontrado.</div>'; return; }
-  const c = data.contacto, ped = data.pedidos || [];
-  $('dbody').innerHTML = `
-    <div class="fh"><div><h2>${esc(c.nombre)}</h2>
-      <div class="sm">${esc(c.telefono || '')} ${esc(c.email || '')} ${esc(c.municipio || '')}</div></div>
-      <button class="x" data-cerrar aria-label="Cerrar">✕</button></div>
-    <div class="kpis" style="margin:10px 0">
-      <div class="kpi"><b>${num(ped.length)}</b><span>pedidos</span></div>
-      <div class="kpi"><b>${num(data.total_unidades)}</b><span>unidades compradas</span></div></div>
-    <div class="blk"><h3>Historial</h3>
-      ${ped.map(p => `<div style="display:flex;justify-content:space-between;gap:10px;padding:6px 0;border-top:1px solid var(--line)">
-        <span><b>${fechaCorta(p.fecha)}</b> ${esc(p.productos || '')}
-          <div class="sm">${p.medico ? 'Recomendado por ' + esc(p.medico) : 'Sin médico'} · ${esc(p.estado)}</div></span>
-        <b>${num(p.unidades)} uds.</b></div>`).join('') || '<div class="sm">Sin pedidos.</div>'}</div>`;
-}
 
 /* ---------------- analítica en tabla ---------------- */
 
@@ -3570,62 +2679,6 @@ const optFiltro = (lista, v, todo) => `<option value="">${todo}</option>` +
 
 /* ---------------- contactos: alta completa y buscador ---------------- */
 
-function editorContacto(c, alGuardar) {
-  c = c || {};
-  $('dlg2body').innerHTML = `
-    <div class="fh"><div><h2>${c.id ? 'Editar contacto' : 'Nuevo contacto'}</h2>
-      <div class="sm">Datos de envío y facturación, como en un pedido normal</div></div>
-      <button class="x" data-cerrar2 aria-label="Cerrar">✕</button></div>
-    <div class="g2">
-      <div><label for="konom">Nombre</label><input id="konom" value="${esc(c.nombre || '')}"></div>
-      <div><label for="konif">NIF</label><input id="konif" value="${esc(c.nif || '')}"></div>
-    </div>
-    <label>Este contacto es…</label>
-    <div class="subnav" style="margin:6px 0 10px"><button type="button" data-ktipo="Persona" aria-pressed="${(c.tipo || 'Persona') === 'Persona'}">Persona</button>
-      <button type="button" data-ktipo="Empresa" aria-pressed="${c.tipo === 'Empresa'}">Empresa</button></div>
-    <div class="g2">
-      <div><label for="kodir">Dirección</label><input id="kodir" value="${esc(c.direccion || '')}"></div>
-      <div><label for="kocp">Código postal</label><input id="kocp" value="${esc(c.cp || '')}"></div>
-    </div>
-    <div class="g2">
-      <div><label for="komun">Población</label><input id="komun" value="${esc(c.municipio || '')}"></div>
-      <div><label for="kopro">Provincia</label><input id="kopro" value="${esc(c.provincia || '')}"></div>
-    </div>
-    <div class="g2">
-      <div><label for="kotel">Teléfono</label><input id="kotel" value="${esc(c.telefono || '')}" inputmode="tel"></div>
-      <div><label for="komov">Móvil</label><input id="komov" value="${esc(c.movil || '')}" inputmode="tel"></div>
-    </div>
-    <div class="g2">
-      <div><label for="komail">Email</label><input id="komail" type="email" value="${esc(c.email || '')}"></div>
-      <div><label for="koemp">Empresa</label><input id="koemp" value="${esc(c.empresa || '')}"></div>
-    </div>
-    <label for="konota">Nota</label><input id="konota" value="${esc(c.nota || '')}">
-    <div class="acts" style="justify-content:flex-end">
-      <button class="btn sec" data-cerrar2>Cancelar</button>
-      <button class="btn" id="kook">${c.id ? 'Guardar' : 'Crear contacto'}</button></div>`;
-
-  let tipo = c.tipo || 'Persona';
-  $('dlg2body').querySelectorAll('[data-ktipo]').forEach(b => b.onclick = () => {
-    tipo = b.dataset.ktipo;
-    $('dlg2body').querySelectorAll('[data-ktipo]').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
-  });
-
-  $('kook').onclick = async ev => {
-    if (!$('konom').value.trim()) { toast('Escribe el nombre', true); return; }
-    ev.target.disabled = true; ev.target.textContent = 'Guardando…';
-    const { data: r, error } = await db.rpc('guardar_contacto', { p: {
-      id: c.id || null, nombre: $('konom').value.trim(), nif: $('konif').value.trim(), tipo,
-      direccion: $('kodir').value.trim(), cp: $('kocp').value.trim(), municipio: $('komun').value.trim(),
-      provincia: $('kopro').value.trim(), telefono: $('kotel').value.trim(), movil: $('komov').value.trim(),
-      email: $('komail').value.trim(), empresa: $('koemp').value.trim(), nota: $('konota').value.trim()
-    }});
-    ev.target.disabled = false; ev.target.textContent = c.id ? 'Guardar' : 'Crear contacto';
-    if (error || (r && r.ok === false)) { toast('No se ha podido guardar', true); return; }
-    $('dlg2').close(); toast('Contacto guardado');
-    if (alGuardar) alGuardar(r.contacto);
-  };
-  $('dlg2').showModal();
-}
 
 /* ---------------- clasificadores por grupos ---------------- */
 
@@ -4033,38 +3086,6 @@ async function pintarAccesos() {
       || '<div class="vacio">Todavía no hay accesos registrados.</div>'}</div>`;
 }
 
-async function pintarAuditoria() {
-  cargando($('admcuerpo'), 'Cargando la auditoría…');
-  const { data } = await db.rpc('auditoria_lista', { p_entidad: null, p_usuario: null, p_desde: null, lim: 200 });
-  const l = data || [];
-  const nombreEnt = { medicos: 'Médico', consultas: 'Consulta', visitas: 'Visita', agenda: 'Cita',
-    rutas: 'Ruta', asignaciones: 'Cartera', pedidos: 'Pedido', perfiles: 'Usuario', productos: 'Producto' };
-
-  ($('admcuerpo') || document.createElement('div')).innerHTML = `<h2>Auditoría<span class="n">${l.length}</span></h2>
-    <p class="sm">Quién ha cambiado qué y cuándo. Se guarda automáticamente.</p>
-    <div class="filtros" style="border:0;padding:0 0 10px">
-      <div><label for="aent">Entidad</label><select id="aent"><option value="">Todas</option>
-        ${Object.entries(nombreEnt).map(([k, t]) => `<option value="${k}">${t}</option>`).join('')}</select></div></div>
-    <div class="lista" id="audlista">${l.map(a => `<div class="item" style="cursor:default">
-      <span class="ic ${a.accion === 'Baja' ? 'w' : a.accion === 'Alta' ? 'o' : ''}">${a.accion === 'Alta' ? '+' : a.accion === 'Baja' ? '−' : '✎'}</span>
-      <span class="tx"><b>${esc(a.accion)} · ${esc(nombreEnt[a.entidad] || a.entidad)}</b>
-        <span class="sm">${esc(a.usuario)} ·
-          ${new Date(a.creado_en).toLocaleString('es', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
-        <span class="sm">${esc(resumenDetalle(a.detalle))}</span></span></div>`).join('')
-      || '<div class="vacio">Sin movimientos registrados todavía.</div>'}</div>`;
-
-  $('aent').onchange = async e => {
-    cargando($('audlista'), 'Filtrando…');
-    const { data: d2 } = await db.rpc('auditoria_lista', { p_entidad: e.target.value || null, p_usuario: null, p_desde: null, lim: 200 });
-    const l2 = d2 || [];
-    $('audlista').innerHTML = l2.map(a => `<div class="item" style="cursor:default">
-      <span class="ic">${a.accion === 'Alta' ? '+' : a.accion === 'Baja' ? '−' : '✎'}</span>
-      <span class="tx"><b>${esc(a.accion)} · ${esc(nombreEnt[a.entidad] || a.entidad)}</b>
-        <span class="sm">${esc(a.usuario)} · ${new Date(a.creado_en).toLocaleString('es')}</span>
-        <span class="sm">${esc(resumenDetalle(a.detalle))}</span></span></div>`).join('')
-      || '<div class="vacio">Sin movimientos con ese filtro.</div>';
-  };
-}
 
 function resumenDetalle(d) {
   if (!d) return '';
@@ -4227,86 +3248,6 @@ function cargarInicio() {
   return INI_EN_CURSO;
 }
 
-async function pintarInicio() {
-  const sec = $('v-inicio');
-  if (!$('iniload')) sec.insertAdjacentHTML('afterbegin',
-    '<div class="cargador ini-loader" id="iniload"><span class="spin"></span><span class="sm">Preparando tu inicio…</span></div>');
-  if (!$('inialerta')) sec.querySelector('.saludo').insertAdjacentHTML('afterend', '<div id="inialerta"></div>');
-  if (!INI_LISTO) sec.classList.add('ini-cargando');
-
-  const cfg = kpiConfig().filter(x => x.on);
-  const esAdmin = PERFIL.rol === 'Administrador';
-  const [res, cuentas] = await Promise.all([
-    rpcCache('panel_inicio', { lim: 6 }, 'inicio'),
-    Promise.all(cfg.map(x => x.filtro ? contarFiltro(x.filtro).catch(() => null) : null)),
-    tarjetaComision().catch(() => {}),
-    tarjetasRuta().catch(() => {})
-  ]);
-
-  const data = res.data;
-  if (!data) {
-    $('c-agenda').innerHTML = '<div class="vacio">Sin conexión y sin copia guardada todavía.</div>';
-    sec.classList.remove('ini-cargando'); INI_LISTO = true;
-    return;
-  }
-  const k = data.kpis;
-
-  /* aviso de posibles duplicados: se calcula aparte para no retrasar el Inicio */
-  const avisoDup = () => {
-    const nPend = (DUP_RES && DUP_RES.pendientes) || k.pendientes_unificar || 0;
-    const nPar = (DUP_RES && DUP_RES.parecidos) || 0;
-    $('inialerta').innerHTML = esAdmin && (nPend || nPar) ? `<div class="alerta">
-        <span>⚠ ${[nPend ? `${num(nPend)} ${nPend === 1 ? 'ficha pendiente' : 'fichas pendientes'} de unificar` : '',
-                  nPar ? `${num(nPar)}${nPar >= 200 ? '+' : ''} ${nPar === 1 ? 'posible duplicado' : 'posibles duplicados'} por nombre` : '']
-                  .filter(Boolean).join(' y ')}</span>
-        <button class="btn" data-k="dups">Revisar duplicados</button></div>` : '';
-  };
-  avisoDup();
-  if (esAdmin) db.rpc('resumen_duplicados').then(r => { DUP_RES = r.data || null; avisoDup(); }).catch(() => {});
-
-  /* indicadores */
-  const kpi = (n, t, cls, accion, ayuda) =>
-    `<div class="kpi ${cls || ''} ${accion ? 'click' : ''}" ${accion ? `data-k="${accion}"` : ''}>
-       ${ayuda ? `<button class="ai" data-ayuda-txt="${esc(ayuda)}" data-ayuda-tit="${esc(t)}" aria-label="Qué es">i</button>` : ''}
-       <b>${typeof n === 'string' ? n : num(n)}</b><span>${esc(t.charAt(0).toUpperCase() + t.slice(1))}</span></div>`;
-
-  $('kpis').innerHTML = cfg.map((x, i) => {
-    if (x.filtro) return `<div class="kpi click" data-kf="${esc(JSON.stringify(x.filtro))}">
-        <button class="ai" data-ayuda-txt="${esc(AYUDA_KPI.filtro + ' Filtro: ' + textoFiltro(x.filtro) + '.')}" data-ayuda-tit="${esc(x.t || 'Filtro guardado')}" aria-label="Qué es">i</button>
-        <b class="cont">${cuentas[i] == null ? '—' : num(cuentas[i])}</b><span>${esc(x.t || textoFiltro(x.filtro))}</span></div>`;
-    const c = KPI_CAT.find(y => y.id === x.id);
-    if (!kpiPermitido(c)) return '';
-    return kpi(c.v(k), x.t || c.t, c.cls ? c.cls(k) : '', c.h, AYUDA_KPI[c.id]);
-  }).join('') + `<div class="kpi" style="display:grid;place-items:center;border-style:dashed">
-      <button class="kcfg" data-k="cfgkpis">⚙ Personalizar indicadores</button></div>`;
-  if (res.cache) avisoCache($('kpis'), res.fecha);
-
-  tarjeta($('c-agenda'), 'Tu agenda de hoy', data.agenda_hoy.length,
-    data.agenda_hoy.map(a => itemHTML(a.medico_id, a.hora ? esc(a.hora).slice(0, 5) : '·',
-      a.estado === 'Visitada' ? 'o' : '', a.nombre,
-      `${esc(a.centro_nombre || '')} · <b style="color:${a.estado === 'Visitada' ? 'var(--ok)' : 'var(--navy)'}">${esc(a.estado)}</b>`)),
-    '', 'No tienes citas para hoy. Planifica una ruta desde Rutas.');
-
-  tarjeta($('c-acciones'), 'Próximas acciones', data.acciones.length,
-    data.acciones.map(a => itemHTML(a.medico_id, '↻', a.proxima_fecha < hoyISO() ? 'w' : '', a.nombre,
-      `<b style="color:${a.proxima_fecha < hoyISO() ? 'var(--warn)' : 'var(--navy)'}">${fechaCorta(a.proxima_fecha)}</b> · ${esc(a.proxima_accion || 'Seguimiento')}`)),
-    '', 'Sin acciones pendientes en los próximos 7 días.');
-
-  tarjeta($('c-urgentes'), 'Urgentes sin visitar', k.urgentes,
-    data.urgentes.map(u => itemHTML(u.medico_id, '!', 'w', u.nombre,
-      `${esc(u.especialidad || '')} · ${esc(u.centro_nombre || u.municipio || '')}`)),
-    k.urgentes > 6 ? `<button class="verlo" data-k="urgentes">Ver los ${num(k.urgentes)} urgentes</button>` : '',
-    'Todos los urgentes están visitados.');
-
-  tarjeta($('c-ultimas'), 'Últimas visitas', null,
-    data.ultimas_visitas.map(v => itemHTML(v.medico_id, '✓', 'o', v.nombre,
-      `${fechaCorta(v.fecha)} · ${esc((v.resultados || []).join(' + ') || 'Sin resultado')}`)),
-    '', 'Todavía no hay visitas registradas.');
-
-  ponerAyudas();
-  sec.classList.remove('ini-cargando');
-  INI_LISTO = true;
-}
 
 /* ---------------- ventanas y paneles: se cierran al pulsar fuera ---------------- */
 
@@ -4587,41 +3528,6 @@ async function compararEn(el, idA, idB) {
 
 /* ---------------- auditoría con filtro por usuario ---------------- */
 
-async function pintarAuditoria() {
-  cargando($('admcuerpo'), 'Cargando la auditoría…');
-  const nombreEnt = { medicos: 'Médico', consultas: 'Consulta', visitas: 'Visita', agenda: 'Cita',
-    rutas: 'Ruta', asignaciones: 'Cartera', pedidos: 'Pedido', perfiles: 'Usuario', productos: 'Producto' };
-  const { data: us } = await db.rpc('usuarios_lista');
-  const usuarios = (us || []).slice().sort((x, y) => String(x.nombre).localeCompare(String(y.nombre), 'es'));
-
-  ($('admcuerpo') || document.createElement('div')).innerHTML = `<h2>Auditoría<span class="n" id="audn">…</span></h2>
-    <p class="sm">Quién ha cambiado qué y cuándo. Se guarda automáticamente.</p>
-    <div class="filtros" style="border:0;padding:10px 16px">
-      <div><label for="ausr">Usuario</label><select id="ausr"><option value="">Todos</option>
-        ${usuarios.map(u => `<option value="${u.id}">${esc(u.nombre)}</option>`).join('')}</select></div>
-      <div><label for="aent">Entidad</label><select id="aent"><option value="">Todas</option>
-        ${Object.entries(nombreEnt).map(([k, t]) => `<option value="${k}">${t}</option>`).join('')}</select></div>
-      <div><label for="adesde">Desde</label><input id="adesde" type="date"></div></div>
-    <div class="lista" id="audlista"></div>`;
-
-  const pinta = async () => {
-    cargando($('audlista'), 'Filtrando…');
-    const { data } = await RPC_ORIG('auditoria_lista', {
-      p_entidad: $('aent').value || null, p_usuario: $('ausr').value || null,
-      p_desde: $('adesde').value || null, lim: 500 });
-    const l = data || [];
-    $('audn').textContent = num(l.length) + (l.length === 500 ? '+' : '');
-    $('audlista').innerHTML = l.map(a => `<div class="item" style="cursor:default">
-      <span class="ic ${a.accion === 'Baja' ? 'w' : a.accion === 'Alta' ? 'o' : ''}">${a.accion === 'Alta' ? '+' : a.accion === 'Baja' ? '−' : '✎'}</span>
-      <span class="tx"><b>${esc(a.accion)} · ${esc(nombreEnt[a.entidad] || a.entidad)}</b>
-        <span class="sm">${esc(a.usuario)} ·
-          ${new Date(a.creado_en).toLocaleString('es', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
-        <span class="sm">${esc(resumenDetalle(a.detalle))}</span></span></div>`).join('')
-      || '<div class="vacio">Sin movimientos con estos filtros.</div>';
-  };
-  ['ausr', 'aent', 'adesde'].forEach(id => $(id).onchange = pinta);
-  pinta();
-}
 
 /* ---------------- ayudas (i) en pantallas, tarjetas e indicadores ---------------- */
 
@@ -4763,22 +3669,49 @@ const marca = paso => console.info(`[App] ${paso} · ${Math.round(performance.no
 const PKEY = 'dlc-perfil';
 let APP_VISIBLE = false;
 
+/* Entrada en la plataforma con el perfil de la persona.
+   Reúne en una sola función lo que antes estaba repartido en 21 capas añadidas versión a versión,
+   con el mismo orden de ejecución. */
 function mostrarApp(perfil) {
-  PERFIL = perfil;
+  const p = perfil, pref = p.preferencias || {};
+
+  // 1. Con el enlace de recuperación de contraseña no se abre la plataforma
+  if (RECUPERANDO) { pantallaRecuperacion(); return; }
+
+  // 2. Idioma del perfil (como mucho una recarga por sesión para aplicarlo)
+  const idioma = pref.idioma || 'es';
+  let guardado = 'es'; try { guardado = localStorage.getItem('app-idioma') || 'es'; } catch (e) {}
+  if (idioma !== guardado) {
+    let ya = false; try { ya = sessionStorage.getItem('app-idioma-recarga') === idioma; } catch (e) {}
+    try { localStorage.setItem('app-idioma', idioma); sessionStorage.setItem('app-idioma-recarga', idioma); } catch (e) {}
+    if (!ya) { location.reload(); return; }
+  }
+  prepararIdioma(idioma);
+
+  const primera = !APP_VISIBLE;
+  document.body.classList.remove('sin-sesion');
+
+  // 3. Indicadores de Inicio guardados: se completan con los que se han añadido después
+  if (Array.isArray(pref.kpis) && pref.kpis.length) {
+    ['uds_mes', 'prescriptores', 'citas_7d', 'sin_visita_60'].forEach(id => { if (!pref.kpis.some(x => x.id === id)) pref.kpis.push({ id, on: true, t: '' }); });
+    KPI_CAT.forEach(k => { if (!pref.kpis.some(x => x.id === k.id)) pref.kpis.push({ id: k.id, on: false, t: '' }); });
+  }
+
+  // 4. Datos de la persona y pantalla principal
+  PERFIL = p;
   $('bootsplash').classList.add('hide');
   $('login').classList.add('hide');
   $('app').classList.remove('hide');
-  $('av').textContent = iniciales(perfil.nombre);
-  $('uname').textContent = String(perfil.nombre).split(' ')[0];
-  $('umnom').textContent = perfil.nombre;
-  $('umrol').textContent = perfil.rol + ' · ' + perfil.email;
-  document.querySelector('[data-u="adm"]').classList.toggle('hide', perfil.rol !== 'Administrador');
+  $('av').textContent = iniciales(p.nombre);
+  $('uname').textContent = String(p.nombre).split(' ')[0];
+  $('umnom').textContent = p.nombre;
+  $('umrol').textContent = p.rol + ' · ' + p.email;
   const h = new Date().getHours();
-  $('hola').textContent = (h < 13 ? 'Buenos días' : h < 20 ? 'Buenas tardes' : 'Buenas noches') + ', ' + String(perfil.nombre).split(' ')[0];
+  $('hola').textContent = (h < 13 ? 'Buenos días' : h < 20 ? 'Buenas tardes' : 'Buenas noches') + ', ' + String(p.nombre).split(' ')[0];
   $('hoyfecha').textContent = fechaLarga(new Date()).replace(/^./, c => c.toUpperCase());
   $('nuevoBtn').classList.toggle('hide', !puedeCrear());
-  $('dupBtn').classList.toggle('hide', perfil.rol !== 'Administrador');
-  document.querySelectorAll('#nav [data-t="ventas"]').forEach(b => b.classList.toggle('hide', !veVentas()));
+  $('dupBtn').classList.toggle('hide', p.rol !== 'Administrador');
+  document.querySelectorAll('#nav [data-t="ventas"], #nav [data-t="pacientes"], #nav [data-t="productos"]').forEach(b => b.classList.toggle('hide', !veVentas()));
   if (!APP_VISIBLE) {
     APP_VISIBLE = true;
     cargarCatalogos();
@@ -4786,6 +3719,51 @@ function mostrarApp(perfil) {
     cargarInicio();
     cargarFiltros();
   }
+  $('fcomwrap').classList.toggle('hide', !VE_TODO());
+  if (VE_TODO()) cargarComerciales();
+  cargarAjustes();
+  if (EN_PRUEBAS) pintarFranjaPruebas();
+
+  // 5. Barra inferior, «Entrar como», manual y módulos según permisos
+  pintarBarraSuplantacion();
+  pintarBnav();
+  if (!$('manbtn')) {
+    const ub = document.querySelector('[data-u="cfg"]');
+    if (ub) ub.insertAdjacentHTML('beforebegin', '<button data-u="manual" id="manbtn">Manual de uso</button>');
+  }
+  document.querySelectorAll('[data-t="facturacion"]').forEach(b => b.classList.toggle('hide', !VE_TODO()));
+  aplicarPermisosMenu();
+
+  // 6. Médicos con acceso: solo ven su informe
+  document.body.classList.toggle('modo-medico', p.rol === 'Medico');
+  if (p.rol === 'Medico') {
+    document.querySelectorAll('nav.main [data-t]').forEach(b => b.classList.add('hide'));
+    let bi = document.querySelector('nav.main [data-t="informe"]');
+    if (!bi) { document.querySelector('nav.main .in').insertAdjacentHTML('afterbegin', '<button data-t="informe" aria-selected="true">Mi informe</button>'); bi = document.querySelector('nav.main [data-t="informe"]'); }
+    bi.classList.remove('hide');
+    if (!$('mdavisos')) $('ubtn').insertAdjacentHTML('beforebegin', '<button class="mdavisos" id="mdavisos" aria-label="Avisos"></button>');
+    pintarAvisos();
+    if ($('q')) $('q').closest('.gsearch').classList.add('hide');
+    setTimeout(() => ir('informe'), 0);
+  }
+
+  // 7. Menú de usuario y marca de la empresa
+  document.querySelectorAll('[data-u="adm"]').forEach(b => b.classList.add('hide'));
+  aplicarMarca();
+  const admin = p.rol === 'Administrador';
+  const pl = document.querySelector('[data-u="plan"]'); if (pl) pl.classList.toggle('hide', !admin);
+  const em = document.querySelector('[data-u="empresa"]'); if (em) em.classList.toggle('hide', !admin);
+
+  // 8. Notificaciones, módulo de inicio preferido y resumen del día
+  setTimeout(refrescarCampana, 800);
+  if (primera && pref.inicio && pref.inicio !== 'inicio' && puedeModulo(pref.inicio)) setTimeout(() => ir(pref.inicio), 50);
+  if (p.rol !== 'Medico') setTimeout(() => Promise.resolve(RPC_ORIG('avisos_del_dia', {})).then(r => { if (r && r.data && r.data.nuevo) refrescarCampana(); }, () => {}), 1500);
+
+  // 9. Traducción, iconos y orden del menú
+  if (MAPA_I18N) traducir(document.body);
+  const m = $('manbtn'); if (m && !m.querySelector('svg')) m.insertAdjacentHTML('afterbegin', svgIco(ICON_NOM['book-open']) + ' ');
+  setTimeout(iconosMenu, 0);
+  setTimeout(() => { ordenarMenu(); botonCalidad(); }, 0);
 }
 
 function mostrarLogin(msg) {
@@ -4908,30 +3886,12 @@ const r2 = n => Math.round((+n || 0) * 100) / 100;
 const eurI = n => eur(r2(n));
 
 /** Mismo cálculo que la base de datos: descuento de línea, descuento general y luego IVA. */
-function totalesPedido(lineas, d, dt) {
-  const ls = lineas.map(l => ({ b: (+l.importe || 0) * (1 - (+l.descuento || 0) / 100), iva: +l.iva || 0, u: +l.unidades || 0 }));
-  const sb = ls.reduce((n, l) => n + l.b, 0);
-  const k = !+d || !sb ? 1 : dt === 'importe' ? Math.max(0, 1 - d / sb) : Math.max(0, 1 - d / 100);
-  const porIva = {};
-  ls.forEach(l => { porIva[l.iva] = (porIva[l.iva] || 0) + l.b * k * l.iva / 100; });
-  const iva = Object.values(porIva).reduce((n, x) => n + x, 0);
-  return { unidades: ls.reduce((n, l) => n + l.u, 0), bruto: sb, descuento: sb * (1 - k), base: sb * k, iva, porIva, total: sb * k + iva };
-}
 
 function lineaDesglose(l) {
   const bruto = +l.importe || 0, base = bruto * (1 - (+l.descuento || 0) / 100), iva = base * (+l.iva || 0) / 100;
   return { bruto, base, iva, total: base + iva };
 }
 
-function bloqueTotales(t) {
-  return `<div><span>Unidades</span><b>${num(t.unidades)}</b></div>
-    ${t.descuento > 0.004 ? `<div><span>Suma de líneas</span><b>${eurI(t.bruto)}</b></div>` : ''}
-    ${t.descuento > 0.004 ? `<div><span>Descuento general</span><b>−${eurI(t.descuento)}</b></div>` : ''}
-    <div><span>Base imponible</span><b>${eurI(t.base)}</b></div>
-    ${Object.keys(t.porIva).filter(k => t.porIva[k] > 0.004 || Object.keys(t.porIva).length === 1)
-      .map(k => `<div><span>IVA ${k}%</span><b>${eurI(t.porIva[k])}</b></div>`).join('')}
-    <div class="tot"><span>Total con IVA</span><b>${eurI(t.total)}</b></div>`;
-}
 
 /* ---------------- ventas: pedidos, pacientes y productos ---------------- */
 
@@ -4939,72 +3899,7 @@ let VSEC = 'pedidos';
 const PAC = { q: '', medico: null, medicoNombre: '', pagina: 0 };
 const pillEstado = e => `<span class="pill ${e === 'Borrador' ? 'p-bor' : e === 'Anulado' ? 'p-anu' : 'p-est'}">${esc(e === 'Confirmado' ? 'Validado' : e)}</span>`;
 
-async function cargarVentas() {
-  const esAdmin = PERFIL.rol === 'Administrador';
-  const accion = VSEC === 'pedidos' ? (puedeVentas() ? '<button class="btn" id="pednuevo">+ Nuevo pedido</button>' : '')
-    : VSEC === 'pacientes' ? (puedeVentas() ? '<button class="btn" id="pacnuevo">+ Nuevo paciente</button>' : '')
-    : (esAdmin ? '<button class="btn" id="prodnuevo">+ Nuevo producto</button>' : '');
-  $('v-ventas').innerHTML = `
-    <div class="saludo"><div><h1>Ventas</h1><div class="fecha">Pedidos, pacientes y productos</div></div>
-      <div class="acts" style="margin:0">${accion}</div></div>
-    <div class="subnav">
-      <button data-vs="pedidos" aria-pressed="${VSEC === 'pedidos'}">Pedidos</button>
-      <button data-vs="pacientes" aria-pressed="${VSEC === 'pacientes'}">Pacientes</button>
-      <button data-vs="productos" aria-pressed="${VSEC === 'productos'}">Productos</button>
-      <button class="ai" data-ayuda="${VSEC === 'pedidos' ? 'ventas' : VSEC}" aria-label="Ayuda" style="align-self:center">i</button></div>
-    <div id="vcuerpo"></div>`;
-  $('v-ventas').querySelectorAll('[data-vs]').forEach(b => b.onclick = () => { VSEC = b.dataset.vs; cargarVentas(); });
-  if ($('pednuevo')) $('pednuevo').onclick = () => editorPedido();
-  if ($('pacnuevo')) $('pacnuevo').onclick = () => editorContacto({}, c => fichaPaciente(c.id));
-  if ($('prodnuevo')) $('prodnuevo').onclick = () => editorProducto(null);
-  await cargarProductos();
-  if (VSEC === 'pacientes') return pintarPacientes();
-  if (VSEC === 'productos') return pintarProductos();
 
-  $('vcuerpo').innerHTML = `
-    <div class="card" id="cardsinatr"></div>
-    <div class="panel">
-      <div class="filtros">
-        <div><label for="pdesde">Desde</label><input id="pdesde" type="date"></div>
-        <div><label for="phasta">Hasta</label><input id="phasta" type="date"></div>
-        <div><label for="pcanal">Canal</label><select id="pcanal">
-          <option value="">Todos</option><option value="paciente">Recomendación a paciente</option>
-          <option value="centro">Venta a centro</option></select></div>
-        <div><label for="pq">Buscar</label><input id="pq" placeholder="Médico, paciente o nº de pedido"></div>
-      </div>
-      <div class="cuenta" id="pcuenta">Cargando…</div>
-      <div id="pedlista"></div>
-    </div>`;
-  ['pdesde', 'phasta', 'pcanal'].forEach(id => $(id).onchange = listaPedidos);
-  let tq; $('pq').oninput = () => { clearTimeout(tq); tq = setTimeout(listaPedidos, 350); };
-  listaPedidos();
-  pintarSinAtribuir();
-}
-
-async function listaPedidos() {
-  cargando($('pedlista'), 'Cargando pedidos…');
-  const { data, error } = await db.rpc('pedidos_lista', {
-    p_desde: $('pdesde').value || null, p_hasta: $('phasta').value || null,
-    p_canal: $('pcanal').value || null, q: ($('pq') && $('pq').value.trim()) || null, lim: 500
-  });
-  if (error) { $('pcuenta').textContent = 'No se ha podido cargar: ' + error.message; return; }
-  PEDIDOS = data || [];
-  const validos = PEDIDOS.filter(p => p.estado !== 'Anulado' && p.estado !== 'Borrador');
-  const bor = PEDIDOS.filter(p => p.estado === 'Borrador').length;
-  $('pcuenta').innerHTML = `<b>${num(PEDIDOS.length)}</b> pedidos · <b>${num(validos.reduce((n, p) => n + (p.unidades || 0), 0))}</b> unidades validadas
-    · <b>${eurI(validos.reduce((n, p) => n + (+p.total || 0), 0))}</b> con IVA${bor ? ` · <b style="color:var(--warn)">${bor}</b> en borrador` : ''}`;
-  $('pedlista').innerHTML = PEDIDOS.length ? `<div>${PEDIDOS.map(p => `
-    <button class="fila" data-ped="${p.id}" style="grid-template-columns:minmax(0,1.4fr) minmax(0,1.4fr) auto auto;${p.estado === 'Anulado' ? 'opacity:.55' : ''}">
-      <span><span class="nm">${esc(p.contacto || p.centro || p.medico || 'Sin contacto')}</span>
-        <span class="sm">${fechaCorta(p.fecha)} · ${p.canal === 'centro' ? 'Venta a centro' : 'Recomendación'}${p.medico ? ' · ' + esc(p.medico) : ' · sin médico'}${p.comercial ? ' · ' + esc(p.comercial) : ''}</span></span>
-      <span class="c2"><span class="sm">${esc(p.productos || '')}</span>
-        <span class="sm">${p.numero ? 'Nº ' + esc(p.numero) + ' · ' : ''}${num(p.unidades)} uds.</span></span>
-      <span class="c3">${pillEstado(p.estado)}</span>
-      <span style="text-align:right"><b style="font-size:16px;color:var(--navy)">${eurI(p.total)}</b>
-        <span class="sm" style="display:block">base ${eurI(p.base)} · IVA ${eurI(p.iva)}</span></span>
-    </button>`).join('')}</div>` : '<div class="vacio">Todavía no hay pedidos registrados.</div>';
-  $('pedlista').querySelectorAll('[data-ped]').forEach(b => b.onclick = () => verPedido(b.dataset.ped));
-}
 
 /* ---------------- editor de pedido ---------------- */
 
@@ -5249,48 +4144,8 @@ async function verPedido(id) {
 
 let FICHA_PAC = null;
 
-async function pintarPacientes() {
-  $('vcuerpo').innerHTML = `
-    <div class="panel">
-      <div class="filtros">
-        <div style="grid-column:span 2"><label for="pacq">Buscar</label>
-          <input id="pacq" value="${esc(PAC.q)}" placeholder="Nombre, teléfono, email o NIF"></div>
-        <div><label>Médico</label><div id="pacmed" style="min-height:44px;display:flex;align-items:center">${PAC.medico
-          ? `<button class="chip" id="pacmedx">${esc(PAC.medicoNombre)} ✕</button>`
-          : '<span class="sm">Todos · filtra desde la ficha de un médico</span>'}</div></div>
-      </div>
-      <div class="cuenta" id="paccuenta">Cargando…</div>
-      <div id="paclista"></div>
-      <div id="pacpag"></div>
-    </div>`;
-  let tq;
-  $('pacq').oninput = e => { clearTimeout(tq); tq = setTimeout(() => { PAC.q = e.target.value.trim(); PAC.pagina = 0; listaPacientes(); }, 300); };
-  if ($('pacmedx')) $('pacmedx').onclick = () => { PAC.medico = null; PAC.medicoNombre = ''; PAC.pagina = 0; pintarPacientes(); };
-  listaPacientes();
-}
 
-async function listaPacientes() {
-  cargando($('paclista'), 'Buscando pacientes…');
-  const { data, error } = await db.rpc('pacientes_lista', { q: PAC.q || null, p_medico: PAC.medico,
-    lim: tamPagina(), desplaz: PAC.pagina * tamPagina() });
-  if (error) { $('paccuenta').textContent = 'No se ha podido cargar: ' + error.message; $('paclista').innerHTML = ''; return; }
-  $('paccuenta').innerHTML = `<b>${num(data.total)}</b> pacientes`;
-  const f = data.filas || [];
-  $('paclista').innerHTML = f.length ? f.map(x => `
-    <button class="fila pac" data-pac="${x.id}">
-      <span><span class="nm">${esc(x.nombre)}</span>
-        <span class="sm">${esc([x.telefono || x.movil, x.email, x.municipio].filter(Boolean).join(' · ') || 'Sin datos de contacto')}</span></span>
-      <span class="c2"><span class="nm" style="font-size:13.5px">${x.medico ? esc(x.medico) : '<span class="sm">Sin médico asignado</span>'}</span>
-        <span class="sm">${x.comercial ? 'Comercial: ' + esc(x.comercial) : ''}</span></span>
-      <span class="c3"><span class="sm">${x.ultimo_pedido ? 'Último pedido ' + fechaCorta(x.ultimo_pedido) : 'Sin pedidos'}</span></span>
-      <span style="text-align:right"><b style="font-size:16px;color:var(--navy)">${num(x.unidades)}</b> <span class="sm">uds.</span>
-        <span class="sm" style="display:block">${num(x.pedidos)} pedidos</span></span>
-    </button>`).join('') : '<div class="vacio">Ningún paciente con estos filtros.</div>';
-  $('paclista').querySelectorAll('[data-pac]').forEach(b => b.onclick = () => fichaPaciente(b.dataset.pac));
-  paginador($('pacpag'), data.total, PAC.pagina, p => { PAC.pagina = p; listaPacientes(); }, () => { PAC.pagina = 0; listaPacientes(); });
-}
 
-async function verContacto(id) { $('dlg').close(); fichaPaciente(id); }
 
 async function fichaPaciente(id) {
   FICHA_PAC = id; FICHA_ID = null;
@@ -5349,23 +4204,6 @@ async function fichaPaciente(id) {
 
 /* ---------------- productos ---------------- */
 
-async function pintarProductos() {
-  const esAdmin = PERFIL.rol === 'Administrador';
-  cargando($('vcuerpo'), 'Cargando productos…');
-  const { data } = await RPC_ORIG('productos_lista', { p_todos: esAdmin });
-  const l = data || [];
-  $('vcuerpo').innerHTML = `<div class="panel">
-    <div class="cuenta"><b>${num(l.filter(p => p.activo).length)}</b> productos activos${l.some(p => !p.activo) ? ` · ${num(l.filter(p => !p.activo).length)} inactivos` : ''}</div>
-    <div>${l.map(p => `<button class="fila prod" data-prod="${p.id}" style="${p.activo ? '' : 'opacity:.55'}">
-      <span class="pfoto" style="${p.foto_url ? `background-image:url('${esc(p.foto_url)}')` : ''}">${p.foto_url ? '' : '◧'}</span>
-      <span><span class="nm">${esc(p.nombre)}${p.activo ? '' : ' <span class="sm">· inactivo</span>'}</span>
-        <span class="sm">${esc([p.presentacion, p.referencia ? 'ref. ' + p.referencia : ''].filter(Boolean).join(' · ') || 'Sin presentación')}</span></span>
-      <span class="c2"><span class="sm">Sin IVA</span><b>${p.precio != null ? eurI(p.precio) : '—'}</b></span>
-      <span><span class="sm">IVA</span><b style="display:block">${num(p.iva || 0)}%</b></span>
-      <span style="text-align:right"><span class="sm">Con IVA</span><b style="display:block;font-size:16px;color:var(--navy)">${p.pvp != null ? eurI(p.pvp) : '—'}</b></span>
-    </button>`).join('') || '<div class="vacio">Todavía no hay productos.</div>'}</div></div>`;
-  $('vcuerpo').querySelectorAll('[data-prod]').forEach(b => b.onclick = () => editorProducto(l.find(p => p.id === b.dataset.prod)));
-}
 
 function editorProducto(p) {
   const esAdmin = PERFIL.rol === 'Administrador';
@@ -5561,8 +4399,6 @@ document.addEventListener('click', e => {
 /* ---------------- protección de datos: sin descargas ---------------- */
 
 function descargar() { toast('La descarga de datos está desactivada para proteger la información.', true); }
-function menuDescarga() { return ''; }
-async function descargarCSV() { descargar(); }
 ['__dlDir', '__dlSeg', '__dlAn'].forEach(k => { try { delete window[k]; } catch (e) { window[k] = undefined; } });
 
 /* ---------------- buscador superior: se limpia al elegir ---------------- */
@@ -5864,64 +4700,11 @@ function editorContacto(c, alGuardar) {
 
 const vaciarModulos = salvo => ['v-pacientes', 'v-productos', 'v-ventas'].forEach(k => { if (k !== salvo) $(k).innerHTML = ''; });
 
-async function cargarPacientes() {
-  vaciarModulos('v-pacientes');
-  $('v-pacientes').innerHTML = `
-    <div class="saludo"><div><h1>Pacientes</h1><div class="fecha">Quién compra, qué médico lo trata y su historial</div></div>
-      <div class="acts" style="margin:0">${puedeVentas() ? '<button class="btn" id="pacnuevo">+ Nuevo paciente</button>' : ''}</div></div>
-    <div id="vcuerpo"></div>`;
-  if ($('pacnuevo')) $('pacnuevo').onclick = () => editorContacto({}, c => fichaPaciente(c.id));
-  pintarPacientes();
-}
 
-async function cargarProductosModulo() {
-  const esAdmin = PERFIL.rol === 'Administrador';
-  vaciarModulos('v-productos');
-  $('v-productos').innerHTML = `
-    <div class="saludo"><div><h1>Productos</h1><div class="fecha">Catálogo con precios sin IVA y con IVA</div></div>
-      <div class="acts" style="margin:0">${esAdmin ? '<button class="btn" id="prodnuevo">+ Nuevo producto</button>' : ''}</div></div>
-    <div id="vcuerpo"></div>`;
-  if ($('prodnuevo')) $('prodnuevo').onclick = () => editorProducto(null);
-  pintarProductos();
-}
 
 // Ventas queda solo con los pedidos
-async function cargarVentas() {
-  vaciarModulos('v-ventas');
-  $('v-ventas').innerHTML = `
-    <div class="saludo"><div><h1>Ventas</h1><div class="fecha">Pedidos y unidades atribuidas</div></div>
-      <div class="acts" style="margin:0">${puedeVentas() ? '<button class="btn" id="pednuevo">+ Nuevo pedido</button>' : ''}</div></div>
-    <div id="vcuerpo"></div>`;
-  if ($('pednuevo')) $('pednuevo').onclick = () => editorPedido();
-  await cargarProductos();
-  $('vcuerpo').innerHTML = `
-    <div class="card" id="cardsinatr"></div>
-    <div class="panel">
-      <div class="filtros">
-        <div><label for="pdesde">Desde</label><input id="pdesde" type="date"></div>
-        <div><label for="phasta">Hasta</label><input id="phasta" type="date"></div>
-        <div><label for="pcanal">Canal</label><select id="pcanal">
-          <option value="">Todos</option><option value="paciente">Recomendación a paciente</option>
-          <option value="centro">Venta a centro</option></select></div>
-        <div><label for="pq">Buscar</label><input id="pq" placeholder="Médico, paciente o nº de pedido"></div>
-      </div>
-      <div class="cuenta" id="pcuenta">Cargando…</div>
-      <div id="pedlista"></div>
-    </div>`;
-  ['pdesde', 'phasta', 'pcanal'].forEach(id => $(id).onchange = listaPedidos);
-  let tq; $('pq').oninput = () => { clearTimeout(tq); tq = setTimeout(listaPedidos, 350); };
-  listaPedidos();
-  pintarSinAtribuir();
-}
 
 // Visibilidad de los módulos nuevos según permisos
-const mostrarAppV218 = mostrarApp;
-mostrarApp = function (perfil) {
-  mostrarAppV218(perfil);
-  document.querySelectorAll('#nav [data-t="pacientes"], #nav [data-t="productos"]').forEach(b => b.classList.toggle('hide', !veVentas()));
-  $('fcomwrap').classList.toggle('hide', !VE_TODO());
-  if (VE_TODO()) cargarComerciales();
-};
 
 /* ---------------- directorio: comerciales ---------------- */
 
@@ -6078,51 +4861,7 @@ async function asignarCartera(id) {
 const RPKEY = () => 'dlc-ruta-pausa-' + (PERFIL ? PERFIL.id : '');
 const rutaPausada = () => { try { return JSON.parse(localStorage.getItem(RPKEY()) || 'null'); } catch (e) { return null; } };
 
-function construirPlan(conXY, rutaId, btn) {
-  const cfg = PLANCFG();
-  const salida = salidaUsuario();
-  const paradas = {};
-  conXY.forEach(m => {
-    const k = (m.centro_nombre || 'Consulta') + '|' + (m.municipio || '');
-    (paradas[k] = paradas[k] || { centro: m.centro_nombre || 'Consulta privada', municipio: m.municipio,
-      dir: m.direccion, xy: [m.lat, m.lon], medicos: [] }).medicos.push(m);
-  });
-  // Si ya ha pasado la hora de salida, el plan empieza ahora
-  const ahora = new Date(), minAhora = ahora.getHours() * 60 + ahora.getMinutes();
-  const salidaCfg = +cfg.salida.slice(0, 2) * 60 + +cfg.salida.slice(3), tope = +cfg.tope.slice(0, 2) * 60 + +cfg.tope.slice(3);
-  const t0 = Math.max(salidaCfg, Math.ceil(minAhora / 5) * 5);
-  let pos = [salida.lat, salida.lon], t = t0, libres = Object.values(paradas), orden = [];
-  while (libres.length && t < tope && orden.length < 14) {
-    libres.sort((a, b) => km(pos, a.xy) - km(pos, b.xy));
-    const p = libres.shift();
-    const viaje = minutosEntre(pos, p.xy);
-    const dura = cfg.parada + cfg.visita * Math.min(p.medicos.length, 8);
-    if (t + viaje + dura > tope) break;
-    orden.push({ ...p, llegada: t + viaje, fin: t + viaje + dura, viaje });
-    t += viaje + dura; pos = p.xy;
-  }
-  if (!orden.length) { toast(t0 >= tope ? 'Ya ha pasado tu hora tope de hoy. Cámbiala en «⚙ Cambiar horario».' : 'No cabe ninguna parada en tu horario.', true); return; }
-  PLAN = { rutaId, salida, paradas: orden, fin: t + minutosEntre(pos, [salida.lat, salida.lon]), fecha: hoyISO(), inicio: t0 };
-  if (TAB !== 'rutas') ir('rutas');
-  pintarPlan();
-  setTimeout(() => $('rplan') && $('rplan').scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
-}
 
-function empezarRuta() {
-  if (rutaActiva()) { toast('Ya tienes una ruta en curso. Termínala o ponla en pausa antes de empezar otra.', true); return; }
-  if (!PLAN) return;
-  const nombre = (RUTAS.find(r => r.id === PLAN.rutaId) || {}).nombre || (typeof PLAN.rutaId === 'string' && PLAN.rutaId.length < 20 ? 'Propuesta: ' + PLAN.rutaId : 'Ruta del día');
-  const paradas = PLAN.paradas.map(p => ({ centro: p.centro, municipio: p.municipio, dir: p.dir, xy: p.xy, llegada: p.llegada, fin: p.fin,
-    medicos: p.medicos.map(m => ({ id: m.id, nombre: m.nombre, especialidad: m.especialidad, centro_nombre: m.centro_nombre,
-      municipio: m.municipio, direccion: m.direccion, lat: m.lat, lon: m.lon })) }));
-  localStorage.setItem(RKEY(), JSON.stringify({ nombre, rutaId: PLAN.rutaId, inicio: Date.now(), fecha: hoyISO(),
-    codes: paradas.flatMap(p => p.medicos.map(m => m.id)), paradas }));
-  localStorage.removeItem(RPKEY());
-  PLAN = null;
-  pintarRutaBarra();
-  toast('Ruta iniciada. Registra cada visita desde la lista.');
-  if (TAB === 'rutas') cargarRutas(); else ir('rutas');
-}
 
 async function visitadosDe(a) {
   if (!navigator.onLine) return new Set(a.hechosIds || []);
@@ -6146,69 +4885,8 @@ function elegirOpcion(titulo, msg, botones) {
   });
 }
 
-async function terminarOPausar() {
-  const a = rutaActiva(); if (!a) return;
-  const hechos = await visitadosDe(a), pend = a.codes.length - hechos.size;
-  const op = await elegirOpcion(`«${a.nombre}»`,
-    `Tiempo: ${durTxt(Date.now() - a.inicio)} · Visitados: ${hechos.size} de ${a.codes.length}` +
-    (pend ? `\n\nSi la pones en pausa, podrás reanudarla otro momento u otro día con los ${pend} pendientes: el horario y el orden se recalculan al reanudar.` : ''),
-    [{ k: 'no', t: 'Seguir en ruta', cls: 'sec' }].concat(pend ? [{ k: 'pausa', t: 'Pausar y seguir otro día', cls: 'sec' }] : [])
-      .concat([{ k: 'fin', t: 'Terminar ruta', cls: 'dang' }]));
-  if (!op) return;
-  if (op === 'pausa') {
-    const pendientes = a.paradas.flatMap(p => p.medicos).filter(m => !hechos.has(m.id));
-    localStorage.setItem(RPKEY(), JSON.stringify({ nombre: a.nombre, rutaId: a.rutaId, pausada: Date.now(), hechos: hechos.size, pendientes }));
-    toast('Ruta en pausa. Reanúdala desde Rutas cuando quieras.');
-  } else toast(`Ruta terminada · ${durTxt(Date.now() - a.inicio)} · ${hechos.size} de ${a.codes.length}`);
-  localStorage.removeItem(RKEY());
-  pintarRutaBarra();
-  if (TAB === 'rutas') cargarRutas();
-}
 
-async function pintarRutaBarra() {
-  const a = rutaActiva(), el = $('rutabar');
-  if (!a) { el.classList.add('hide'); document.body.classList.remove('conruta'); return; }
-  el.classList.remove('hide'); document.body.classList.add('conruta');
-  const hechos = await visitadosDe(a);
-  el.innerHTML = `<span>● <b>En ruta: ${esc(a.nombre)}</b> · <span class="rt">${durTxt(Date.now() - a.inicio)}</span> · ${hechos.size} de ${a.codes.length} visitados</span>
-    <span class="acts" style="margin:0"><button class="btn sec" id="rbver">Ver ruta</button><button class="btn dang" id="rbfin">Terminar o pausar</button></span>`;
-  $('rbver').onclick = () => { ir('rutas'); setTimeout(() => $('renc') && $('renc').scrollIntoView({ behavior: 'smooth' }), 100); };
-  $('rbfin').onclick = terminarOPausar;
-}
 
-async function pintarRutaEnCurso() {
-  if (TAB !== 'rutas') return;
-  if (!$('renc')) $('v-rutas').querySelector('.saludo').insertAdjacentHTML('afterend', '<div id="renc"></div>');
-  const a = rutaActiva(), pz = rutaPausada();
-  if (!a && !pz) { $('renc').innerHTML = ''; return; }
-  if (!a && pz) {
-    $('renc').innerHTML = `<div class="card renc"><h2>Ruta en pausa: ${esc(pz.nombre)}<span class="n">${num(pz.pendientes.length)} pendientes</span></h2>
-      <p class="sm">La pausaste el ${fechaCorta(new Date(pz.pausada).toISOString().slice(0, 10))} con ${num(pz.hechos)} visitados.
-        Al reanudarla se recalculan el orden y las horas desde tu punto de salida y la hora actual.</p>
-      <div class="acts" style="padding:0 16px 16px"><button class="btn" id="rpreanudar">Reanudar ruta</button>
-        <button class="btn sec" id="rpdescartar">Descartar la pausa</button></div></div>`;
-    $('rpreanudar').onclick = e => planDesdeLista(pz.pendientes, pz.rutaId || pz.nombre, e.target);
-    $('rpdescartar').onclick = async () => {
-      if (!await preguntar('La ruta guardada no cambia; solo se olvidan los pendientes de esta pausa.', { titulo: '¿Descartar la pausa?', ok: 'Descartar' })) return;
-      localStorage.removeItem(RPKEY()); pintarRutaEnCurso();
-    };
-    return;
-  }
-  const hechos = await visitadosDe(a);
-  $('renc').innerHTML = `<div class="card renc"><h2>En ruta: ${esc(a.nombre)}<span class="n">${hechos.size} de ${a.codes.length}</span></h2>
-    <p class="sm">Empezaste hace ${durTxt(Date.now() - a.inicio)}. Registra cada visita al terminarla.</p>
-    ${a.paradas.map((p, i) => `<div class="parada"><span>${i + 1}. ${esc(p.centro)} · ${hm(p.llegada)}–${hm(p.fin)}</span>
-        <a class="btn sec" style="min-height:30px;padding:4px 10px;font-size:12px;text-transform:none;letter-spacing:0" href="${enlaceNav(p.xy)}" target="_blank" rel="noopener">Cómo llegar</a></div>
-      <div class="lista">${p.medicos.map(m => `<div class="item" style="cursor:default">
-        <span class="ic ${hechos.has(m.id) ? 'o' : ''}">${hechos.has(m.id) ? '✓' : '·'}</span>
-        <span class="tx"><b>${esc(m.nombre)}</b><span class="sm">${esc(m.especialidad || '')}${hechos.has(m.id) ? ' · <b style="color:var(--ok)">visitado</b>' : ''}</span></span>
-        <span class="acts" style="margin:0"><button class="btn sec" data-rvf="${m.id}">Ficha</button>
-          ${hechos.has(m.id) ? '' : `<button class="btn" data-rvr="${m.id}">Registrar visita</button>`}</span></div>`).join('')}</div>`).join('')}
-    <div class="acts" style="padding:12px 16px 16px"><button class="btn dang" id="rencfin">Terminar o pausar</button></div></div>`;
-  $('renc').querySelectorAll('[data-rvf]').forEach(b => b.onclick = () => abrirFicha(b.dataset.rvf));
-  $('renc').querySelectorAll('[data-rvr]').forEach(b => b.onclick = () => abrirVisita(b.dataset.rvr));
-  $('rencfin').onclick = terminarOPausar;
-}
 
 cargarRutas = (orig => async function () { await orig(); pintarRutaEnCurso(); })(cargarRutas);
 
@@ -6271,8 +4949,6 @@ async function cargarAjustes() {
   const { data } = await db.rpc('ajustes_lista');
   AJUSTES = data || {};
 }
-const mostrarAppV219 = mostrarApp;
-mostrarApp = function (perfil) { mostrarAppV219(perfil); cargarAjustes(); };
 
 /* ---------------- totales con envío ---------------- */
 
@@ -6307,100 +4983,13 @@ function bloqueTotales(t) {
 
 /* ---------------- configuración del envío ---------------- */
 
-function editorEnvio() {
-  const c = envioCfg();
-  $('dbody').innerHTML = `
-    <div class="fh"><div><h2>Envío</h2><div class="sm">Importe que se propone al marcar «Incluir envío» en un pedido</div></div>
-      <button class="x" data-cerrar aria-label="Cerrar">✕</button></div>
-    <div class="pvp">
-      <div><label for="evsin">Sin IVA (€)</label><input id="evsin" type="number" step="0.01" min="0" value="${r2(c.precio_con_iva / (1 + c.iva / 100))}"></div>
-      <div><label for="eviva">IVA (%)</label><input id="eviva" type="number" step="1" min="0" max="21" value="${c.iva}"></div>
-      <div><label for="evcon">Con IVA (€)</label><input id="evcon" type="number" step="0.01" min="0" value="${r2(c.precio_con_iva)}"></div></div>
-    <p class="sm">El envío es un servicio: normalmente lleva el 21% de IVA. En cada pedido se puede cambiar el importe.</p>
-    <label class="opt" style="margin-top:10px"><input type="checkbox" id="evdef" ${c.por_defecto ? 'checked' : ''}> Marcar «Incluir envío» por defecto en los pedidos nuevos</label>
-    <div class="acts" style="justify-content:flex-end"><button class="btn sec" data-cerrar>Cancelar</button>
-      <button class="btn" id="evok">Guardar</button></div>`;
-  const iva = () => (+$('eviva').value || 0) / 100;
-  $('evsin').oninput = () => { $('evcon').value = $('evsin').value === '' ? '' : r2(+$('evsin').value * (1 + iva())); };
-  $('evcon').oninput = () => { $('evsin').value = $('evcon').value === '' ? '' : r2(+$('evcon').value / (1 + iva())); };
-  $('eviva').oninput = () => { if ($('evsin').value !== '') $('evcon').value = r2(+$('evsin').value * (1 + iva())); };
-  $('evok').onclick = async ev => {
-    ev.target.disabled = true;
-    const valor = { precio_con_iva: +$('evcon').value || 0, iva: +$('eviva').value || 0, por_defecto: $('evdef').checked };
-    const { data: r, error } = await db.rpc('guardar_ajuste', { p_clave: 'envio', p_valor: valor });
-    ev.target.disabled = false;
-    if (error || (r && r.ok === false)) { toast('No se ha podido guardar', true); return; }
-    AJUSTES.envio = valor; $('dlg').close(); toast('Envío guardado');
-    if (TAB === 'productos') pintarProductos();
-  };
-  $('dlg').showModal();
-}
 
 /* ---------------- productos: tabla alineada ---------------- */
 
-async function cargarProductosModulo() {
-  const esAdmin = PERFIL.rol === 'Administrador';
-  vaciarModulos('v-productos');
-  $('v-productos').innerHTML = `
-    <div class="saludo"><div><h1>Productos</h1><div class="fecha">Catálogo con precios sin IVA y con IVA</div></div>
-      <div class="acts" style="margin:0">${esAdmin ? '<button class="btn sec" id="prodenvio">⚙ Envío</button><button class="btn" id="prodnuevo">+ Nuevo producto</button>' : ''}</div></div>
-    <div id="vcuerpo"></div>`;
-  if ($('prodnuevo')) $('prodnuevo').onclick = () => editorProducto(null);
-  if ($('prodenvio')) $('prodenvio').onclick = editorEnvio;
-  pintarProductos();
-}
 
-async function pintarProductos() {
-  const esAdmin = PERFIL.rol === 'Administrador';
-  cargando($('vcuerpo'), 'Cargando productos…');
-  const [{ data }] = await Promise.all([RPC_ORIG('productos_lista', { p_todos: esAdmin }), cargarAjustes()]);
-  const l = data || [], ev = envioCfg();
-  $('vcuerpo').innerHTML = `<div class="panel">
-    <div class="cuenta"><b>${num(l.filter(p => p.activo).length)}</b> ${l.filter(p => p.activo).length === 1 ? 'producto activo' : 'productos activos'}${l.some(p => !p.activo) ? ` · ${num(l.filter(p => !p.activo).length)} inactivos` : ''}
-      · Envío: <b>${eurI(ev.precio_con_iva)}</b> con IVA${ev.por_defecto ? ' (se marca por defecto)' : ''}</div>
-    <div class="dgrid-wrap"><div class="dgrid prods">
-      <div class="dh"><span></span><span>Producto</span><span>Referencia</span><span class="num">Sin IVA</span><span class="num">IVA</span><span class="num">Con IVA</span><span>Estado</span></div>
-      ${l.map(p => `<button class="dr" data-prod="${p.id}" style="${p.activo ? '' : 'opacity:.55'}">
-        <span><span class="pfoto" style="${p.foto_url ? `background-image:url('${esc(p.foto_url)}')` : ''}">${p.foto_url ? '' : '◧'}</span></span>
-        <span><b>${esc(p.nombre)}</b><span class="sm">${esc(p.presentacion || 'Sin presentación')}</span></span>
-        <span class="sm">${esc(p.referencia || '—')}</span>
-        <span class="num">${p.precio != null ? eurI(p.precio) : '—'}</span>
-        <span class="num">${num(p.iva || 0)}%</span>
-        <span class="num"><b>${p.pvp != null ? eurI(p.pvp) : '—'}</b></span>
-        <span><span class="pill ${p.activo ? 'p-est' : 'p-anu'}">${p.activo ? 'Activo' : 'Inactivo'}</span></span>
-      </button>`).join('') || '<div class="vacio">Todavía no hay productos.</div>'}
-    </div></div></div>`;
-  $('vcuerpo').querySelectorAll('[data-prod]').forEach(b => b.onclick = () => editorProducto(l.find(p => p.id === b.dataset.prod)));
-}
 
 /* ---------------- pacientes: tabla con todos los datos ---------------- */
 
-async function listaPacientes() {
-  cargando($('paclista'), 'Buscando pacientes…');
-  const { data, error } = await db.rpc('pacientes_lista', { q: PAC.q || null, p_medico: PAC.medico,
-    lim: tamPagina(), desplaz: PAC.pagina * tamPagina() });
-  if (error) { $('paccuenta').textContent = 'No se ha podido cargar: ' + error.message; $('paclista').innerHTML = ''; return; }
-  $('paccuenta').innerHTML = `<b>${num(data.total)}</b> ${data.total === 1 ? 'paciente' : 'pacientes'}`;
-  const f = data.filas || [];
-  const v = x => x ? esc(x) : '<span class="vac">—</span>';
-  $('paclista').innerHTML = f.length ? `<div class="dgrid-wrap"><div class="dgrid pacs">
-    <div class="dh"><span>Paciente</span><span>DNI / CIF</span><span>Teléfono</span><span>Email</span><span>Población</span>
-      <span>Médico</span><span>Comercial</span><span class="num">Pedidos</span><span class="num">Uds.</span><span>Último pedido</span></div>
-    ${f.map(x => `<button class="dr" data-pac="${x.id}">
-      <span><b>${esc(x.nombre)}</b></span>
-      <span>${v(x.nif)}</span>
-      <span>${v(x.telefono || x.movil)}</span>
-      <span class="corta">${v(x.email)}</span>
-      <span>${v(x.municipio)}</span>
-      <span class="corta">${x.medico ? esc(x.medico) : '<span class="vac">Sin asignar</span>'}</span>
-      <span>${v(x.comercial)}</span>
-      <span class="num">${num(x.pedidos)}</span>
-      <span class="num"><b>${num(x.unidades)}</b></span>
-      <span>${x.ultimo_pedido ? fechaCorta(x.ultimo_pedido) : '<span class="vac">—</span>'}</span>
-    </button>`).join('')}</div></div>` : '<div class="vacio">Ningún paciente con estos filtros.</div>';
-  $('paclista').querySelectorAll('[data-pac]').forEach(b => b.onclick = () => fichaPaciente(b.dataset.pac));
-  paginador($('pacpag'), data.total, PAC.pagina, p => { PAC.pagina = p; listaPacientes(); }, () => { PAC.pagina = 0; listaPacientes(); });
-}
 
 /* ---------------- rutas: horario siempre a mano ---------------- */
 
@@ -6410,54 +4999,6 @@ const siguienteLaborable = () => {
   return d.toISOString().slice(0, 10);
 };
 
-function construirPlan(conXY, rutaId, btn, opts) {
-  opts = opts || {};
-  ULTIMO_PLAN = { conXY, rutaId, opts };
-  const cfg = PLANCFG();
-  const salida = salidaUsuario();
-  const paradas = {};
-  conXY.forEach(m => {
-    const k = (m.centro_nombre || 'Consulta') + '|' + (m.municipio || '');
-    (paradas[k] = paradas[k] || { centro: m.centro_nombre || 'Consulta privada', municipio: m.municipio,
-      dir: m.direccion, xy: [m.lat, m.lon], medicos: [] }).medicos.push(m);
-  });
-  const ahora = new Date(), minAhora = ahora.getHours() * 60 + ahora.getMinutes();
-  const salidaCfg = +cfg.salida.slice(0, 2) * 60 + +cfg.salida.slice(3), tope = +cfg.tope.slice(0, 2) * 60 + +cfg.tope.slice(3);
-  const fecha = opts.manana ? siguienteLaborable() : hoyISO();
-  // Hoy: si ya ha pasado la hora de salida, se empieza ahora. Otro día: desde la hora de salida.
-  const t0 = opts.manana ? salidaCfg : Math.max(salidaCfg, Math.ceil(minAhora / 5) * 5);
-
-  if (t0 >= tope) {
-    elegirOpcion('Ya ha pasado tu horario de ruta de hoy',
-      `Tu horario es de ${cfg.salida} a ${cfg.tope} y ahora son las ${hm(minAhora)}.\n\nPuedes planificar la ruta para el ${fechaLarga(new Date(siguienteLaborable() + 'T00:00:00'))} o cambiar tu horario.`,
-      [{ k: 'no', t: 'Cancelar', cls: 'sec' }, { k: 'horario', t: '⚙ Cambiar horario', cls: 'sec' }, { k: 'manana', t: 'Planificar para mañana' }])
-      .then(op => {
-        if (op === 'horario') abrirHorarioPlan();
-        if (op === 'manana') construirPlan(conXY, rutaId, btn, { manana: true });
-      });
-    return;
-  }
-
-  let pos = [salida.lat, salida.lon], t = t0, libres = Object.values(paradas), orden = [];
-  while (libres.length && t < tope && orden.length < 14) {
-    libres.sort((a, b) => km(pos, a.xy) - km(pos, b.xy));
-    const p = libres.shift();
-    const viaje = minutosEntre(pos, p.xy);
-    const dura = cfg.parada + cfg.visita * Math.min(p.medicos.length, 8);
-    if (t + viaje + dura > tope) break;
-    orden.push({ ...p, llegada: t + viaje, fin: t + viaje + dura, viaje });
-    t += viaje + dura; pos = p.xy;
-  }
-  if (!orden.length) {
-    elegirOpcion('No cabe ninguna parada', `Con tu horario (${cfg.salida}–${cfg.tope}, ${cfg.visita} min por médico) no da tiempo a la primera parada desde ${salida.nombre}.`,
-      [{ k: 'no', t: 'Cancelar', cls: 'sec' }, { k: 'horario', t: '⚙ Cambiar horario' }]).then(op => { if (op === 'horario') abrirHorarioPlan(); });
-    return;
-  }
-  PLAN = { rutaId, salida, paradas: orden, fin: t + minutosEntre(pos, [salida.lat, salida.lon]), fecha, inicio: t0 };
-  if (TAB !== 'rutas') ir('rutas');
-  pintarPlan();
-  setTimeout(() => $('rplan') && $('rplan').scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
-}
 
 cargarRutas = (orig => async function () {
   await orig();
@@ -6580,48 +5121,6 @@ async function cargarVentas() {
   pintarSinAtribuir();
 }
 
-async function listaPedidos() {
-  if (!$('pedlista') || !$('pper')) return;   // se ha cambiado de pestaña mientras cargaba
-  cargando($('pedlista'), 'Cargando pedidos…');
-  if (!$('pcanal')) return;
-  const r = $('pper').__rango();
-  const { data, error } = await db.rpc('pedidos_lista', {
-    p_desde: r.desde, p_hasta: r.hasta, p_canal: $('pcanal').value || null,
-    q: ($('pq') && $('pq').value.trim()) || null, lim: 500
-  });
-  if (!$('pedlista') || !$('pestado')) return;   // ha cambiado la pantalla mientras llegaban los datos
-  if (error) { $('pedlista').innerHTML = `<div class="vacio">No se ha podido cargar: ${esc(error.message)}</div>`; return; }
-  const est = $('pestado').value;
-  PEDIDOS = (data || []).filter(p => !est || p.estado === est);
-  const val = PEDIDOS.filter(p => p.estado === 'Confirmado');
-  const suma = k => val.reduce((n, p) => n + (+p[k] || 0), 0);
-  const bor = (data || []).filter(p => p.estado === 'Borrador').length;
-  $('ptotales').innerHTML = `
-    <div class="kpi"><b>${num(val.length)}</b><span>Pedidos validados${bor ? ` · ${bor} en borrador` : ''}</span></div>
-    <div class="kpi"><b>${num(suma('unidades'))}</b><span>Unidades</span></div>
-    <div class="kpi"><b>${eurI(suma('base'))}</b><span>Base sin IVA</span></div>
-    <div class="kpi"><b>${eurI(suma('iva'))}</b><span>IVA</span></div>
-    <div class="kpi ok"><b>${eurI(suma('total'))}</b><span>Total con IVA</span></div>`;
-  $('pedlista').innerHTML = PEDIDOS.length ? `<div class="dgrid-wrap"><div class="dgrid peds">
-    <div class="dh"><span>Fecha</span><span>Paciente / centro</span><span>Médico</span><span>Comercial</span><span>Productos</span>
-      <span class="num">Uds.</span><span class="num">Base</span><span class="num">IVA</span><span class="num">Total</span><span>Estado</span></div>
-    ${PEDIDOS.map(p => `<button class="dr" data-ped="${p.id}" style="${p.estado === 'Anulado' ? 'opacity:.55' : ''}">
-      <span>${fechaCorta(p.fecha)}${p.numero ? `<span class="sm">Nº ${esc(p.numero)}</span>` : ''}</span>
-      <span><b>${esc(p.contacto || p.centro || '—')}</b><span class="sm">${p.canal === 'centro' ? 'Venta a centro' : 'Recomendación'}${p.envio ? ' · con envío' : ''}</span></span>
-      <span>${p.medico ? esc(p.medico) : '<span class="vac">Sin atribuir</span>'}</span>
-      <span>${p.comercial ? esc(p.comercial) : '<span class="vac">—</span>'}</span>
-      <span class="sm">${esc(p.productos || '')}</span>
-      <span class="num">${num(p.unidades)}</span>
-      <span class="num">${eurI(p.base)}</span>
-      <span class="num">${eurI(p.iva)}</span>
-      <span class="num"><b>${eurI(p.total)}</b></span>
-      <span>${pillEstado(p.estado)}</span></button>`).join('')}
-    <div class="dr dtot"><span></span><span><b>Total validados</b></span><span></span><span></span><span></span>
-      <span class="num"><b>${num(suma('unidades'))}</b></span><span class="num"><b>${eurI(suma('base'))}</b></span>
-      <span class="num"><b>${eurI(suma('iva'))}</b></span><span class="num"><b>${eurI(suma('total'))}</b></span><span></span></div>
-  </div></div>` : '<div class="vacio">No hay pedidos en este periodo.</div>';
-  $('pedlista').querySelectorAll('[data-ped]').forEach(b => b.onclick = () => verPedido(b.dataset.ped));
-}
 
 /* ---------------- analítica con totales y filtros ---------------- */
 
@@ -6811,72 +5310,7 @@ function abrirKpis() {
 
 /* ---------------- ruta en curso: ficha al pulsar, acciones y orden ---------------- */
 
-function recalcularRuta(a, hechos) {
-  const cfg = PLANCFG(), sal = salidaUsuario();
-  const ahora = new Date(), t0 = Math.ceil((ahora.getHours() * 60 + ahora.getMinutes()) / 5) * 5;
-  let pos = [sal.lat, sal.lon], t = t0;
-  a.paradas.forEach(p => {
-    const hecha = p.medicos.every(m => hechos.has(m.id));
-    if (hecha) { pos = p.xy; return; }
-    const v = minutosEntre(pos, p.xy), dura = cfg.parada + cfg.visita * Math.min(p.medicos.filter(m => !hechos.has(m.id)).length, 8);
-    p.llegada = t + v; p.fin = t + v + dura; t = p.fin; pos = p.xy;
-  });
-}
 
-async function pintarRutaEnCurso() {
-  if (TAB !== 'rutas') return;
-  if (!$('renc')) $('v-rutas').querySelector('.saludo').insertAdjacentHTML('afterend', '<div id="renc"></div>');
-  const a = rutaActiva(), pz = rutaPausada();
-  if (!a && !pz) { $('renc').innerHTML = ''; return; }
-  if (!a && pz) {
-    $('renc').innerHTML = `<div class="card renc"><h2>Ruta en pausa: ${esc(pz.nombre)}<span class="n">${num(pz.pendientes.length)} pendientes</span></h2>
-      <p class="sm">La pausaste el ${fechaCorta(fechaLocal(new Date(pz.pausada)))} con ${num(pz.hechos)} visitados.
-        Al reanudarla se recalculan el orden y las horas desde tu punto de salida y la hora actual.</p>
-      <div class="acts" style="padding:0 16px 16px"><button class="btn" id="rpreanudar">Reanudar ruta</button>
-        <button class="btn sec" id="rpdescartar">Descartar la pausa</button></div></div>`;
-    $('rpreanudar').onclick = e => planDesdeLista(pz.pendientes, pz.rutaId || pz.nombre, e.target);
-    $('rpdescartar').onclick = async () => {
-      if (!await preguntar('La ruta guardada no cambia; solo se olvidan los pendientes de esta pausa.', { titulo: '¿Descartar la pausa?', ok: 'Descartar' })) return;
-      localStorage.removeItem(RPKEY()); pintarRutaEnCurso();
-    };
-    return;
-  }
-  const hechos = await visitadosDe(a);
-  $('renc').innerHTML = `<div class="card renc"><h2>En ruta: ${esc(a.nombre)}<span class="n">${hechos.size} de ${a.codes.length}</span></h2>
-    <p class="sm">Empezaste hace ${durTxt(Date.now() - a.inicio)}. Pulsa un médico para ver su ficha. Cambia el orden de las paradas con las flechas: las horas se recalculan.</p>
-    ${a.paradas.map((p, i) => `<div class="parada">
-        <span class="pord">
-          <button class="kmv" data-rmv="${i}|-1" aria-label="Subir parada" ${i === 0 ? 'disabled' : ''}>${ICO.arriba}</button>
-          <button class="kmv" data-rmv="${i}|1" aria-label="Bajar parada" ${i === a.paradas.length - 1 ? 'disabled' : ''}>${ICO.abajo}</button></span>
-        <span class="ptit">${i + 1}. ${esc(p.centro)} · ${p.medicos.every(m => hechos.has(m.id)) ? '<b style="color:var(--ok)">✓ visitada</b>' : hm(p.llegada) + '–' + hm(p.fin)}${p.municipio ? ' · ' + esc(p.municipio) : ''}</span>
-        <a class="icobtn" href="${enlaceNav(p.xy)}" target="_blank" rel="noopener" title="Cómo llegar" aria-label="Cómo llegar a ${esc(p.centro)}">${ICO.nav}</a></div>
-      <div class="lista">${p.medicos.map(m => `<div class="item rmed" data-rvf="${m.id}" role="button" tabindex="0">
-        <span class="ic ${hechos.has(m.id) ? 'o' : ''}">${hechos.has(m.id) ? '✓' : '·'}</span>
-        <span class="tx"><b>${esc(m.nombre)}</b><span class="sm">${esc(m.especialidad || '')}${hechos.has(m.id) ? ' · <b style="color:var(--ok)">visitado</b>' : ''}</span></span>
-        <span class="acts" style="margin:0">
-          ${puedeEditar() ? `<button class="btn sec" data-rve="${m.id}">Editar ficha</button>` : ''}
-          ${hechos.has(m.id) ? '' : `<button class="btn" data-rvr="${m.id}">Registrar visita</button>`}
-          <button class="btn sec" data-rva="${m.id}">+ Agenda</button></span></div>`).join('')}</div>`).join('')}
-    <div class="acts" style="padding:12px 16px 16px"><button class="btn dang" id="rencfin">Terminar o pausar</button></div></div>`;
-
-  $('renc').querySelectorAll('[data-rvf]').forEach(el => {
-    const abrir = e => { if (e.target.closest('button, a')) return; abrirFicha(el.dataset.rvf); };
-    el.onclick = abrir; el.onkeydown = e => { if (e.key === 'Enter') abrir(e); };
-  });
-  $('renc').querySelectorAll('[data-rve]').forEach(b => b.onclick = () => abrirEditor(b.dataset.rve));
-  $('renc').querySelectorAll('[data-rvr]').forEach(b => b.onclick = () => abrirVisita(b.dataset.rvr));
-  $('renc').querySelectorAll('[data-rva]').forEach(b => b.onclick = () => nuevaCita(b.dataset.rva, hoyISO()));
-  $('renc').querySelectorAll('[data-rmv]').forEach(b => b.onclick = () => {
-    const [i, dir] = b.dataset.rmv.split('|').map(Number), j = i + dir;
-    if (j < 0 || j >= a.paradas.length) return;
-    [a.paradas[i], a.paradas[j]] = [a.paradas[j], a.paradas[i]];
-    recalcularRuta(a, hechos);
-    a.codes = a.paradas.flatMap(p => p.medicos.map(m => m.id));
-    localStorage.setItem(RKEY(), JSON.stringify(a));
-    pintarRutaEnCurso();
-  });
-  $('rencfin').onclick = terminarOPausar;
-}
 
 /* ---------------- ayudas ---------------- */
 
@@ -6931,22 +5365,6 @@ async function empezarJornada() {
   if (TAB === 'agenda') cargarAgenda(); else ir('agenda');
 }
 
-async function terminarJornada() {
-  const j = jornadaActiva(); if (!j) return;
-  invalidarCache();
-  const citas = await citasDelDia(hoyISO());
-  const hechas = citas.filter(c => c.estado === 'Visitada').length;
-  const abiertas = citas.filter(c => CITA_ABIERTA.includes(c.estado)).length;
-  const ok = await preguntar(`Tiempo: ${durTxt(Date.now() - j.inicio)} · Visitadas: ${hechas} de ${citas.filter(c => c.estado !== 'Descartada').length}` +
-    (abiertas ? `\n\nTe quedan ${abiertas} ${abiertas === 1 ? 'cita abierta' : 'citas abiertas'}: siguen en tu agenda y mañana aparecerán en «Pendientes de días anteriores» para moverlas.` : ''),
-    { titulo: '¿Terminar la jornada?', ok: 'Terminar jornada' });
-  if (!ok) return;
-  localStorage.removeItem(JKEY());
-  pintarRutaBarra();
-  toast(`Jornada terminada · ${hechas} visitadas`);
-  if (TAB === 'agenda') cargarAgenda();
-  if (TAB === 'rutas') cargarRutas();
-}
 
 async function pintarRutaBarra() {
   const j = jornadaActiva(), el = $('rutabar');
@@ -6968,48 +5386,8 @@ const xyCita = c => c.lat != null && c.lon != null ? [+c.lat, +c.lon] : null;
 const salidaUsuario = () => prefsActivas().salida || { nombre: 'la primera visita', lat: null, lon: null, falta: true };
 
 /** Calcula la hora estimada de cada cita abierta siguiendo el orden actual. */
-function estimarDia(citas, fecha) {
-  const cfg = PLANCFG(), sal = salidaUsuario();
-  const ahora = new Date(), minAhora = ahora.getHours() * 60 + ahora.getMinutes();
-  let t = minHora(cfg.salida);
-  if (fecha === hoyISO()) t = Math.max(t, Math.ceil(minAhora / 5) * 5);
-  let pos = [sal.lat, sal.lon], anterior = null;
-  const est = {};
-  citas.forEach(c => {
-    if (!CITA_ABIERTA.includes(c.estado)) { if (xyCita(c)) pos = xyCita(c); return; }
-    const xy = xyCita(c);
-    const mismoSitio = anterior && xy && anterior[0] === xy[0] && anterior[1] === xy[1];
-    if (xy && !mismoSitio) { t += minutosEntre(pos, xy) + cfg.parada; pos = xy; }
-    const fija = minHora(c.hora);
-    if (fija != null && fija > t) t = fija;
-    est[c.id] = t;
-    t += cfg.visita;
-    anterior = xy;
-  });
-  return { est, fin: t + minutosEntre(pos, [sal.lat, sal.lon]), tope: minHora(cfg.tope) };
-}
 
 /** Orden por cercanía: las citas con hora fija marcan el esqueleto; las demás se insertan donde menos desvío suman. */
-function ordenarPorCercania(citas) {
-  const sal = salidaUsuario(), s0 = [sal.lat, sal.lon];
-  const cerradas = citas.filter(c => !CITA_ABIERTA.includes(c.estado));
-  const abiertas = citas.filter(c => CITA_ABIERTA.includes(c.estado));
-  const sinSitio = abiertas.filter(c => !xyCita(c));
-  const fijas = abiertas.filter(c => xyCita(c) && c.hora).sort((a, b) => minHora(a.hora) - minHora(b.hora));
-  const libres = abiertas.filter(c => xyCita(c) && !c.hora).sort((a, b) => km(s0, xyCita(a)) - km(s0, xyCita(b)));
-  const seq = fijas.slice();
-  libres.forEach(c => {
-    const xy = xyCita(c);
-    let mejor = 0, coste = Infinity;
-    for (let i = 0; i <= seq.length; i++) {
-      const prev = i === 0 ? s0 : xyCita(seq[i - 1]), next = i === seq.length ? null : xyCita(seq[i]);
-      const d = km(prev, xy) + (next ? km(xy, next) - km(prev, next) : 0);
-      if (d < coste) { coste = d; mejor = i; }
-    }
-    seq.splice(mejor, 0, c);
-  });
-  return cerradas.concat(seq, sinSitio);
-}
 
 async function guardarOrden(citas) {
   const { data: r, error } = await db.rpc('ordenar_citas', { p_ids: citas.map(c => c.id) });
@@ -7380,8 +5758,6 @@ AYUDA.pruebas = ['Entorno de pruebas', 'Una copia completa de la plataforma con 
 
 if (EN_PRUEBAS) {
   pintarFranjaPruebas();
-  const mostrarAppV2240 = mostrarApp;
-  mostrarApp = function (perfil) { mostrarAppV2240(perfil); pintarFranjaPruebas(); };
 }
 
 
@@ -7661,40 +6037,6 @@ async function terminarJornada() {
 
 /* ---------------- semana en cuadrícula ---------------- */
 
-async function pintarSemanaAgenda() {
-  const desde = lunesDe(AG_FECHA), hasta = isoMas(desde, 6);
-  const todos = PERFIL.rol === 'Administrador';
-  const r = await rpcCache('agenda_rango', { p_desde: desde, p_hasta: hasta, p_usuario: todos ? null : PERFIL.id }, 'agenda-' + desde);
-  if (AG_MODO !== 'semana') return;
-  const porDia = {};
-  (r.data || []).forEach(c => (porDia[c.fecha] = porDia[c.fecha] || []).push(c));
-  const dias = Array.from({ length: 7 }, (_, i) => isoMas(desde, i));
-  $('agcuerpo').innerHTML = `<h2 style="padding:14px 16px 0">Semana del ${fechaCorta(desde)} al ${fechaCorta(hasta)}</h2>
-    <div class="semwrap"><div class="mes sem">
-      ${['L', 'M', 'X', 'J', 'V', 'S', 'D'].map(d => `<span class="mesdow">${d}</span>`).join('')}
-      ${dias.map(f => {
-        const l = (porDia[f] || []).filter(c => !['Descartada', 'Aplazada'].includes(c.estado));
-        const hechas = l.filter(c => c.estado === 'Visitada').length;
-        const d = new Date(f + 'T12:00:00');
-        return `<div class="mesdia semdia ${f === hoyISO() ? 'hoy' : ''} ${d.getDay() === 0 || d.getDay() === 6 ? 'finde' : ''}" data-semdia="${f}" role="button" tabindex="0">
-          <div class="semcab"><b>${d.getDate()}</b>${l.length ? `<span class="mespunto">${hechas}/${l.length}</span>` : ''}
-            ${f >= hoyISO() ? `<button class="semmas" data-semnueva="${f}" aria-label="Nueva cita el ${fechaCorta(f)}" title="Nueva cita">+</button>` : ''}</div>
-          <div class="semcitas">${l.slice(0, 8).map(c => `<span class="semcita" data-semficha="${c.medico_id}" title="${esc(c.nombre)} · ${esc(c.estado)}"
-              style="border-left-color:${EST_COL[c.estado] || 'var(--muted)'}">
-              ${c.hora ? `<i>${esc(String(c.hora).slice(0, 5))}</i>` : ''}${esc(String(c.nombre).split(',')[0])}${todos && c.usuario_id !== PERFIL.id && c.usuario ? ` <em>${esc(iniciales(c.usuario))}</em>` : ''}</span>`).join('')}
-            ${l.length > 8 ? `<span class="sm">y ${l.length - 8} más</span>` : ''}</div>
-        </div>`;
-      }).join('')}
-    </div></div>`;
-  $('agcuerpo').querySelectorAll('[data-semdia]').forEach(el => {
-    const abrir = e => {
-      if (e.target.closest('[data-semnueva]')) { nuevaCita(null, e.target.closest('[data-semnueva]').dataset.semnueva); return; }
-      if (e.target.closest('[data-semficha]')) { abrirFicha(e.target.closest('[data-semficha]').dataset.semficha); return; }
-      AG_FECHA = el.dataset.semdia; AG_MODO = 'dia'; cargarAgenda();
-    };
-    el.onclick = abrir; el.onkeydown = e => { if (e.key === 'Enter') abrir(e); };
-  });
-}
 
 /* ---------------- enganches en la agenda ---------------- */
 
@@ -8621,37 +6963,6 @@ const FAQ = [
   ['¿Por qué no puedo descargar datos?', 'Por seguridad: los datos de médicos y ventas solo se consultan dentro de la plataforma.']
 ];
 
-async function cargarManual() {
-  const v = $('v-manual');
-  const accesoTxt = s => s.a ? NIVEL_TXT[nivelDe(s.a)] : (PERFIL.rol === 'Administrador' ? 'Completo' : 'Sin acceso');
-  const nivelSec = s => s.a ? nivelDe(s.a) : (PERFIL.rol === 'Administrador' ? 3 : 0);
-  v.innerHTML = `
-    <div class="saludo"><div><h1>Manual de uso</h1><div class="fecha">Qué hace cada parte, qué puedes hacer tú y dónde se configura</div></div></div>
-    <div class="panel"><div class="filtros" style="grid-template-columns:1fr"><div><label for="manq">Buscar</label>
-      <input id="manq" type="search" placeholder="Escribe lo que quieres hacer: aplazar una cita, bloquear un día, material…"></div></div></div>
-    <div id="mancuerpo">${MANUAL.map(s => {
-      const n = nivelSec(s), ay = AYUDA[s.id === 'visitas' ? 'agenda' : s.id === 'centros' ? 'directorio' : s.id] || null;
-      return `<div class="card mansec" data-man="${s.id}">
-        <div class="manh"><h2 style="padding:0">${esc(s.t)}</h2><span class="pill ${n >= 2 ? 'p-est' : n === 1 ? 'p-per' : 'p-anu'}">Tu acceso: ${accesoTxt(s)}</span></div>
-        <p>${esc(s.para)}</p>
-        <h3>Qué se puede hacer</h3>
-        <ul class="manlist">${s.hacer.map(([req, txt]) => `<li class="${n >= req ? 'si' : 'no'}">${n >= req ? '✓' : '🔒'} ${esc(txt)}${n >= req ? '' : ` <span class="sm">· necesitas «${esc(s.a ? (AREAS.find(x => x[0] === s.a) || [])[1] || s.t : 'Administración')}» en ${NIVEL_TXT[req]}</span>`}</li>`).join('')}</ul>
-        ${ay && ay[2] && ay[2].length ? `<h3>Cómo funciona</h3><ul class="manlist">${ay[2].map(x => `<li>${x}</li>`).join('')}</ul>` : ''}
-        ${s.config.length ? `<h3>Dónde se configura</h3><ul class="manlist">${s.config.map(x => `<li>⚙ ${esc(x)}</li>`).join('')}</ul>` : ''}
-      </div>`;
-    }).join('')}
-    <div class="card mansec" data-man="faq"><h2>Preguntas frecuentes</h2>
-      ${FAQ.map(([q, r]) => `<details class="manfaq"><summary>${esc(q)}</summary><p>${esc(r)}</p></details>`).join('')}</div></div>`;
-  $('manq').oninput = e => {
-    const q = e.target.value.trim().toLowerCase();
-    v.querySelectorAll('.mansec').forEach(c => {
-      const ok = !q || c.textContent.toLowerCase().includes(q);
-      c.classList.toggle('hide', !ok);
-      c.querySelectorAll('li, details').forEach(li => li.classList.toggle('manhit', !!q && li.textContent.toLowerCase().includes(q)));
-      if (q && ok) c.querySelectorAll('details').forEach(d => { if (d.textContent.toLowerCase().includes(q)) d.open = true; });
-    });
-  };
-}
 
 /* ---------------- navegación: manual y barra de suplantación ---------------- */
 
@@ -8668,16 +6979,6 @@ ir = function (t) {
   pintarBnav();
 };
 
-const mostrarAppV2270 = mostrarApp;
-mostrarApp = function (perfil) {
-  mostrarAppV2270(perfil);
-  pintarBarraSuplantacion();
-  pintarBnav();
-  if (!$('manbtn')) {
-    const ub = document.querySelector('[data-u="cfg"]');
-    if (ub) ub.insertAdjacentHTML('beforebegin', '<button data-u="manual" id="manbtn">Manual de uso</button>');
-  }
-};
 document.addEventListener('click', e => {
   if (e.target.closest('#manbtn')) { e.stopPropagation(); document.querySelectorAll('.umenu').forEach(m => m.classList.add('hide')); ir('manual'); }
 }, true);
@@ -9086,15 +7387,6 @@ Object.assign(AYUDA_KPI, {
 ['uds_mes', 'prescriptores', 'citas_7d', 'sin_visita_60'].forEach(k => { if (!KPI_DEF.includes(k)) KPI_DEF.push(k); });
 
 // Quien ya tenía indicadores guardados recibe los nuevos principales una vez (luego puede ocultarlos)
-const mostrarAppV2280 = mostrarApp;
-mostrarApp = function (perfil) {
-  const p = perfil.preferencias || {};
-  if (Array.isArray(p.kpis) && p.kpis.length) {
-    ['uds_mes', 'prescriptores', 'citas_7d', 'sin_visita_60'].forEach(id => { if (!p.kpis.some(x => x.id === id)) p.kpis.push({ id, on: true, t: '' }); });
-    KPI_CAT.forEach(k => { if (!p.kpis.some(x => x.id === k.id)) p.kpis.push({ id: k.id, on: false, t: '' }); });
-  }
-  mostrarAppV2280(perfil);
-};
 
 document.addEventListener('click', e => {
   const k = e.target.closest('#kpis [data-k^="x-"]');
@@ -9686,11 +7978,6 @@ ir = function (t) {
     irV2300(t);
   }
 };
-const mostrarAppV2300 = mostrarApp;
-mostrarApp = function (perfil) {
-  mostrarAppV2300(perfil);
-  document.querySelectorAll('[data-t="facturacion"]').forEach(b => b.classList.toggle('hide', !VE_TODO()));
-};
 
 /* ---------------- módulo ---------------- */
 
@@ -10205,8 +8492,6 @@ ir = function (t) {
   if (t in MODULO_AREA && !puedeModulo(t)) { toast('No tienes permiso para ese módulo', true); t = puedeModulo('inicio') ? 'inicio' : 'agenda'; }
   irV2330(t);
 };
-const mostrarAppV2330 = mostrarApp;
-mostrarApp = function (perfil) { mostrarAppV2330(perfil); aplicarPermisosMenu(); };
 
 /* ---------------- indicadores con su categoría y permiso ---------------- */
 
@@ -11190,20 +9475,6 @@ async function pintarAvisos() {
   };
 }
 
-const mostrarAppV2350 = mostrarApp;
-mostrarApp = function (perfil) {
-  mostrarAppV2350(perfil);
-  document.body.classList.toggle('modo-medico', perfil.rol === 'Medico');
-  if (perfil.rol !== 'Medico') return;
-  document.querySelectorAll('nav.main [data-t]').forEach(b => b.classList.add('hide'));
-  let bi = document.querySelector('nav.main [data-t="informe"]');
-  if (!bi) { document.querySelector('nav.main .in').insertAdjacentHTML('afterbegin', '<button data-t="informe" aria-selected="true">Mi informe</button>'); bi = document.querySelector('nav.main [data-t="informe"]'); bi.onclick = () => ir('informe'); }
-  bi.classList.remove('hide');
-  if (!$('mdavisos')) $('ubtn').insertAdjacentHTML('beforebegin', '<button class="mdavisos" id="mdavisos" aria-label="Avisos"></button>');
-  pintarAvisos();
-  if ($('q')) $('q').closest('.gsearch').classList.add('hide');
-  setTimeout(() => ir('informe'), 0);
-};
 const irV2350 = ir;
 ir = function (t) {
   if (ES_MEDICO() && !['informe', 'manual', 'config'].includes(t)) t = 'informe';
@@ -12353,7 +10624,6 @@ document.addEventListener('click', async e => {
 /* ---------------- acceso y cierre de sesión: sin menú ---------------- */
 
 mostrarLogin = (orig => function (...a) { document.body.classList.add('sin-sesion'); return orig.apply(this, a); })(mostrarLogin);
-mostrarApp = (orig => function (...a) { document.body.classList.remove('sin-sesion'); return orig.apply(this, a); })(mostrarApp);
 if (!PERFIL) document.body.classList.add('sin-sesion');
 
 /* ---------------- pruebas: volver a los datos de partida con confirmación ---------------- */
@@ -12694,7 +10964,6 @@ ir = function (t) {
   irV2400(t);
 };
 document.querySelectorAll('[data-u="adm"]').forEach(b => b.classList.add('hide'));
-mostrarApp = (orig => function (p) { orig(p); document.querySelectorAll('[data-u="adm"]').forEach(b => b.classList.add('hide')); aplicarMarca(); })(mostrarApp);
 // Dentro de Configuración no se repiten menús interiores
 panelDeModulo = (orig => function (sec) {
   orig(sec);
@@ -12797,7 +11066,6 @@ function panelNotificaciones(l) {
   $('notcfg').onclick = () => { $('dlg').close(); CFG_SEC = 'notif'; ir('config'); };
 }
 setInterval(refrescarCampana, 60000);
-mostrarApp = (orig => function (p) { orig(p); setTimeout(refrescarCampana, 800); })(mostrarApp);
 
 function pintarNotif() {
   const pref = (PERFIL.preferencias || {}).notif || {}, tipos = tiposDeMiRol();
@@ -12859,11 +11127,6 @@ async function pintarPrefsPerfil() {
   if (mp && $('perfilcab')) $('perfilcab').replaceWith(mp);
 }
 // Al entrar, se abre el módulo elegido
-mostrarApp = (orig => function (p) {
-  const primera = !APP_VISIBLE; orig(p);
-  const ini = (p.preferencias || {}).inicio;
-  if (primera && ini && ini !== 'inicio' && puedeModulo(ini)) setTimeout(() => ir(ini), 50);
-})(mostrarApp);
 
 /* ---------------- Rutas y desplazamientos · Mensajes ---------------- */
 
@@ -13081,10 +11344,6 @@ irEnlace = (orig => function (e) {
   else orig(e);
 })(irEnlace);
 // Resumen del día: se genera la primera vez que se abre la plataforma cada día
-mostrarApp = (orig => function (p) {
-  orig(p);
-  if (p.rol !== 'Medico') setTimeout(() => Promise.resolve(RPC_ORIG('avisos_del_dia', {})).then(r => { if (r && r.data && r.data.nuevo) refrescarCampana(); }, () => {}), 1500);
-})(mostrarApp);
 // Configuración de notificaciones agrupada
 pintarNotif = (orig => function () {
   orig();
@@ -13196,11 +11455,6 @@ function aplicarIdioma(id) {
 }
 prepararIdioma((() => { try { return localStorage.getItem('app-idioma') || 'es'; } catch (e) { return 'es'; } })());
 if (MAPA_I18N) traducir(document.body);
-mostrarApp = (orig => function (p) {
-  const id = (p.preferencias || {}).idioma || 'es';
-  if (id !== IDIOMA) { if (IDIOMA !== 'es' && id === 'es') { try { localStorage.setItem('app-idioma', 'es'); } catch (e) {} location.reload(); return; } prepararIdioma(id); }
-  orig(p); if (MAPA_I18N) traducir(document.body);
-})(mostrarApp);
 // Selector de idioma en Mi perfil
 pintarPerfil = (orig => function () {
   orig();
@@ -13263,18 +11517,6 @@ pintarPerfil = (orig => function () {
   };
 })(pintarPerfil);
 // Al entrar se usa el idioma del perfil; como mucho una recarga por sesión, para no quedar en bucle
-mostrarApp = (orig => function (p) {
-  const id = (p.preferencias || {}).idioma || 'es';
-  let guardado = 'es'; try { guardado = localStorage.getItem('app-idioma') || 'es'; } catch (e) {}
-  if (id !== guardado) {
-    let ya = false; try { ya = sessionStorage.getItem('app-idioma-recarga') === id; } catch (e) {}
-    try { localStorage.setItem('app-idioma', id); sessionStorage.setItem('app-idioma-recarga', id); } catch (e) {}
-    if (!ya) { location.reload(); return; }
-  }
-  prepararIdioma(id);
-  orig(p);
-  if (MAPA_I18N) traducir(document.body);
-})(mostrarApp);
 
 /* ---------------- Configuración en el móvil: primero la lista, después el apartado ---------------- */
 
@@ -13571,7 +11813,6 @@ function pantallaRecuperacion() {
 }
 // Con el enlace de recuperación la plataforma no arranca ni se pinta
 arrancar = (orig => async function (...a) { if (RECUPERANDO) { pantallaRecuperacion(); return; } return orig.apply(this, a); })(arrancar);
-mostrarApp = (orig => function (...a) { if (RECUPERANDO) { pantallaRecuperacion(); return; } return orig.apply(this, a); })(mostrarApp);
 // Avisos en la pantalla de acceso: contraseña cambiada o enlace caducado
 (function () {
   const q = new URLSearchParams(location.search);
@@ -13738,7 +11979,6 @@ function iconosMenu() {
   });
 }
 aplicarPermisosMenu = (orig => function () { orig(); iconosMenu(); })(aplicarPermisosMenu);
-mostrarApp = (orig => function (...a) { const r = orig.apply(this, a); setTimeout(iconosMenu, 0); return r; })(mostrarApp);
 // El menú «Más» del móvil usa exactamente los mismos iconos
 Object.keys(ICO_NAV).forEach(k => { ICO_MOD[k] = svgIco(ICON_NOM[ICO_NAV[k]]); });
 iconosMenu();
@@ -13799,7 +12039,6 @@ function botonCalidad() {
     <div class="acts">${puedeModulo('seguimiento') ? `<button class="btn sec" id="dircalidad">${svgIco(ICON_NOM['shield-check'])} Calidad del dato</button>` : ''}</div></div>`);
   if ($('dircalidad')) $('dircalidad').onclick = () => ir('seguimiento');
 }
-mostrarApp = (orig => function (...a) { const r = orig.apply(this, a); setTimeout(() => { ordenarMenu(); botonCalidad(); }, 0); return r; })(mostrarApp);
 cargarSeguimiento = (orig => async function () {
   await orig();
   const s = document.querySelector('#v-seguimiento .saludo');
@@ -13821,8 +12060,6 @@ cargarSeguimiento = (orig => async function () {
     CFG_SEC = b.dataset.u; window.__CFG_DIRECTO = true; ir('config');
   });
 })();
-mostrarApp = (orig => function (p) { orig(p); const pl = document.querySelector('[data-u="plan"]'); if (pl) pl.classList.toggle('hide', p.rol !== 'Administrador');
-  const m = $('manbtn'); if (m && !m.querySelector('svg')) m.insertAdjacentHTML('afterbegin', svgIco(ICON_NOM['book-open']) + ' '); })(mostrarApp);
 
 /* ---------------- Configuración por bloques con subapartados ---------------- */
 
@@ -14007,7 +12244,6 @@ new MutationObserver(() => { const b = document.querySelector('#bnav [data-t="di
   plan.insertAdjacentHTML('beforebegin', `<button data-u="empresa" class="hide">${svgIco(ICON_NOM.building)} Empresa</button>`);
   document.addEventListener('click', e => { if (e.target.closest('[data-u="empresa"]')) { CFG_SEC = 'empresa'; window.__CFG_DIRECTO = true; ir('config'); } });
 })();
-mostrarApp = (orig => function (p) { orig(p); const b = document.querySelector('[data-u="empresa"]'); if (b) b.classList.toggle('hide', p.rol !== 'Administrador'); })(mostrarApp);
 arbolConfig = (orig => function () { return orig().filter(g => g[0] !== 'Empresa'); })(arbolConfig);
 Object.assign(CFG_ANTES, { marca: ['__empresa', 'marca'], correo: ['__empresa', 'correo'], copias: ['__empresa', 'copias'], empresa: ['__empresa', 'marca'] });
 
