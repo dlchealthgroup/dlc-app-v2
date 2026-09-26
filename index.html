@@ -1186,6 +1186,29 @@ nav.main button[aria-selected=true] .navico{opacity:1}
 .item .ic .icw svg{width:18px;height:18px}
 .mattipos b .icw,.opgrid .icw,.opico .icw{color:var(--sky)}
 .opico i.no .icw{color:var(--muted)}
+
+/* v2.46.0 · avisos arriba a la izquierda, iconos, configuración por bloques */
+.ico{width:1.1em;height:1.1em;flex:0 0 auto;vertical-align:-0.16em}
+.bmasgrid button span .ico,.bmasgrid .ico{width:22px;height:22px}
+.mpmods .ico{width:14px;height:14px;margin-right:2px;color:var(--sky)}
+#umenu .ico,[data-u] .ico{width:16px;height:16px;margin-right:6px;color:var(--sky)}
+#dircalidad .ico{margin-right:4px;color:var(--sky)}
+@keyframes avisoEntra{from{transform:translateX(-120%);opacity:0}to{transform:none;opacity:1}}
+.toast{left:16px!important;right:auto!important;top:calc(16px + env(safe-area-inset-top,0px))!important;bottom:auto!important;transform:none!important;
+  z-index:6000!important;border-radius:14px!important;max-width:min(420px,calc(100vw - 32px));animation:avisoEntra .28s cubic-bezier(.2,.8,.2,1)}
+.upd{position:fixed!important;left:16px!important;right:auto!important;top:calc(16px + env(safe-area-inset-top,0px))!important;bottom:auto!important;transform:none!important;
+  z-index:6001!important;animation:avisoEntra .28s cubic-bezier(.2,.8,.2,1)}
+.cfgsubs{display:flex;gap:4px;padding:4px;margin:0 0 12px;background:#fff;border:1px solid var(--line);border-radius:14px;width:max-content;max-width:100%;overflow-x:auto}
+.cfgsubs button{border:0;background:none;border-radius:10px;padding:8px 14px;font:inherit;font-weight:650;font-size:13.5px;color:var(--muted);cursor:pointer;white-space:nowrap}
+.cfgsubs button.on{background:var(--grad);color:#fff;box-shadow:0 4px 12px rgba(21,82,143,.2)}
+.cfgg .ci .ico{width:19px;height:19px}
+.pill.p-plan{background:#F3E8FF;color:#6B21A8;display:inline-flex;align-items:center;gap:4px;font-size:11px}
+.pill.p-plan .ico{width:12px;height:12px}
+.planup{text-align:left}.planupico{width:48px;height:48px;border-radius:14px;background:#F3E8FF;color:#6B21A8;display:grid;place-items:center;margin-bottom:8px}
+.planupico .ico{width:24px;height:24px}
+.notacc{display:block;font-size:12px;color:var(--sky);font-weight:600;margin-top:2px}
+.cfgvolver.visible{display:inline-flex;border:0;background:none;color:var(--sky);font:inherit;font-weight:700;padding:0 0 8px;cursor:pointer}
+nav.main [data-t="seguimiento"]{display:none!important}
 </style>
 </head>
 <body>
@@ -1226,7 +1249,7 @@ nav.main button[aria-selected=true] .navico{opacity:1}
       <button data-t="inicio" aria-selected="true">Inicio</button>
       <button data-t="agenda" aria-selected="false">Agenda</button>
       <button data-t="rutas" aria-selected="false">Rutas</button>
-      <button data-t="directorio" aria-selected="false">Directorio</button>
+      <button data-t="directorio" aria-selected="false">Médicos</button>
       <button data-t="pacientes" aria-selected="false">Clientes</button>
       <button data-t="productos" aria-selected="false">Productos</button>
       <button data-t="seguimiento" aria-selected="false">Calidad del dato</button>
@@ -1313,13 +1336,13 @@ nav.main button[aria-selected=true] .navico{opacity:1}
   <button data-t="inicio"><span>◉</span>Inicio</button>
   <button data-t="agenda"><span>▤</span>Agenda</button>
   <button data-t="rutas"><span>➤</span>Rutas</button>
-  <button data-t="directorio"><span>☰</span>Directorio</button>
+  <button data-t="directorio"><span>☰</span>Médicos</button>
   <button data-t="seguimiento"><span>✓</span>Segui.</button>
 </nav>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js" defer></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="./config.js"></script>
-<script src="./app.js?v=2.45.5"></script>
+<script src="./app.js?v=2.46.0"></script>
 </body>
 </html>
