@@ -1120,6 +1120,13 @@ body.masabierto .bnav{border-top-color:transparent;box-shadow:none}
 .copiaest{display:flex;flex-direction:column;gap:2px;padding:12px 14px;border-radius:12px;margin-top:10px}
 .copiaest.bien{background:#E4F4EC}.copiaest.mal{background:#FFF4E5}
 @media (max-width:760px){.firmaed{grid-template-columns:1fr}}
+
+/* v2.45.1 · recuperación de contraseña en pantalla limpia */
+html.recuperando body > *:not(#recupera):not(script):not(style){display:none!important}
+#recupera{position:fixed;inset:0;z-index:5000;display:grid;place-items:center;padding:20px;background:url('./fondo.jpg') left top/cover no-repeat,#F3F8FC}
+#recupera .lbox{width:min(400px,100%);display:flex;flex-direction:column;text-align:left}
+#recupera .lbox img{height:84px;width:84px;border-radius:50%;margin:0 auto 12px;object-fit:cover;display:block}
+#recupera h1{text-align:center;font-size:22px;margin:0 0 4px}#recupera .lbox > p.sm:first-of-type{text-align:center}
 </style>
 </head>
 <body>
@@ -1254,6 +1261,6 @@ body.masabierto .bnav{border-top-color:transparent;box-shadow:none}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js" defer></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="./config.js"></script>
-<script src="./app.js?v=2.45.0"></script>
+<script src="./app.js?v=2.45.1"></script>
 </body>
 </html>
