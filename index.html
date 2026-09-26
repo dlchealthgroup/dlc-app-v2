@@ -1110,6 +1110,16 @@ body.masabierto .bnav{border-top-color:transparent;box-shadow:none}
 
 .vfswitch{position:relative}
 .vfswitch input{position:absolute;left:0;top:0;width:1px;height:1px;opacity:0;pointer-events:none;margin:0}
+
+/* v2.45.0 · correo, firma y copias */
+.firmaed{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);gap:18px;align-items:start}
+.firmaprev{border:1px solid var(--line);border-radius:14px;padding:16px;background:#fff;font-size:13.5px;line-height:1.5;color:var(--ink)}
+.fprevfirma{display:flex;gap:12px;align-items:flex-start;border-top:1px solid var(--line);padding-top:12px;font-size:12.5px;color:var(--muted)}
+.fprevfirma img{width:52px;height:52px;border-radius:50%;object-fit:cover}
+.fprevaviso{font-size:10.5px;color:var(--muted);margin:12px 0 0}
+.copiaest{display:flex;flex-direction:column;gap:2px;padding:12px 14px;border-radius:12px;margin-top:10px}
+.copiaest.bien{background:#E4F4EC}.copiaest.mal{background:#FFF4E5}
+@media (max-width:760px){.firmaed{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
@@ -1244,6 +1254,6 @@ body.masabierto .bnav{border-top-color:transparent;box-shadow:none}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js" defer></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="./config.js"></script>
-<script src="./app.js?v=2.44.0"></script>
+<script src="./app.js?v=2.45.0"></script>
 </body>
 </html>

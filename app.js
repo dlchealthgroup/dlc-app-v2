@@ -13370,6 +13370,129 @@ document.addEventListener('click', async e => {
 }, true);
 
 
+/* ============================================================
+   v2.45.0 · Correo y firma de cada empresa configurables en la
+   plataforma, con envío de prueba; copias de seguridad descargables
+   ============================================================ */
+
+const PROVEEDORES_CORREO = {
+  google: { n: 'Google Workspace o Gmail', host: 'smtp.gmail.com', puerto: 465, seg: 'ssl', ayuda: 'Usa una «contraseña de aplicación» (Cuenta de Google → Seguridad → Verificación en dos pasos → Contraseñas de aplicaciones), no la contraseña normal.' },
+  microsoft: { n: 'Microsoft 365 u Outlook', host: 'smtp.office365.com', puerto: 587, seg: 'starttls', ayuda: 'La cuenta debe tener activado «SMTP autenticado» (lo activa el administrador de Microsoft 365).' },
+  ionos: { n: 'IONOS', host: 'smtp.ionos.es', puerto: 465, seg: 'ssl', ayuda: 'Usuario: la dirección de correo completa.' },
+  ovh: { n: 'OVHcloud', host: 'ssl0.ovh.net', puerto: 465, seg: 'ssl', ayuda: 'Usuario: la dirección de correo completa.' },
+  otro: { n: 'Otro proveedor', host: '', puerto: 465, seg: 'ssl', ayuda: 'Pide a tu proveedor el servidor de salida (SMTP), el puerto y el tipo de seguridad.' }
+};
+
+async function pintarCorreo() {
+  const [{ data: c }] = await Promise.all([RPC_ORIG('correo_config', {}), cargarAjustes()]);
+  const cfg = Object.assign({ proveedor: '', host: '', puerto: 465, seguridad: 'ssl', usuario: '', remitente_nombre: '', remitente_email: '', color: '#15528F', firma: {} }, c || {});
+  const f = Object.assign({ nombre: PERFIL.nombre, cargo: '', empresa: (AJUSTES.empresa || {}).razon_social || nombreApp(), telefono: (AJUSTES.empresa || {}).telefono || '',
+    telefono2: '', web: (AJUSTES.empresa || {}).web || '', direccion: [(AJUSTES.empresa || {}).direccion, (AJUSTES.empresa || {}).municipio].filter(Boolean).join(', '), aviso: '', logo: 'si' }, cfg.firma || {});
+  const campo = (id, et, v, extra = '') => `<div><label for="${id}">${et}</label><input id="${id}" value="${esc(v || '')}" ${extra}></div>`;
+  $('cfgcuerpo').innerHTML = `
+    <div class="card cfgpanel"><h2 style="padding:0 0 4px">Correo de la empresa</h2>
+      <p class="sm">Desde esta cuenta salen las facturas, los datos de pago y los resúmenes. Cada empresa usa su propio correo: los clientes ven vuestro remitente y vuestra firma.</p>
+      <div class="g2"><div><label for="coprov">Proveedor</label><select id="coprov"><option value="">Elige tu proveedor…</option>${Object.entries(PROVEEDORES_CORREO).map(([k, p]) => `<option value="${k}" ${cfg.proveedor === k ? 'selected' : ''}>${p.n}</option>`).join('')}</select></div><div></div></div>
+      <div class="avisoh ${cfg.proveedor ? '' : 'hide'}" id="coayuda"><span>${esc((PROVEEDORES_CORREO[cfg.proveedor] || {}).ayuda || '')}</span></div>
+      <div class="g2">${campo('cohost', 'Servidor de salida (SMTP)', cfg.host, 'placeholder="smtp.tuproveedor.com"')}
+        <div class="g2" style="margin:0"><div><label for="copuer">Puerto</label><input id="copuer" type="number" value="${esc(cfg.puerto)}"></div>
+          <div><label for="coseg">Seguridad</label><select id="coseg"><option value="ssl" ${cfg.seguridad === 'ssl' ? 'selected' : ''}>SSL</option><option value="starttls" ${cfg.seguridad === 'starttls' ? 'selected' : ''}>STARTTLS</option></select></div></div></div>
+      <div class="g2">${campo('cousu', 'Usuario', cfg.usuario, 'autocomplete="off" placeholder="facturacion@tuempresa.com"')}
+        <div><label for="copass">Contraseña</label><input id="copass" type="password" autocomplete="new-password" placeholder="${cfg.hay_clave ? '•••••••• guardada · escribe solo para cambiarla' : 'Contraseña del correo'}"></div></div>
+      <div class="g2">${campo('conom', 'Nombre del remitente', cfg.remitente_nombre, `placeholder="${esc(nombreApp())}"`)}${campo('coemail', 'Email del remitente', cfg.remitente_email, 'type="email" placeholder="igual que el usuario"')}</div>
+      <p class="sm">🔒 La contraseña se guarda aparte y nadie puede verla desde la plataforma, ni siquiera administración.</p></div>
+    <div class="card cfgpanel"><h2 style="padding:0 0 4px">Firma</h2>
+      <p class="sm">Se añade al final de cada email, con el logo de la empresa si lo tienes en Marca y logo.</p>
+      <div class="firmaed"><div>
+        <div class="g2">${campo('fnom', 'Nombre', f.nombre)}${campo('fcar', 'Cargo', f.cargo, 'placeholder="p. ej. Atención al cliente"')}</div>
+        <div class="g2">${campo('femp', 'Empresa', f.empresa)}${campo('fweb', 'Web', f.web, 'placeholder="www.tuempresa.com"')}</div>
+        <div class="g2">${campo('ftel', 'Teléfono', f.telefono)}${campo('ftel2', 'Otro teléfono', f.telefono2)}</div>
+        ${campo('fdir', 'Dirección', f.direccion)}
+        <label for="faviso">Aviso legal o de confidencialidad</label><textarea id="faviso" rows="3" placeholder="Texto que aparece en pequeño al final del correo">${esc(f.aviso || '')}</textarea>
+        <div class="g2"><div><label for="fcolor">Color</label><input id="fcolor" type="color" value="${esc(cfg.color || '#15528F')}" style="height:44px;padding:4px"></div>
+          <div><label class="vfswitch" style="margin-top:26px"><input type="checkbox" id="flogo" ${f.logo !== 'no' ? 'checked' : ''}><span class="sw"></span><span>Incluir el logo</span></label></div></div>
+      </div><div><div class="sm" style="margin-bottom:6px">Vista previa</div><div class="firmaprev" id="fprev"></div></div></div></div>
+    <div class="card cfgpanel"><div class="acts" style="justify-content:flex-end;flex-wrap:wrap;margin:0">
+      <button class="btn sec" id="coprueba">Guardar y enviarme un correo de prueba</button><button class="btn" id="cook">Guardar</button></div>
+      <p class="sm" id="comsg" style="margin:8px 0 0"></p></div>`;
+  const prev = () => {
+    const v = id => $(id).value.trim(), color = $('fcolor').value, logo = $('flogo').checked && MARCA.logo;
+    $('fprev').innerHTML = `<div style="height:4px;background:${color};border-radius:4px;margin-bottom:12px"></div><p style="margin:0 0 12px">Hola:<br><br>Te adjuntamos la factura de tu pedido.<br><br>Un saludo,</p>
+      <div class="fprevfirma">${logo ? `<img src="${esc(MARCA.logo)}" alt="">` : ''}<div>${v('fnom') ? `<b style="color:${color}">${esc(v('fnom'))}</b><br>` : ''}${v('fcar') ? esc(v('fcar')) + '<br>' : ''}${v('femp') ? `<b>${esc(v('femp'))}</b><br>` : ''}
+        ${[v('ftel'), v('ftel2')].filter(Boolean).map(esc).join(' · ')}${v('ftel') || v('ftel2') ? '<br>' : ''}${v('fweb') ? `<span style="color:${color}">${esc(v('fweb'))}</span><br>` : ''}${v('fdir') ? esc(v('fdir')) : ''}</div></div>
+      ${v('faviso') ? `<p class="fprevaviso">${esc(v('faviso'))}</p>` : ''}`;
+  };
+  ['fnom', 'fcar', 'femp', 'fweb', 'ftel', 'ftel2', 'fdir', 'faviso', 'fcolor', 'flogo'].forEach(id => $(id).addEventListener('input', prev)); $('flogo').onchange = prev; prev();
+  $('coprov').onchange = () => {
+    const p = PROVEEDORES_CORREO[$('coprov').value]; if (!p) return;
+    if (p.host) $('cohost').value = p.host; $('copuer').value = p.puerto; $('coseg').value = p.seg;
+    $('coayuda').classList.remove('hide'); $('coayuda').querySelector('span').textContent = p.ayuda;
+  };
+  const guardar = async () => {
+    const v = id => $(id).value.trim();
+    const p = { proveedor: $('coprov').value, host: v('cohost'), puerto: +$('copuer').value || 465, seguridad: $('coseg').value, usuario: v('cousu'),
+      remitente_nombre: v('conom'), remitente_email: v('coemail') || v('cousu'), color: $('fcolor').value,
+      firma: { nombre: v('fnom'), cargo: v('fcar'), empresa: v('femp'), web: v('fweb'), telefono: v('ftel'), telefono2: v('ftel2'), direccion: v('fdir'), aviso: $('faviso').value.trim(), logo: $('flogo').checked ? 'si' : 'no' } };
+    if (!p.host || !p.usuario) { toast('Indica el servidor y el usuario', true); return false; }
+    const { data: r, error } = await db.rpc('guardar_correo', { p, p_clave: $('copass').value || null });
+    if (error || (r && r.ok === false)) { toast('No se ha podido guardar', true); return false; }
+    $('copass').value = ''; $('copass').placeholder = '•••••••• guardada · escribe solo para cambiarla'; toast('Correo guardado'); return true;
+  };
+  $('cook').onclick = guardar;
+  $('coprueba').onclick = async ev => {
+    if (!await guardar()) return;
+    ev.target.disabled = true; $('comsg').textContent = 'Enviando…';
+    let { data, error } = await db.functions.invoke('enviar_email', { body: { prueba: true } });
+    if (error && error.context && typeof error.context.json === 'function') { try { data = await error.context.json(); } catch (x) {} }
+    ev.target.disabled = false;
+    const e = data && data.error;
+    $('comsg').innerHTML = data && data.ok ? '<b style="color:var(--ok)">✓ Enviado.</b> Revisa tu bandeja de entrada (y la de correo no deseado).'
+      : e === 'credenciales' ? '<b style="color:var(--dang)">El servidor ha rechazado el usuario o la contraseña.</b> Revisa los datos; con Google hace falta una contraseña de aplicación.'
+      : e === 'conexion' ? '<b style="color:var(--dang)">No se ha podido conectar con el servidor.</b> Revisa el servidor, el puerto y la seguridad.'
+      : e === 'sin_smtp' ? '<b style="color:var(--dang)">Falta el servidor, el usuario o la contraseña.</b>'
+      : `<b style="color:var(--dang)">No se ha podido enviar.</b> ${error && !data ? 'La función de envío no está instalada en el servidor.' : esc(String(e || ''))}`;
+  };
+}
+
+async function pintarCopias() {
+  const { data: au } = await db.from('auditoria').select('creado_en').eq('accion', 'Copia de seguridad').order('creado_en', { ascending: false }).limit(1);
+  const ultima = au && au[0] ? new Date(au[0].creado_en) : null, dias = ultima ? Math.floor((Date.now() - ultima) / 864e5) : null;
+  $('cfgcuerpo').innerHTML = `<div class="card cfgpanel"><h2 style="padding:0 0 4px">Copias de seguridad</h2>
+    <p class="sm">Descarga en un único archivo todos los datos de la empresa: médicos, visitas, agenda, clientes, pedidos, facturas, stock y configuración. Las contraseñas no se incluyen.</p>
+    <div class="copiaest ${dias == null || dias > 7 ? 'mal' : 'bien'}"><b>${ultima ? 'Última copia: ' + ultima.toLocaleString('es-ES', { dateStyle: 'long', timeStyle: 'short' }) : 'Todavía no se ha hecho ninguna copia'}</b>
+      <span>${dias == null ? 'Haz la primera ahora.' : dias > 7 ? `Hace ${dias} días: conviene hacer una nueva.` : 'Al día.'}</span></div>
+    <div class="acts" style="margin:12px 0 0"><button class="btn" id="copok">⬇ Descargar copia completa</button></div>
+    <h3 class="mansub">Recomendaciones</h3><ul class="manlist">
+      <li><span>📅</span><span>Haz una copia cada semana y guárdala fuera del ordenador (unidad externa o nube de la empresa).</span></li>
+      <li><span>🔐</span><span>El archivo contiene datos personales: guárdalo en un sitio con acceso restringido.</span></li>
+      <li><span>🤖</span><span>Si quieres que se haga sola cada día, hay una copia automática gratuita con GitHub (pídela a quien te da soporte técnico).</span></li></ul></div>`;
+  $('copok').onclick = async ev => {
+    ev.target.disabled = true; ev.target.textContent = 'Preparando la copia…';
+    const { data, error } = await RPC_ORIG('exportar_datos', {});
+    ev.target.disabled = false; ev.target.textContent = '⬇ Descargar copia completa';
+    if (error || !data) { toast('No se ha podido hacer la copia', true); return; }
+    const b = new Blob([JSON.stringify(data)], { type: 'application/json' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = `copia_${nombreApp().replace(/[^\p{L}\p{N}]+/gu, '_')}_${hoyISO()}.json`; a.click();
+    const n = Object.values(data.tablas || {}).reduce((s, t) => s + t.length, 0);
+    toast(`Copia descargada · ${num(n)} registros`); setTimeout(pintarCopias, 800);
+  };
+}
+
+cargarConfig = (orig => async function () {
+  await orig();
+  const nav = document.querySelector('.cfgnav'); if (!nav || PERFIL.rol !== 'Administrador') return;
+  const plan = nav.querySelector('[data-cfg="plan"]'); if (!plan || nav.querySelector('[data-cfg="correo"]')) return;
+  plan.insertAdjacentHTML('beforebegin', `<button data-cfg="correo"><span class="ci">✉️</span><span><b>Correo y firma</b><em>Cuenta de envío y firma de los emails</em></span></button>
+    <button data-cfg="copias"><span class="ci">💾</span><span><b>Copias de seguridad</b><em>Descarga todos los datos de la empresa</em></span></button>`);
+  const acc = { correo: pintarCorreo, copias: pintarCopias };
+  nav.querySelectorAll('[data-cfg="correo"], [data-cfg="copias"]').forEach(b => b.onclick = () => {
+    salirPanel(); CFG_SEC = b.dataset.cfg; nav.querySelectorAll('[data-cfg]').forEach(x => x.classList.toggle('on', x === b)); acc[b.dataset.cfg]();
+    if (ES_MOVIL()) { const hub = document.querySelector('.cfghub'); hub.classList.add('detalle'); setTimeout(cfgMovil, 50); scrollTo({ top: 0 }); }
+  });
+  if (acc[CFG_SEC]) { nav.querySelectorAll('[data-cfg]').forEach(x => x.classList.toggle('on', x.dataset.cfg === CFG_SEC)); acc[CFG_SEC](); }
+})(cargarConfig);
+
+
 // Barra inferior del móvil y barra de «Entrar como» desde el primer momento
 pintarBnav();
 
