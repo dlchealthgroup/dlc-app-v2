@@ -13405,7 +13405,7 @@ async function pintarCorreo() {
           <div><label for="coseg">Seguridad</label><select id="coseg"><option value="ssl" ${cfg.seguridad === 'ssl' ? 'selected' : ''}>SSL</option><option value="starttls" ${cfg.seguridad === 'starttls' ? 'selected' : ''}>STARTTLS</option></select></div></div></div>
       <div class="g2">${campo('cousu', 'Usuario', cfg.usuario, 'autocomplete="off" placeholder="facturacion@tuempresa.com"')}
         <div><label for="copass">Contraseña</label><input id="copass" type="password" autocomplete="new-password" placeholder="${cfg.hay_clave ? '•••••••• guardada · escribe solo para cambiarla' : 'Contraseña del correo'}"></div></div>
-      <div class="g2">${campo('conom', 'Nombre del remitente', cfg.remitente_nombre, `placeholder="${esc(nombreApp())}"`)}${campo('coemail', 'Email del remitente', cfg.remitente_email, 'type="email" placeholder="igual que el usuario"')}</div>
+      <div class="g2">${campo('conom', 'Nombre del remitente', cfg.remitente_nombre, `placeholder="${esc(nombreApp())}"`)}${campo('coemail', 'Email del remitente', cfg.remitente_email || (AJUSTES.empresa || {}).email || PERFIL.email || '', 'type="email" placeholder="nombre@tuempresa.com"')}</div>
       <p class="sm">🔒 La contraseña se guarda aparte y nadie puede verla desde la plataforma, ni siquiera administración.</p></div>
     <div class="card cfgpanel"><h2 style="padding:0 0 4px">Firma</h2>
       <p class="sm">Se añade al final de cada email, con el logo de la empresa si lo tienes en Marca y logo.</p>
@@ -13457,28 +13457,28 @@ async function pintarCorreo() {
     const { data: r, error } = await db.rpc('guardar_correo', { p, p_clave: $('copass').value || null });
     if (error || (r && r.ok === false)) {
       const motivo = error ? (error.message || error.code || '') : r.error;
-      const txt = /Could not find the function|PGRST202|does not exist/i.test(motivo) ? 'La base de datos no tiene el SQL 48 aplicado (falta la función del correo).'
+      const txt = /Could not find the function|PGRST202/i.test(motivo) ? 'La base de datos no encuentra la función del correo (SQL 48).'
         : motivo === 'permiso' ? 'Solo administración puede configurar el correo.' : 'No se ha podido guardar: ' + motivo;
-      $('comsg').innerHTML = `<b style="color:var(--dang)">${esc(txt)}</b>`; toast(txt, true); return false;
+      $('comsg').innerHTML = `<b style="color:var(--dang)">${esc(txt)}</b>${motivo && txt.indexOf(motivo) < 0 ? `<span class="errtec">Detalle técnico: ${esc(motivo)}</span>` : ''}`; toast(txt, true); return false;
     }
     if ($('copass').value) cfg.hay_clave = true;
     $('comsg').innerHTML = '<b style="color:var(--ok)">✓ Guardado.</b>';
     $('copass').value = ''; $('copass').placeholder = '•••••••• guardada · escribe solo para cambiarla'; toast('Correo guardado'); return true;
   };
-  $('cook').onclick = guardar;
-  $('coprueba').onclick = async ev => {
+  $('cook').onclick = () => conCarga($('cook'), 'Guardando…', guardar);
+  $('coprueba').onclick = ev => conCarga($('coprueba'), 'Enviando…', async () => {
     if (!await guardar()) return;
-    ev.target.disabled = true; $('comsg').textContent = 'Enviando…';
+    $('comsg').textContent = 'Enviando el correo de prueba…';
     let { data, error } = await db.functions.invoke('enviar_email', { body: { prueba: true } });
     if (error && error.context && typeof error.context.json === 'function') { try { data = await error.context.json(); } catch (x) {} }
-    ev.target.disabled = false;
     const e = data && data.error;
     $('comsg').innerHTML = data && data.ok ? '<b style="color:var(--ok)">✓ Enviado.</b> Revisa tu bandeja de entrada (y la de correo no deseado).'
       : e === 'credenciales' ? '<b style="color:var(--dang)">El servidor ha rechazado el usuario o la contraseña.</b> Revisa los datos; con Google hace falta una contraseña de aplicación.'
       : e === 'conexion' ? '<b style="color:var(--dang)">No se ha podido conectar con el servidor.</b> Revisa el servidor, el puerto y la seguridad.'
       : e === 'sin_smtp' ? '<b style="color:var(--dang)">Falta el servidor, el usuario o la contraseña.</b>'
       : `<b style="color:var(--dang)">No se ha podido enviar.</b> ${error && !data ? 'La función de envío no está instalada en el servidor.' : esc(String(e || ''))}`;
-  };
+  });
+  validarEmailEnVivo($('coemail'));
 }
 
 async function pintarCopias() {
@@ -13646,6 +13646,33 @@ pintarPerfil = (orig => function () { orig(); medidorClave($('pfp1'), $('pfp2'),
     if (error) { e.preventDefault(); e.stopImmediatePropagation(); if (m) { m.style.color = 'var(--dang)'; m.textContent = error; } (u.value.trim() ? p : u).focus(); }
   }, true);
 })();
+
+
+/* ============================================================
+   v2.45.4 · Botones con indicador de carga y emails comprobados al escribir
+   ============================================================ */
+
+// Botón en espera: se desactiva, muestra un indicador y recupera su texto al terminar
+async function conCarga(btn, texto, fn) {
+  if (!btn || btn.dataset.cargando) return;
+  const antes = btn.innerHTML; btn.dataset.cargando = '1'; btn.disabled = true; btn.classList.add('btncarga');
+  btn.innerHTML = `<span class="giro"></span>${esc(texto)}`;
+  try { return await fn(); } finally { btn.innerHTML = antes; btn.disabled = false; btn.classList.remove('btncarga'); delete btn.dataset.cargando; }
+}
+// Email comprobado mientras se escribe: ✓ verde si es válido, ✗ rojo si no
+function validarEmailEnVivo(inp) {
+  if (!inp || inp.dataset.vemail) return; inp.dataset.vemail = '1';
+  const w = document.createElement('span'); w.className = 'emailw'; inp.parentNode.insertBefore(w, inp); w.appendChild(inp);
+  w.insertAdjacentHTML('beforeend', '<span class="emailico" aria-hidden="true"></span>');
+  const act = () => {
+    const v = inp.value.trim(), ok = /^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(v);
+    w.classList.toggle('ok', !!v && ok); w.classList.toggle('mal', !!v && !ok);
+    w.querySelector('.emailico').textContent = !v ? '' : ok ? '✓' : '✗';
+    const err = w.nextElementSibling && w.nextElementSibling.classList.contains('campoerr') ? w.nextElementSibling : null;
+    if (err && ok) { err.remove(); inp.classList.remove('conerr'); }
+  };
+  inp.addEventListener('input', act); act();
+}
 
 
 // Barra inferior del móvil y barra de «Entrar como» desde el primer momento
