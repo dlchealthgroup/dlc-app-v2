@@ -1252,6 +1252,37 @@ nav.main [data-t="seguimiento"]{display:none!important}
 .segs button{border:0;background:none;border-radius:9px;padding:7px 12px;font:inherit;font-weight:650;color:var(--muted);cursor:pointer}
 .segs button.on{background:var(--grad);color:#fff}
 section.cargando-pend{}
+
+/* v2.53.0 · filtros y columnas, páginas propias, plan */
+.htpanel{display:grid;gap:14px;margin:0 0 14px;padding:16px 18px;border:1px solid var(--line);border-radius:16px;background:#fff;box-shadow:var(--sh)}
+.htpropios{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end}
+.htpropios:empty{display:none}
+.htpropios > *{flex:0 1 auto;min-width:160px}
+.htbloque h4{margin:0 0 6px;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
+.htfacetas{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px}
+.htfacetas label{display:flex;flex-direction:column;gap:3px;font-size:12px;color:var(--muted);font-weight:600}
+.htcols{display:flex;flex-wrap:wrap;gap:4px 14px}
+.htcols .opt{margin:0;font-size:13px}
+.httexto{max-width:420px}
+.htbtn .htn{margin-left:6px;min-width:18px;height:18px;border-radius:9px;background:var(--sky);color:#fff;font-size:11px;display:none;place-items:center;padding:0 5px}
+.htbtn.conf .htn{display:inline-grid}
+.htbtn .ico{margin-right:4px}
+.htno{display:none!important}
+.htfuera{display:none!important}
+.pagtabs{margin-bottom:14px}
+.planhero{display:flex;justify-content:space-between;gap:24px;flex-wrap:wrap;align-items:center;padding:28px 30px;border-radius:22px;background:var(--grad);color:#fff;margin-bottom:22px;box-shadow:0 18px 40px rgba(21,82,143,.25)}
+.planhero h1{color:#fff;margin:2px 0 6px;font-size:34px}.planhero p{margin:0;opacity:.9;max-width:520px}
+.planeti{font-size:12px;text-transform:uppercase;letter-spacing:.08em;opacity:.8}
+.planheronum{min-width:260px;display:flex;flex-direction:column;gap:6px}.planheronum b{font-size:30px}.planheronum b span{font-size:18px;opacity:.75}
+.planheronum .barra{background:rgba(255,255,255,.25)}.planheronum .barra i{background:#fff}.planheronum .sm{color:#fff;opacity:.85}
+.plantit{margin:6px 0 12px;font-size:20px;color:var(--navy)}
+.plancinta.actualc{left:auto;right:16px;background:var(--navy)}
+.planmat{width:100%;border-collapse:collapse;font-size:14px;min-width:760px}
+.planmat th{padding:14px 12px;text-align:center;color:var(--navy);background:#F2F8FD}.planmat th:first-child,.planmat td:first-child{text-align:left}
+.planmat td{padding:12px;border-top:1px solid var(--line);text-align:center}.planmat td .sm{display:block}
+.planmat .act{background:rgba(46,134,201,.07)}.planmat .si{color:var(--ok);font-weight:800;font-size:17px}.planmat .no{color:#B7C4D1}
+
+@media (max-width:760px){.htbtn .htl{display:none}.htbtn{padding:0 12px!important}.htbtn .ico{margin:0}.saludo .acts{flex-wrap:wrap;max-width:100%}.htpanel{padding:12px}}
 </style>
 </head>
 <body>
@@ -1386,6 +1417,6 @@ section.cargando-pend{}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js" defer></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="./config.js"></script>
-<script src="./app.js?v=2.52.0"></script>
+<script src="./app.js?v=2.53.0"></script>
 </body>
 </html>
