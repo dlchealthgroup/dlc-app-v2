@@ -1217,16 +1217,6 @@ const puedeCatalogos = () => PERFIL && (PERFIL.rol === 'Administrador' || ((PERF
 
 /* ---------------- configuración ---------------- */
 
-async function cargarConfig() {
-  const secs = [['prefs', 'Mis preferencias']].concat(puedeCatalogos() ? [['cat', 'Clasificadores']] : []);
-  if (CFG_SEC === 'rutas') CFG_SEC = 'prefs';
-  $('v-config').innerHTML = `
-    <div class="saludo"><div><h1>Configuración</h1><div class="fecha">Ajustes de tu cuenta y de la plataforma</div></div></div>
-    <div class="subnav">${secs.map(([k, t]) => `<button data-cs="${k}" aria-pressed="${CFG_SEC === k}">${t}</button>`).join('')}</div>
-    <div id="cfgcuerpo"></div>`;
-  if (CFG_SEC === 'prefs') pintarPrefs();
-  if (CFG_SEC === 'cat') pintarCatalogos();
-}
 
 document.addEventListener('click', e => {
   const b = e.target.closest('[data-cs]');
@@ -1417,7 +1407,91 @@ async function cargarAdmin() {
     restablecerPassword(USUARIOS.find(x => x.id === b.dataset.upass) || {}));
 }
 
-function editarUsuario(id) {
+/* Editar usuario: la ventana base y, en orden, cada bloque que se le añade (antes eran 5 capas separadas). */
+async function editarUsuario(id, ...r) {
+  await asegurarUsuario(id);            // funciona aunque la lista de usuarios aún no esté cargada
+  const d = $('dlg'); d.classList.add('cargando');
+  const limite = setTimeout(() => d.classList.remove('cargando'), 8000);
+  try {
+    await pintarUsuarioBase(id, ...r);
+    await usuarioComisionYZona(id);
+    await usuarioFichaMedico(id);
+    await usuarioComisionInfo(id);
+  } finally { clearTimeout(limite); requestAnimationFrame(() => d.classList.remove('cargando')); }
+}
+
+// Editar usuario · Comisión: desde cuándo se aplica el esquema, y zona de los comerciales
+async function usuarioComisionYZona(id) {
+  const u = (USUARIOS || []).find(x => x.id === id);
+  if (!u || !$('dlg').open) return;
+  // Comisión: desde cuándo se aplica el esquema (el selector se pinta un momento después)
+  for (let i = 0; i < 30 && !$('ucom') && $('dlg').open; i++) await new Promise(r => setTimeout(r, 100));
+  const ucom = $('ucom');
+  if (ucom && !$('ucdesde')) {
+    ucom.dataset.orig = ucom.value;
+    ucom.closest('.g2').insertAdjacentHTML('afterend', `<div class="g2" id="ucdesde">
+      <div><label class="sm" for="ucdm">Se aplica</label><select id="ucdm">
+        <option value="hoy">A partir de hoy</option><option value="todo">A todo su histórico (hacia atrás)</option><option value="fecha">A partir de una fecha concreta</option></select></div>
+      <div><label class="sm" for="ucdf">Fecha</label><input id="ucdf" type="date" value="${hoyISO()}" disabled></div></div>
+      <div class="sm" id="uchist"></div>`);
+    $('ucdm').onchange = () => { $('ucdf').disabled = $('ucdm').value !== 'fecha'; };
+    const { data: h } = await RPC_ORIG('historial_esquemas', { p_usuario: id });
+    if ((h || []).length && $('uchist')) $('uchist').innerHTML = 'Historial: ' + h.map(x => `${esc(x.esquema)} desde ${fechaCorta(x.desde)}${x.hasta ? ' hasta ' + fechaCorta(x.hasta) : ''}`).join(' · ');
+  }
+  // Zona, solo para comerciales
+  if (u.rol === 'Comercial' && !$('uzonas')) {
+    const html = await bloqueZonas(u);
+    const ref = $('ucomzona') || $('dbody').querySelector('.acts:last-of-type');
+    if (ref && $('dlg').open) ref.insertAdjacentHTML('beforebegin', html);
+    $('dbody').querySelectorAll('[data-zcc]').forEach(c => c.onchange = () =>
+      $('dbody').querySelectorAll(`[data-zpc="${CSS.escape(c.dataset.zcc)}"]`).forEach(x => x.checked = c.checked));
+    if ($('uzok')) $('uzok').onclick = async ev => {
+      const zonas = [...$('dbody').querySelectorAll('[data-zp]:checked')].map(x => x.dataset.zp);
+      ev.target.disabled = true;
+      const { data: r, error } = await db.rpc('asignar_zona', { p_usuario: id, p_zonas: zonas });
+      ev.target.disabled = false;
+      if (error || (r && r.ok === false)) { toast('No se ha podido guardar la zona', true); return; }
+      toast(`Zona guardada · ${num(r.asignados)} médicos nuevos en su cartera${r.en_otra_cartera ? ` · ${num(r.en_otra_cartera)} de su zona están en otra cartera` : ''}`);
+    };
+  }
+}
+
+// Editar usuario · Ficha de médico vinculada (usuarios con rol Medico)
+async function usuarioFichaMedico(id) {
+  const u = (USUARIOS || []).find(x => x.id === id);
+  if (!u || u.rol !== 'Medico' || !$('dlg').open || $('umedw')) return;
+  const { data: pf } = await db.from('perfiles').select('medico_id').eq('id', id).single();
+  let medico = null;
+  if (pf && pf.medico_id) { const { data: fm } = await db.rpc('ficha_medico', { p_id: pf.medico_id }); if (fm && fm.medico) medico = { id: fm.medico.id, nombre: fm.medico.nombre }; }
+  const ref = $('dbody').querySelector('.acts:last-of-type');
+  ref.insertAdjacentHTML('beforebegin', `<div class="blk" id="umedw"><h3>Ficha de médico vinculada</h3>
+    <p class="sm">Este usuario verá solo el informe de este médico y recibirá un aviso con cada pauta a su nombre. Sin importes ni datos de pacientes.</p>
+    <div id="umedsel"></div><div class="acts" style="margin-top:8px"><button class="btn sec" id="umedok">Guardar vínculo</button>
+    ${medico ? `<button class="btn sec" id="umedver">Ver su informe</button>` : ''}</div></div>`);
+  selectorMedico($('umedsel'), { valor: medico, placeholder: 'Busca su ficha', alElegir: m => { medico = m; } });
+  $('umedok').onclick = async () => {
+    const { data: r, error } = await db.rpc('vincular_medico', { p_usuario: id, p_medico: medico ? medico.id : null });
+    if (error || (r && r.ok === false)) { toast('No se ha podido guardar', true); return; }
+    toast(medico ? 'Vinculado con ' + medico.nombre : 'Vínculo quitado');
+  };
+  if ($('umedver')) $('umedver').onclick = async () => {
+    const { data: d } = await RPC_ORIG('informe_medico', { p_medico: medico.id });
+    toast(`${medico.nombre}: ${num(d.unidades)} unidades, ${num(d.pautas)} pautas este año${d.posicion ? ' · Nº ' + d.posicion : ''}`);
+  };
+}
+
+// Editar usuario · La comisión se muestra como información: se asigna dentro de cada esquema
+async function usuarioComisionInfo(id) {
+  for (let i = 0; i < 30 && !$('ucom') && $('dlg').open; i++) await new Promise(r => setTimeout(r, 100));
+  const s = $('ucom'); if (!s || $('ucominfo')) return;
+  const g = s.closest('.g2') || s.parentElement;
+  const txt = s.selectedOptions[0] && s.value ? s.selectedOptions[0].textContent : 'Sin comisión';
+  g.classList.add('hide'); if ($('ucdesde')) $('ucdesde').classList.add('hide'); if ($('uchist')) $('uchist').classList.add('hide');
+  g.insertAdjacentHTML('afterend', `<div class="avisoh" id="ucominfo"><span>Comisión: <b>${esc(txt)}</b>. Se asigna dentro de cada esquema en Administración → Comisiones.</span></div>`);
+}
+
+/* Ventana base de editar usuario; editarUsuario le añade el resto de bloques */
+function pintarUsuarioBase(id) {
   const u = USUARIOS.find(x => x.id === id); if (!u) return;
   const areas = u.areas || {};
   $('dbody').innerHTML = `
@@ -3568,13 +3642,6 @@ async function pintarAccesos() {
 }
 
 
-function resumenDetalle(d) {
-  if (!d) return '';
-  if (d.nombre) return d.nombre;
-  const campos = Object.keys(d).filter(k => Array.isArray(d[k])).slice(0, 4);
-  if (!campos.length) return '';
-  return campos.map(k => `${k}: ${String(d[k][0] ?? '—').slice(0, 20)} → ${String(d[k][1] ?? '—').slice(0, 20)}`).join(' · ');
-}
 
 /* ---------------- cartera y contraseña de un usuario ---------------- */
 
@@ -5409,11 +5476,6 @@ const rutaPausada = () => { try { return JSON.parse(localStorage.getItem(RPKEY()
 
 
 
-async function visitadosDe(a) {
-  if (!navigator.onLine) return new Set(a.hechosIds || []);
-  const { data } = await db.from('visitas').select('medico_id').eq('fecha', a.fecha);
-  return new Set((data || []).filter(v => a.codes.includes(v.medico_id)).map(v => v.medico_id));
-}
 
 /** Ventana con varias opciones; devuelve la clave elegida o null. */
 function elegirOpcion(titulo, msg, botones) {
@@ -7264,25 +7326,6 @@ function pintarBnav() {
   $('bmasbtn').onclick = abrirMasMovil;
 }
 
-function abrirMasMovil() {
-  const principales = ['inicio', 'agenda', 'rutas', 'directorio'];
-  const mods = [...document.querySelectorAll('nav.main [data-t]')]
-    .filter(x => !x.classList.contains('hide') && !x.disabled && !principales.includes(x.dataset.t))
-    .map(x => [x.dataset.t, x.textContent.replace('Pronto', '').trim()]);
-  const extra = [['manual', 'Manual de uso'], ['config', 'Configuración']].concat(PERFIL.rol === 'Administrador' ? [['admin', 'Administración']] : []);
-  let s = $('bmas');
-  if (!s) { document.body.insertAdjacentHTML('beforeend', '<div id="bmas" class="bmas hide"></div>'); s = $('bmas'); }
-  s.innerHTML = `<div class="bmasbox"><div class="fh"><h2>Todos los módulos</h2><button class="x" id="bmasx" aria-label="Cerrar">✕</button></div>
-    <div class="bmasgrid">${mods.concat(extra).map(([t, n]) => `<button data-bm="${t}" class="${TAB === t ? 'on' : ''}">${esc(n)}</button>`).join('')}</div></div>`;
-  s.classList.remove('hide');
-  $('bmasx').onclick = () => s.classList.add('hide');
-  s.onclick = e => { if (e.target === s) s.classList.add('hide'); };
-  s.querySelectorAll('[data-bm]').forEach(x => x.onclick = () => {
-    s.classList.add('hide');
-    if (x.dataset.bm === 'config') { ir('config'); return; }
-    ir(x.dataset.bm);
-  });
-}
 
 /* ---------------- entrar como otro usuario ---------------- */
 
@@ -8849,41 +8892,6 @@ async function bloqueZonas(u) {
     <div class="acts" style="margin-top:8px"><button class="btn sec" id="uzok">Guardar zona y asignar sus médicos</button></div></div>`;
 }
 
-editarUsuario = (orig => async function (id) {
-  await orig(id);
-  const u = (USUARIOS || []).find(x => x.id === id);
-  if (!u || !$('dlg').open) return;
-  // Comisión: desde cuándo se aplica el esquema (el selector se pinta un momento después)
-  for (let i = 0; i < 30 && !$('ucom') && $('dlg').open; i++) await new Promise(r => setTimeout(r, 100));
-  const ucom = $('ucom');
-  if (ucom && !$('ucdesde')) {
-    ucom.dataset.orig = ucom.value;
-    ucom.closest('.g2').insertAdjacentHTML('afterend', `<div class="g2" id="ucdesde">
-      <div><label class="sm" for="ucdm">Se aplica</label><select id="ucdm">
-        <option value="hoy">A partir de hoy</option><option value="todo">A todo su histórico (hacia atrás)</option><option value="fecha">A partir de una fecha concreta</option></select></div>
-      <div><label class="sm" for="ucdf">Fecha</label><input id="ucdf" type="date" value="${hoyISO()}" disabled></div></div>
-      <div class="sm" id="uchist"></div>`);
-    $('ucdm').onchange = () => { $('ucdf').disabled = $('ucdm').value !== 'fecha'; };
-    const { data: h } = await RPC_ORIG('historial_esquemas', { p_usuario: id });
-    if ((h || []).length && $('uchist')) $('uchist').innerHTML = 'Historial: ' + h.map(x => `${esc(x.esquema)} desde ${fechaCorta(x.desde)}${x.hasta ? ' hasta ' + fechaCorta(x.hasta) : ''}`).join(' · ');
-  }
-  // Zona, solo para comerciales
-  if (u.rol === 'Comercial' && !$('uzonas')) {
-    const html = await bloqueZonas(u);
-    const ref = $('ucomzona') || $('dbody').querySelector('.acts:last-of-type');
-    if (ref && $('dlg').open) ref.insertAdjacentHTML('beforebegin', html);
-    $('dbody').querySelectorAll('[data-zcc]').forEach(c => c.onchange = () =>
-      $('dbody').querySelectorAll(`[data-zpc="${CSS.escape(c.dataset.zcc)}"]`).forEach(x => x.checked = c.checked));
-    if ($('uzok')) $('uzok').onclick = async ev => {
-      const zonas = [...$('dbody').querySelectorAll('[data-zp]:checked')].map(x => x.dataset.zp);
-      ev.target.disabled = true;
-      const { data: r, error } = await db.rpc('asignar_zona', { p_usuario: id, p_zonas: zonas });
-      ev.target.disabled = false;
-      if (error || (r && r.ok === false)) { toast('No se ha podido guardar la zona', true); return; }
-      toast(`Zona guardada · ${num(r.asignados)} médicos nuevos en su cartera${r.en_otra_cartera ? ` · ${num(r.en_otra_cartera)} de su zona están en otra cartera` : ''}`);
-    };
-  }
-})(editarUsuario);
 
 /* ---------------- operativa de los pedidos ---------------- */
 
@@ -9015,46 +9023,6 @@ async function pintarLlamadas() {
   pinta();
 }
 
-async function editorLlamada(l) {
-  await catLlamadas();
-  l = l || { direccion: 'Entrante', fecha: new Date().toISOString() };
-  let medico = l.medico_id ? { id: l.medico_id, nombre: l.medico } : null;
-  const f = new Date(l.fecha), local = new Date(f.getTime() - f.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
-  const opts = (cat, v) => `<option value=""></option>${(CAT[cat] || []).map(x => `<option ${x.valor === v ? 'selected' : ''}>${esc(x.valor)}</option>`).join('')}`;
-  $('dbody').innerHTML = `
-    <div class="fh"><div><h2>${l.id ? 'Llamada' : 'Registrar llamada'}</h2><div class="sm">Aunque no acabe en pedido: sirve para medir por qué no se convierte</div></div>
-      <button class="x" data-cerrar aria-label="Cerrar">✕</button></div>
-    <div class="g2"><div><label for="llf">Fecha y hora</label><input id="llf" type="datetime-local" value="${local}"></div>
-      <div><label for="lld">Tipo</label><select id="lld"><option ${l.direccion === 'Entrante' ? 'selected' : ''}>Entrante</option><option ${l.direccion === 'Saliente' ? 'selected' : ''}>Saliente</option></select></div></div>
-    <div class="g2"><div><label for="lln">Nombre de quien llama</label><input id="lln" value="${esc(l.nombre || '')}" placeholder="Paciente o persona interesada"></div>
-      <div><label for="llt">Teléfono</label><input id="llt" value="${esc(l.telefono || '')}" inputmode="tel"></div></div>
-    <label>Médico que lo recomienda</label><div id="llmed"></div>
-    <div class="g2"><div><label for="llm">Motivo</label><select id="llm">${opts('MOTIVO_LLAMADA', l.motivo)}</select></div>
-      <div><label for="llr">Resultado</label><select id="llr">${opts('RESULTADO_LLAMADA', l.resultado)}</select></div></div>
-    <div class="g2"><div><label for="llpa">Próximo paso</label><input id="llpa" value="${esc(l.proxima_accion || '')}" placeholder="p. ej. Llamar cuando cobre"></div>
-      <div><label for="llpf">Fecha del próximo paso</label><input id="llpf" type="date" value="${esc(l.proxima_fecha || '')}"></div></div>
-    <label for="llno">Nota</label><textarea id="llno" rows="2">${esc(l.nota || '')}</textarea>
-    <div class="acts" style="justify-content:flex-end"><button class="btn sec" data-cerrar>Cancelar</button>
-      ${!l.id ? '<button class="btn sec" id="llped">Guardar y crear pedido</button>' : ''}<button class="btn" id="llok">Guardar</button></div>`;
-  $('dlg').showModal();
-  $('llmed').__texto = medico ? '' : (l.medico_texto || '');
-  selectorMedico($('llmed'), { valor: medico, placeholder: 'Nombre, código, centro o municipio', alElegir: m => { medico = m; } });
-  const guardar = async () => {
-    const { data: r, error } = await db.rpc('guardar_llamada', { p: { id: l.id || null, fecha: new Date($('llf').value).toISOString(), direccion: $('lld').value,
-      nombre: $('lln').value.trim(), telefono: $('llt').value.trim(), medico_id: medico ? medico.id : null,
-      medico_texto: medico ? '' : ($('llmed').__texto || '').trim(), motivo: $('llm').value, resultado: $('llr').value,
-      proxima_accion: $('llpa').value.trim(), proxima_fecha: $('llpf').value, nota: $('llno').value.trim(), pedido_id: l.pedido_id || null } });
-    if (error || (r && r.ok === false)) { toast('No se ha podido guardar', true); return null; }
-    return r.id;
-  };
-  $('llok').onclick = async () => { if (await guardar()) { $('dlg').close(); toast('Llamada registrada'); if (TAB === 'ventas' && PEDSEC === 'llamadas') pintarLlamadas(); } };
-  if ($('llped')) $('llped').onclick = async () => {
-    if (!$('llr').value) $('llr').value = 'Pedido hecho';
-    const lid = await guardar(); if (!lid) return;
-    $('dlg').close(); toast('Llamada registrada · crea ahora el pedido');
-    PEDSEC = 'ventas'; ir('ventas'); setTimeout(() => $('pednuevo') && $('pednuevo').click(), 900);
-  };
-}
 
 /* ---------------- Inicio: operativa pendiente para televenta y administración ---------------- */
 
@@ -9160,14 +9128,6 @@ let FACPAG = 0, LLPAG = 0;
 /* ---------------- factura en PDF (mismo formato que Holded) ---------------- */
 
 let LOGO_DATA = null;
-async function logoData() {
-  if (LOGO_DATA) return LOGO_DATA;
-  try {
-    const b = await (await fetch(new URL('logo.png', location.href).href)).blob();
-    LOGO_DATA = await new Promise(r => { const f = new FileReader(); f.onload = () => r(f.result); f.readAsDataURL(b); });
-  } catch (e) { LOGO_DATA = null; }
-  return LOGO_DATA;
-}
 async function imagenData(url) {
   try { const b = await (await fetch(url)).blob(); return await new Promise(r => { const f = new FileReader(); f.onload = () => r(f.result); f.readAsDataURL(b); }); }
   catch (e) { return null; }
@@ -9507,13 +9467,6 @@ Object.assign(RPC_TTL, { informe_medico: 60, mis_notificaciones: 20, asignacione
 
 const MESES_L = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
 let SELPOP = null, LOGO_CIRC = false;
-function cerrarSelector() { if (SELPOP) { SELPOP.remove(); SELPOP = null; } }
-function colocarPop(pop, ref) {
-  const r = ref.getBoundingClientRect(), alto = pop.offsetHeight, ancho = pop.offsetWidth;
-  const abajo = window.innerHeight - r.bottom > alto + 12 || r.top < alto + 12;
-  pop.style.top = (abajo ? r.bottom + 6 : r.top - alto - 6) + 'px';
-  pop.style.left = Math.max(8, Math.min(window.innerWidth - ancho - 8, r.left)) + 'px';
-}
 // Con una ventana abierta, solo se puede pulsar lo que está dentro: el selector se coloca en ella
 const capaSelector = inp => inp.closest('dialog[open]') || [...document.querySelectorAll('dialog[open]')].pop() || document.body;
 function emitir(inp) { inp.dispatchEvent(new Event('input', { bubbles: true })); inp.dispatchEvent(new Event('change', { bubbles: true })); }
@@ -9749,29 +9702,6 @@ if (typeof pintarBnav === 'function') pintarBnav = (orig => function () {
 })(pintarBnav);
 
 // Vincular un usuario de tipo Médico con su ficha (Administración → Usuarios → Editar)
-editarUsuario = (orig => async function (id) {
-  await orig(id);
-  const u = (USUARIOS || []).find(x => x.id === id);
-  if (!u || u.rol !== 'Medico' || !$('dlg').open || $('umedw')) return;
-  const { data: pf } = await db.from('perfiles').select('medico_id').eq('id', id).single();
-  let medico = null;
-  if (pf && pf.medico_id) { const { data: fm } = await db.rpc('ficha_medico', { p_id: pf.medico_id }); if (fm && fm.medico) medico = { id: fm.medico.id, nombre: fm.medico.nombre }; }
-  const ref = $('dbody').querySelector('.acts:last-of-type');
-  ref.insertAdjacentHTML('beforebegin', `<div class="blk" id="umedw"><h3>Ficha de médico vinculada</h3>
-    <p class="sm">Este usuario verá solo el informe de este médico y recibirá un aviso con cada pauta a su nombre. Sin importes ni datos de pacientes.</p>
-    <div id="umedsel"></div><div class="acts" style="margin-top:8px"><button class="btn sec" id="umedok">Guardar vínculo</button>
-    ${medico ? `<button class="btn sec" id="umedver">Ver su informe</button>` : ''}</div></div>`);
-  selectorMedico($('umedsel'), { valor: medico, placeholder: 'Busca su ficha', alElegir: m => { medico = m; } });
-  $('umedok').onclick = async () => {
-    const { data: r, error } = await db.rpc('vincular_medico', { p_usuario: id, p_medico: medico ? medico.id : null });
-    if (error || (r && r.ok === false)) { toast('No se ha podido guardar', true); return; }
-    toast(medico ? 'Vinculado con ' + medico.nombre : 'Vínculo quitado');
-  };
-  if ($('umedver')) $('umedver').onclick = async () => {
-    const { data: d } = await RPC_ORIG('informe_medico', { p_medico: medico.id });
-    toast(`${medico.nombre}: ${num(d.unidades)} unidades, ${num(d.pautas)} pautas este año${d.posicion ? ' · Nº ' + d.posicion : ''}`);
-  };
-})(editarUsuario);
 
 MANUAL.push({ id: 'medico', t: 'Espacio del médico', a: null, para: 'Los médicos con usuario ven su informe de prescripción y reciben un aviso con cada pauta a su nombre.',
   hacer: [[3, 'Crear el usuario con el rol «Medico» y vincularlo a su ficha (Administración → Usuarios → Editar)']],
@@ -9780,12 +9710,6 @@ ICONOS_MANUAL.medico = '🩺';
 
 /* ---------------- factura en PDF con el logo circular ---------------- */
 
-logoData = (orig => async function () {
-  if (LOGO_DATA) return LOGO_DATA;
-  const x = await imagenData(new URL('logo-circulo.png', location.href).href);
-  if (x && x.startsWith('data:image')) { LOGO_DATA = x; LOGO_CIRC = true; return x; }
-  return orig();
-})(logoData);
 
 
 /* ============================================================
@@ -10099,48 +10023,6 @@ pintarTablaAnalitica = (orig => async function () {
 
 /* ---------------- Configuración: todo en un único sitio ---------------- */
 
-cargarConfig = async function () {
-  const admin = PERFIL.rol === 'Administrador';
-  const grupos = [
-    ['Tu cuenta', [
-      ['prefs', '📍', 'Mis preferencias', 'Punto de salida, navegación, plantillas y jornada', () => { $('cfgcuerpo').innerHTML = ''; pintarPrefs(); }],
-      ['horario', '🕘', 'Horario de las rutas', 'Hora de salida, vuelta y tiempos por visita', () => abrirHorarioPlan()],
-      ['kpis', '📊', 'Indicadores de Inicio', 'Qué indicadores ves y en qué orden', () => abrirKpis()]]],
-    ['Base de datos', puedeCatalogos() ? [
-      ['cat', '🏷️', 'Clasificadores', 'Listas de valores: especialidades, motivos, formas de pago…', () => { $('cfgcuerpo').innerHTML = ''; pintarCatalogos(); }]] : []],
-    ['Equipo y cartera', admin ? [
-      ['usuarios', '👥', 'Usuarios y permisos', 'Altas, roles, permisos por módulo y zonas', () => { ADM_SEC = 'usuarios'; ir('admin'); }],
-      ['reglas', '🧭', 'Reglas de cartera', 'Cartera exclusiva y cómo se asignan los médicos', () => editorReglasCartera()],
-      ['frec', '🔁', 'Frecuencia de visita', 'Cada cuánto hay que visitar a cada médico', () => editorFrecuencia()],
-      ['comis', '€', 'Comisiones', 'Esquemas y quién cobra con cada uno', () => { ADM_SEC = 'comisiones'; ir('admin'); }]] : []],
-    ['Stock', admin || nivelDe2('P') >= 3 ? [
-      ['alm', '🏬', 'Almacenes', 'Central y almacenes de cada comercial', () => editorAlmacenes()],
-      ['mues', '🎁', 'Material y muestras', 'Qué se entrega en las visitas y si descuenta stock', () => editorMuestras()]] : []],
-    ['Facturación', admin ? [
-      ['fiscal', '🏢', 'Datos fiscales', 'Emisor, IBAN, pie, vencimiento y emisión automática', () => { $('cfgcuerpo').innerHTML = '<div id="fcuerpo"></div>'; pintarEmpresa(); }],
-      ['series', '#️⃣', 'Series y numeración', 'Formato y siguiente número de cada serie', () => { $('cfgcuerpo').innerHTML = '<div id="fcuerpo"></div>'; pintarSeries(); }],
-      ['vf', '🔐', 'VeriFactu', 'Activación y estado del registro', () => { $('cfgcuerpo').innerHTML = '<div id="fcuerpo"></div>'; pintarVerifactu(); }]] : []]
-  ].filter(g => g[1].length);
-  const todas = grupos.flatMap(g => g[1]);
-  if (!todas.some(x => x[0] === CFG_SEC)) CFG_SEC = 'prefs';
-  $('v-config').innerHTML = `
-    <div class="saludo"><div><h1>Configuración</h1><div class="fecha">Todos los ajustes de tu cuenta y de la plataforma, en un solo sitio</div></div></div>
-    <div class="cfghub">
-      <nav class="cfgnav">${grupos.map(([g, l]) => `<div class="cfgg"><h3>${esc(g)}</h3>${l.map(([k, ic, t, d]) =>
-        `<button data-cfg="${k}" class="${CFG_SEC === k ? 'on' : ''}"><span class="ci">${ic}</span><span><b>${esc(t)}</b><em>${esc(d)}</em></span></button>`).join('')}</div>`).join('')}</nav>
-      <div id="cfgcuerpo" class="cfgcuerpo"></div></div>`;
-  let inicial = true;
-  const abrir = k => {
-    const it = todas.find(x => x[0] === k); if (!it) return;
-    const panel = ['prefs', 'cat', 'fiscal', 'series', 'vf'].includes(k);
-    if (panel) { CFG_SEC = k; document.querySelectorAll('[data-cfg]').forEach(b => b.classList.toggle('on', b.dataset.cfg === k)); }
-    it[4]();
-    if (panel && ES_MOVIL() && !inicial) setTimeout(() => $('cfgcuerpo').scrollIntoView({ behavior: 'smooth', block: 'start' }), 60);
-  };
-  document.querySelectorAll('[data-cfg]').forEach(b => b.onclick = () => abrir(b.dataset.cfg));
-  abrir(['prefs', 'cat', 'fiscal', 'series', 'vf'].includes(CFG_SEC) ? CFG_SEC : 'prefs');
-  inicial = false;
-};
 
 /* ---------------- Administración en el móvil: cada persona como tarjeta ---------------- */
 
@@ -10411,15 +10293,6 @@ async function personasEsquema(id) {
 }
 
 // En la ficha de la persona solo se informa: el esquema se gestiona en Comisiones
-editarUsuario = (orig => async function (id) {
-  await orig(id);
-  for (let i = 0; i < 30 && !$('ucom') && $('dlg').open; i++) await new Promise(r => setTimeout(r, 100));
-  const s = $('ucom'); if (!s || $('ucominfo')) return;
-  const g = s.closest('.g2') || s.parentElement;
-  const txt = s.selectedOptions[0] && s.value ? s.selectedOptions[0].textContent : 'Sin comisión';
-  g.classList.add('hide'); if ($('ucdesde')) $('ucdesde').classList.add('hide'); if ($('uchist')) $('uchist').classList.add('hide');
-  g.insertAdjacentHTML('afterend', `<div class="avisoh" id="ucominfo"><span>Comisión: <b>${esc(txt)}</b>. Se asigna dentro de cada esquema en Administración → Comisiones.</span></div>`);
-})(editarUsuario);
 
 
 /* ============================================================
@@ -10489,49 +10362,6 @@ function panelDeModulo(sec) {
   };
 })();
 
-cargarConfig = async function () {
-  salirPanel();
-  const admin = PERFIL.rol === 'Administrador';
-  const V = fn => () => panelDeVentana(fn), M = s => () => panelDeModulo(s), P = fn => () => { salirPanel(); $('cfgcuerpo').innerHTML = fn === 'fac' ? '<div id="fcuerpo"></div>' : ''; };
-  const grupos = [
-    ['Tu cuenta', [
-      ['prefs', '👤', 'Mi perfil y preferencias', 'Tus datos, accesos, punto de salida, navegación y plantillas', () => { P()(); pintarPrefs(); }],
-      ['horario', '🕘', 'Horario de las rutas', 'Hora de salida, vuelta y tiempos por visita', V(abrirHorarioPlan)],
-      ['kpis', '📊', 'Indicadores de Inicio', 'Qué indicadores ves y en qué orden', V(abrirKpis)]]],
-    ['Base de datos', puedeCatalogos() ? [
-      ['cat', '🏷️', 'Clasificadores', 'Listas de valores: especialidades, motivos, formas de pago…', () => { P()(); pintarCatalogos(); }]] : []],
-    ['Equipo y cartera', admin ? [
-      ['usuarios', '👥', 'Usuarios y permisos', 'Altas, roles, permisos por módulo y zonas', M('usuarios')],
-      ['reglas', '🧭', 'Reglas de cartera', 'Cartera exclusiva y cómo se asignan los médicos', V(editorReglasCartera)],
-      ['frec', '🔁', 'Frecuencia de visita', 'Cada cuánto hay que visitar a cada médico', V(editorFrecuencia)],
-      ['comis', '€', 'Comisiones', 'Esquemas y quién cobra con cada uno', M('comisiones')],
-      ['accesos', '🔐', 'Accesos y auditoría', 'Entradas a la plataforma y cambios registrados', M('accesos')]] : []],
-    ['Stock', admin || nivelDe2('P') >= 3 ? [
-      ['alm', '🏬', 'Almacenes', 'Central y almacenes de cada comercial', V(editorAlmacenes)],
-      ['mues', '🎁', 'Material y muestras', 'Qué se entrega en las visitas y si descuenta stock', V(editorMuestras)]] : []],
-    ['Facturación', admin ? [
-      ['fiscal', '🏢', 'Datos fiscales', 'Emisor, IBAN, pie, vencimiento y emisión automática', () => { P('fac')(); pintarEmpresa(); }],
-      ['series', '#️⃣', 'Series y numeración', 'Formato y siguiente número de cada serie', () => { P('fac')(); pintarSeries(); }],
-      ['vf', '🛡️', 'VeriFactu', 'Qué es, qué está preparado y cómo se activa', () => { P('fac')(); pintarVerifactu(); }]] : []]
-  ].filter(g => g[1].length);
-  const todas = grupos.flatMap(g => g[1]);
-  if (!todas.some(x => x[0] === CFG_SEC)) CFG_SEC = 'prefs';
-  $('v-config').innerHTML = `
-    <div class="saludo"><div><h1>Configuración</h1><div class="fecha">Todos los ajustes de tu cuenta y de la plataforma, en un solo sitio</div></div></div>
-    <div class="cfghub">
-      <nav class="cfgnav">${grupos.map(([g, l]) => `<div class="cfgg"><h3>${esc(g)}</h3>${l.map(([k, ic, t, d]) =>
-        `<button data-cfg="${k}" class="${CFG_SEC === k ? 'on' : ''}"><span class="ci">${ic}</span><span><b>${esc(t)}</b><em>${esc(d)}</em></span></button>`).join('')}</div>`).join('')}</nav>
-      <div id="cfgcuerpo" class="cfgcuerpo"></div></div>`;
-  let inicial = true;
-  const abrir = k => {
-    const it = todas.find(x => x[0] === k); if (!it) return;
-    CFG_SEC = k; document.querySelectorAll('[data-cfg]').forEach(b => b.classList.toggle('on', b.dataset.cfg === k));
-    it[4]();
-    if (ES_MOVIL() && !inicial) setTimeout(() => $('cfgcuerpo').scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
-  };
-  document.querySelectorAll('[data-cfg]').forEach(b => b.onclick = () => abrir(b.dataset.cfg));
-  abrir(CFG_SEC); inicial = false;
-};
 
 /* ---------------- Mi perfil: contexto de la persona ---------------- */
 
@@ -10633,10 +10463,6 @@ verFactura = (orig => async function (...a) {
   const d = $('dlg'); d.classList.add('cargando'); const s = setTimeout(() => d.classList.remove('cargando'), 8000);
   try { return await orig.apply(this, a); } finally { clearTimeout(s); requestAnimationFrame(() => d.classList.remove('cargando')); }
 })(verFactura);
-editarUsuario = (orig => async function (...a) {
-  const d = $('dlg'); d.classList.add('cargando'); const s = setTimeout(() => d.classList.remove('cargando'), 8000);
-  try { return await orig.apply(this, a); } finally { clearTimeout(s); requestAnimationFrame(() => d.classList.remove('cargando')); }
-})(editarUsuario);
 abrirVisita = (orig => async function (...a) {
   const d = $('dlg'); d.classList.add('cargando'); const s = setTimeout(() => d.classList.remove('cargando'), 8000);
   try { return await orig.apply(this, a); } finally { clearTimeout(s); requestAnimationFrame(() => d.classList.remove('cargando')); }
@@ -10772,10 +10598,6 @@ Promise.resolve(RPC_ORIG('marca_publica', {})).then(r => {
   if (r && r.data) { MARCA = Object.assign({}, MARCA, r.data); try { localStorage.setItem('app-marca', JSON.stringify(MARCA)); } catch (e) {} aplicarMarca(); }
 }, () => {});
 // El logo de la empresa también en las facturas
-logoData = (orig => async function () {
-  if (MARCA.logo && (AJUSTES.marca || {}).logo_factura !== false) { LOGO_DATA = MARCA.logo; LOGO_CIRC = true; return MARCA.logo; }
-  return orig();
-})(logoData);
 
 async function pintarMarca() {
   await cargarAjustes();
@@ -10962,33 +10784,6 @@ async function pintarUsuarios2() {
   $('usrnuevo').onclick = () => nuevoUsuario();
   pinta();
 }
-function detalleUsuario(u) {
-  const mods = Object.keys(MODULO_AREA).map(m => [m, u.rol === 'Administrador' ? 3 : +((u.areas || {})[MODULO_AREA[m]] || 0)]);
-  const nombres = { inicio: 'Inicio', agenda: 'Agenda', rutas: 'Rutas', directorio: 'Directorio', pacientes: 'Clientes', productos: 'Productos', seguimiento: 'Calidad del dato', ventas: 'Pedidos', analitica: 'Analítica', facturacion: 'Facturación' };
-  $('dbody').innerHTML = `<div class="fh"><div class="usrcab"><span class="usrav grande">${esc(iniciales(u.nombre))}</span>
-      <div><h2>${esc(u.nombre)}</h2><div class="sm">${esc(u.email || '')} · ${esc(u.rol)}${u.activo ? '' : ' · desactivado'}</div></div></div>
-    <button class="x" data-cerrar aria-label="Cerrar">✕</button></div>
-    <div class="usrgrid">
-      <div class="blk"><h3>Qué puede ver y hacer</h3><div class="usrperm">${mods.map(([m, n]) => `<span class="${n ? 'si' : 'no'}">${n ? '✓' : '—'} ${esc(nombres[m])}<em>${esc(NIVEL_TXT[n])}</em></span>`).join('')}</div>
-        <div class="sm" style="margin-top:6px">${+((u.areas || {}).E || 0) >= 1 || u.rol === 'Administrador' ? 'Ve importes de ventas' : 'Solo ve unidades'}</div></div>
-      <div class="blk"><h3>Actividad</h3>${u.rol === 'Medico' ? `<p class="sm">Vinculado a: <b>${esc(u.medico || 'sin ficha')}</b></p>` : `
-        <div class="uper" style="grid-template-columns:repeat(2,1fr)"><div><b>${num(u.cartera)}</b><span>médicos en cartera</span></div><div><b>${num(u.visitas_mes)}</b><span>visitas este mes</span></div></div>
-        ${u.zonas && u.zonas.length ? `<div class="sm">📍 Zona: ${esc(u.zonas.map(z => z.charAt(0) + z.slice(1).toLowerCase()).join(', '))}</div>` : ''}`}
-        <div class="sm">Última actividad: ${u.ultima_actividad ? new Date(u.ultima_actividad).toLocaleString('es-ES', { dateStyle: 'medium', timeStyle: 'short' }) : 'ninguna registrada'}</div></div></div>
-    <div class="accsheet usracc">
-      <button class="btn" data-uacc="editar">✏️ Editar rol, permisos y zona</button>
-      ${u.rol !== 'Medico' ? '<button class="btn sec" data-uacc="cartera">🩺 Asignar cartera</button>' : ''}
-      <button class="btn sec" data-uacc="pass">🔑 Cambiar contraseña</button>
-      ${typeof puedeSuplantar === 'function' && puedeSuplantar() && u.id !== PERFIL.id && u.rol !== 'Administrador' && u.activo ? '<button class="btn sec" data-uacc="como">👤 Entrar como esta persona</button>' : ''}</div>`;
-  $('dlg').showModal();
-  $('dbody').querySelectorAll('[data-uacc]').forEach(b => b.onclick = () => {
-    const a = b.dataset.uacc;
-    if (a === 'editar') editarUsuario(u.id);
-    if (a === 'cartera') { $('dlg').close(); asignarCartera(u.id); }
-    if (a === 'pass') { $('dlg').close(); restablecerPassword(u); }
-    if (a === 'como') { $('dlg').close(); entrarComo(u.id); }
-  });
-}
 
 /* ---------------- Roles y permisos ---------------- */
 
@@ -11039,30 +10834,6 @@ panelDeModulo = (orig => function (sec) {
   const quitar = () => { const p = document.querySelector('#cfgcuerpo .cfgmod'); if (p) p.querySelectorAll('.subnav').forEach(s => s.remove()); };
   quitar(); setTimeout(quitar, 300); setTimeout(quitar, 1200);
 })(panelDeModulo);
-cargarConfig = (orig => async function () {
-  await orig();
-  const nav = document.querySelector('.cfgnav'); if (!nav) return;
-  const admin = PERFIL.rol === 'Administrador';
-  // Usuarios renovado, roles, auditoría, marca y plan
-  const usr = nav.querySelector('[data-cfg="usuarios"]');
-  if (usr) {
-    usr.insertAdjacentHTML('afterend', `<button data-cfg="roles"><span class="ci">🛡️</span><span><b>Roles y permisos</b><em>Qué ve y qué puede hacer cada rol</em></span></button>`);
-    const acc = nav.querySelector('[data-cfg="accesos"]');
-    if (acc) { acc.querySelector('b').textContent = 'Accesos'; acc.querySelector('em').textContent = 'Quién ha entrado y cuándo';
-      acc.insertAdjacentHTML('afterend', `<button data-cfg="auditoria"><span class="ci">📜</span><span><b>Auditoría</b><em>Cambios registrados en la plataforma</em></span></button>`); }
-  }
-  if (admin) nav.insertAdjacentHTML('beforeend', `<div class="cfgg"><h3>Empresa</h3>
-    <button data-cfg="marca"><span class="ci">🎨</span><span><b>Marca y logo</b><em>Nombre de la plataforma y logo de la empresa</em></span></button>
-    <button data-cfg="plan"><span class="ci">💳</span><span><b>Plan y suscripción</b><em>Tu plan, usuarios y cómo ampliar</em></span></button></div>`);
-  const acciones = { usuarios: () => { salirPanel(); pintarUsuarios2(); }, roles: () => { salirPanel(); pintarRoles(); }, auditoria: () => panelDeModulo('auditoria'),
-    marca: () => { salirPanel(); pintarMarca(); }, plan: () => { salirPanel(); pintarPlan2(); } };
-  nav.querySelectorAll('[data-cfg]').forEach(b => {
-    if (!acciones[b.dataset.cfg]) return;
-    b.onclick = () => { CFG_SEC = b.dataset.cfg; nav.querySelectorAll('[data-cfg]').forEach(x => x.classList.toggle('on', x === b)); acciones[b.dataset.cfg]();
-      if (ES_MOVIL()) setTimeout(() => $('cfgcuerpo').scrollIntoView({ behavior: 'smooth', block: 'start' }), 80); };
-  });
-  if (acciones[CFG_SEC]) { nav.querySelectorAll('[data-cfg]').forEach(x => x.classList.toggle('on', x.dataset.cfg === CFG_SEC)); acciones[CFG_SEC](); }
-})(cargarConfig);
 
 /* ---------------- menú «Más» del móvil: continuación de la barra ---------------- */
 
@@ -11356,37 +11127,6 @@ async function pintarAlmacenes2() {
 
 /* ---------------- Configuración: apartados y navegación ---------------- */
 
-cargarConfig = (orig => async function () {
-  if (CFG_SEC === 'prefs') CFG_SEC = 'perfil';
-  const sec = CFG_SEC;
-  if (['perfil', 'rutas', 'mensajes', 'notif'].includes(sec)) CFG_SEC = 'prefs';
-  await orig();
-  CFG_SEC = sec;
-  const nav = document.querySelector('.cfgnav'); if (!nav) return;
-  const pref = nav.querySelector('[data-cfg="prefs"]');
-  if (pref) {
-    pref.dataset.cfg = 'perfil'; pref.querySelector('b').textContent = 'Mi perfil'; pref.querySelector('em').textContent = 'Tus datos, contraseña y qué abrir al entrar';
-    pref.insertAdjacentHTML('afterend', `<button data-cfg="notif"><span class="ci">🔔</span><span><b>Notificaciones</b><em>Qué avisos quieres recibir</em></span></button>
-      <button data-cfg="rutas"><span class="ci">📍</span><span><b>Rutas y desplazamientos</b><em>Punto de salida y llegada, y app de navegación</em></span></button>`);
-    const hor = nav.querySelector('[data-cfg="horario"]'); if (hor) nav.querySelector('[data-cfg="rutas"]').after(hor);
-    const kp = nav.querySelector('[data-cfg="kpis"]'); if (kp) kp.insertAdjacentHTML('afterend', `<button data-cfg="mensajes"><span class="ci">💬</span><span><b>Mensajes</b><em>Plantillas del resumen semanal</em></span></button>`);
-  }
-  const mues = nav.querySelector('[data-cfg="mues"]'); if (mues) { mues.querySelector('b').textContent = 'Material de visita'; mues.querySelector('em').textContent = 'Muestras y material promocional que se entrega'; }
-  const acc = { perfil: pintarPerfil, notif: pintarNotif, rutas: () => pintarPrefsParte('rutas'), mensajes: () => pintarPrefsParte('mensajes'), mues: pintarMaterial, alm: pintarAlmacenes2 };
-  const abrir = b => {
-    CFG_SEC = b.dataset.cfg; nav.querySelectorAll('[data-cfg]').forEach(x => x.classList.toggle('on', x === b));
-    // El contenido aparece a la vista, sin tener que desplazarse
-    const hub = document.querySelector('.cfghub');
-    if (hub) { const y = ES_MOVIL() ? $('cfgcuerpo').getBoundingClientRect().top + scrollY - 70 : hub.getBoundingClientRect().top + scrollY - 90; if (Math.abs(scrollY - y) > 40) scrollTo({ top: Math.max(0, y), behavior: 'smooth' }); }
-  };
-  nav.querySelectorAll('[data-cfg]').forEach(b => {
-    const previo = b.onclick;
-    b.onclick = () => { if (acc[b.dataset.cfg]) { salirPanel(); abrir(b); acc[b.dataset.cfg](); } else { if (previo) previo(); abrir(b); } };
-  });
-  const act = nav.querySelector(`[data-cfg="${CFG_SEC}"]`);
-  if (act && acc[CFG_SEC]) { nav.querySelectorAll('[data-cfg]').forEach(x => x.classList.toggle('on', x === act)); salirPanel(); acc[CFG_SEC](); }
-  else if (act) nav.querySelectorAll('[data-cfg]').forEach(x => x.classList.toggle('on', x === act));
-})(cargarConfig);
 
 /* ---------------- alta de usuario: resumen al terminar ---------------- */
 
@@ -11620,28 +11360,12 @@ if (MAPA_I18N) traducir(document.body);
 
 /* ---------------- Configuración en el móvil: primero la lista, después el apartado ---------------- */
 
-function cfgMovil() {
-  const hub = document.querySelector('.cfghub'); if (!hub) return;
-  hub.classList.toggle('movil', ES_MOVIL());
-  if (!ES_MOVIL()) { hub.classList.remove('detalle'); return; }
-  const cuerpo = $('cfgcuerpo');
-  if (cuerpo && !cuerpo.querySelector(':scope > .cfgvolver')) {
-    cuerpo.insertAdjacentHTML('afterbegin', '<button class="cfgvolver" type="button">‹ Configuración</button>');
-  }
-}
 document.addEventListener('click', e => {
   const v = e.target.closest('.cfgvolver'); if (v) { const hub = v.closest('.cfghub'); hub.classList.remove('detalle'); scrollTo({ top: 0 }); return; }
   const b = e.target.closest('.cfghub.movil [data-cfg]');
   if (b) { const hub = b.closest('.cfghub'); hub.classList.add('detalle'); scrollTo({ top: 0 });
     setTimeout(() => { cfgMovil(); const t = $('cfgcuerpo') && $('cfgcuerpo').querySelector('.cfgvolver'); if (t) t.dataset.titulo = b.querySelector('b').textContent; }, 50); }
 }, true);
-cargarConfig = (orig => async function () {
-  await orig();
-  cfgMovil();
-  // Si se entra en un apartado concreto (por ejemplo desde las notificaciones), se abre directamente
-  if (ES_MOVIL() && CFG_SEC && CFG_SEC !== 'perfil' && window.__CFG_DIRECTO) { const hub = document.querySelector('.cfghub'); if (hub) hub.classList.add('detalle'); }
-  window.__CFG_DIRECTO = false;
-})(cargarConfig);
 // Cada vez que el apartado se repinta, se mantiene el botón de volver
 new MutationObserver(() => { if (TAB === 'config' && ES_MOVIL() && $('cfgcuerpo') && !$('cfgcuerpo').querySelector(':scope > .cfgvolver')) cfgMovil(); })
   .observe(document.querySelector('main'), { childList: true, subtree: true });
@@ -11848,19 +11572,6 @@ async function pintarCopias() {
   };
 }
 
-cargarConfig = (orig => async function () {
-  await orig();
-  const nav = document.querySelector('.cfgnav'); if (!nav || PERFIL.rol !== 'Administrador') return;
-  const plan = nav.querySelector('[data-cfg="plan"]'); if (!plan || nav.querySelector('[data-cfg="correo"]')) return;
-  plan.insertAdjacentHTML('beforebegin', `<button data-cfg="correo"><span class="ci">✉️</span><span><b>Correo y firma</b><em>Cuenta de envío y firma de los emails</em></span></button>
-    <button data-cfg="copias"><span class="ci">💾</span><span><b>Copias de seguridad</b><em>Descarga todos los datos de la empresa</em></span></button>`);
-  const acc = { correo: pintarCorreo, copias: pintarCopias };
-  nav.querySelectorAll('[data-cfg="correo"], [data-cfg="copias"]').forEach(b => b.onclick = () => {
-    salirPanel(); CFG_SEC = b.dataset.cfg; nav.querySelectorAll('[data-cfg]').forEach(x => x.classList.toggle('on', x === b)); acc[b.dataset.cfg]();
-    if (ES_MOVIL()) { const hub = document.querySelector('.cfghub'); hub.classList.add('detalle'); setTimeout(cfgMovil, 50); scrollTo({ top: 0 }); }
-  });
-  if (acc[CFG_SEC]) { nav.querySelectorAll('[data-cfg]').forEach(x => x.classList.toggle('on', x.dataset.cfg === CFG_SEC)); acc[CFG_SEC](); }
-})(cargarConfig);
 
 
 /* ============================================================
@@ -12432,7 +12143,6 @@ async function asegurarUsuario(id) {
   const { data } = await RPC_ORIG('usuarios_resumen', {});
   USUARIOS = (data || []).map(u => Object.assign({ medicos: u.cartera, visitas: u.visitas_mes }, u));
 }
-editarUsuario = (orig => async function (id, ...r) { await asegurarUsuario(id); return orig(id, ...r); })(editarUsuario);
 asignarCartera = (orig => async function (id, ...r) { await asegurarUsuario(id); return orig(id, ...r); })(asignarCartera);
 // Una llamada sin fecha se abre con la fecha de ahora (antes fallaba al abrirse)
 editorLlamada = (orig => function (l, ...r) { if (l && !l.fecha) l = Object.assign({}, l, { fecha: new Date().toISOString() }); return orig(l, ...r); })(editorLlamada);
