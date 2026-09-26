@@ -1555,7 +1555,70 @@ function pintarUsuarioBase(id) {
   $('dlg').showModal();
 }
 
-function nuevoUsuario() {
+/* Nuevo usuario: la ventana base, el límite del plan y el alta de médicos, y el resumen al crear (antes eran 3 capas). */
+function nuevoUsuario(pre) {
+  const act = planDe(PLAN_ACTUAL.plan), maxU = act.incluidos + (+PLAN_ACTUAL.bloques_extra || 0) * act.bloque[0];
+  const activos = (USUARIOS || []).filter(u => u.activo && u.rol !== 'Medico').length;
+  nuevoUsuarioBase();
+  nuevoUsuarioPlanYMedico(pre, act, maxU, activos);
+  nuevoUsuarioResumen(pre);
+}
+
+// Nuevo usuario · Límite de usuarios del plan y alta de médicos eligiendo su ficha
+function nuevoUsuarioPlanYMedico(pre, act, maxU, activos) {
+  $('ne').placeholder = 'nombre@empresa.com';
+  $('np').value = 'Tmp-' + Math.random().toString(36).slice(2, 8);
+  // Rol «Medico»: se elige un médico del directorio, no se crea uno nuevo
+  $('nr').insertAdjacentHTML('afterend', '');
+  $('nr').closest('.g2').insertAdjacentHTML('afterend', `<div id="nmedw" class="hide"><label>Médico del directorio</label><div id="nmed"></div>
+    <div class="sm" style="margin-top:4px">Tendrá acceso solo a su informe y a sus avisos. No cuenta como usuario del plan.</div></div>`);
+  let medico = pre && pre.medico ? pre.medico : null;
+  selectorMedico($('nmed'), { valor: medico, placeholder: 'Busca al médico', alElegir: async m => {
+    medico = m;
+    const { data: f } = await db.rpc('ficha_medico', { p_id: m.id });
+    if (f && f.medico) { if (!$('nn').value) $('nn').value = f.medico.nombre; if (!$('ne').value && f.medico.email) $('ne').value = f.medico.email; }
+  } });
+  const ver = () => $('nmedw').classList.toggle('hide', $('nr').value !== 'Medico');
+  $('nr').addEventListener('change', ver);
+  if (pre && pre.medico) { $('nr').value = 'Medico'; $('nn').value = pre.nombre || ''; $('ne').value = pre.email || ''; ver(); }
+  const crear = $('ncrear').onclick;
+  $('ncrear').onclick = async ev => {
+    if ($('nr').value !== 'Medico' && activos >= maxU) { toast(`Tu plan ${act.nombre} permite ${maxU} usuarios. Añade un bloque en Configuración → Plan.`, true); return; }
+    if ($('nr').value === 'Medico' && !medico) { toast('Elige el médico del directorio', true); return; }
+    await crear(ev);
+    if ($('nr').value === 'Medico' && medico && /Usuario creado/.test($('nmsg').textContent)) {
+      const { data: u } = await db.from('perfiles').select('id').eq('email', $('ne').value.trim()).single();
+      if (u) { await db.rpc('vincular_medico', { p_usuario: u.id, p_medico: medico.id }); $('nmsg').insertAdjacentHTML('beforeend', ` Vinculado a <b>${esc(medico.nombre)}</b>.`); }
+    }
+    if (TAB === 'config' && CFG_SEC === 'usuarios') pintarUsuarios2();
+  };
+}
+
+// Nuevo usuario · Al crear, resumen con los datos para pasárselos a la persona
+function nuevoUsuarioResumen(pre) {
+  const crear = $('ncrear').onclick;
+  $('ncrear').onclick = async ev => {
+    const datos = { nombre: $('nn').value.trim(), email: $('ne').value.trim(), pass: $('np').value, rol: $('nr').value };
+    await crear(ev);
+    const ok = /Usuario creado/.test($('nmsg') ? $('nmsg').textContent : '');
+    if (!ok) return;
+    const vinc = ($('nmsg').textContent.match(/Vinculado a (.+)\./) || [])[1];
+    delete $('dlg').dataset.sucio;
+    const url = location.origin + location.pathname;
+    const texto = `Hola ${datos.nombre.split(' ')[0]}, ya tienes acceso a ${nombreApp()}.\nEntra en ${url}\nUsuario: ${datos.email}\nContraseña temporal: ${datos.pass}\nCámbiala al entrar (Configuración → Mi perfil).`;
+    $('dbody').innerHTML = `<div class="fh"><div><h2>✓ Usuario creado</h2><div class="sm">Pásale estos datos para que entre</div></div><button class="x" data-cerrar aria-label="Cerrar">✕</button></div>
+      <div class="usrok"><div><span>Nombre</span><b>${esc(datos.nombre)}</b></div><div><span>Rol</span><b>${esc(datos.rol)}</b></div>
+        <div><span>Usuario</span><b>${esc(datos.email)}</b></div><div><span>Contraseña temporal</span><b class="mono">${esc(datos.pass)}</b></div>
+        ${vinc ? `<div><span>Médico vinculado</span><b>${esc(vinc)}</b></div>` : ''}<div><span>Dirección</span><b>${esc(url)}</b></div></div>
+      <p class="sm">Si la confirmación por correo está activada, primero deberá confirmar su email.</p>
+      <div class="acts" style="justify-content:flex-end;flex-wrap:wrap"><button class="btn sec" id="usrcop">Copiar los datos</button><button class="btn" data-cerrar>Hecho</button></div>`;
+    delete $('dlg').dataset.sucio;
+    $('usrcop').onclick = async () => { try { await navigator.clipboard.writeText(texto); toast('Copiado: pégalo en un mensaje'); } catch (e) { toast('No se ha podido copiar', true); } };
+  };
+}
+
+/* Parte base; nuevoUsuario le añade el resto */
+function nuevoUsuarioBase() {
   $('dbody').innerHTML = `
     <div class="fh"><div><h2>Nuevo usuario</h2><div class="sm">Se crea con una contraseña temporal que deberá cambiar</div></div>
       <button class="x" data-cerrar aria-label="Cerrar">✕</button></div>
@@ -4726,7 +4789,69 @@ async function editorPedido(pedido) {
 
 /* ---------------- detalle de pedido ---------------- */
 
+/* Ventana principal en espera: muestra el indicador de carga mientras se prepara su contenido. */
+async function ventanaCargando(fn) {
+  const d = $('dlg'); d.classList.add('cargando');
+  const limite = setTimeout(() => d.classList.remove('cargando'), 8000);
+  try { return await fn(); } finally { clearTimeout(limite); requestAnimationFrame(() => d.classList.remove('cargando')); }
+}
+/* Ver pedido: la ventana base, sus facturas (o emitirla) y la operativa (antes eran 4 capas). */
 async function verPedido(id) {
+  return ventanaCargando(async () => {
+    await verPedidoBase(id);
+    await pedidoFacturas(id);
+    await pedidoOperativa(id);
+  });
+}
+
+// Ver pedido · Facturas del pedido, o botón para emitirla
+async function pedidoFacturas(id) {
+  if (!VE_TODO() || !$('dlg').open) return;
+  const acts = $('dbody').querySelector('.acts:last-of-type'); if (!acts) return;
+  const { data } = await RPC_ORIG('pedido_detalle', { p_id: id });
+  const p = data && data.pedido; if (!p) return;
+  const { data: fs } = await RPC_ORIG('facturas_lista', { q: null, lim: 1000 });
+  const fac = (fs || []).filter(f => f.pedido_id === id);
+  if (fac.length) {
+    acts.insertAdjacentHTML('afterbegin', fac.map(f => `<button class="btn sec" data-pvfac="${f.id}">🧾 ${esc(f.numero)}</button>`).join(''));
+    acts.querySelectorAll('[data-pvfac]').forEach(b => b.onclick = () => verFactura(b.dataset.pvfac));
+  } else if (p.estado === 'Confirmado' && puedeFacturar()) {
+    acts.insertAdjacentHTML('afterbegin', '<button class="btn" id="pvemitir">🧾 Emitir factura</button>');
+    $('pvemitir').onclick = async () => { const r = await emitirFacturaPedido(id); if (r) verFactura(r.id); };
+  }
+}
+
+// Ver pedido · Operativa: pago, paquete, emails
+async function pedidoOperativa(id) {
+  if (!$('dlg').open || !(VE_TODO() || PERFIL.rol === 'Administrador')) return;
+  const { data } = await RPC_ORIG('pedido_detalle', { p_id: id });
+  const p = data && data.pedido; if (!p || p.estado !== 'Confirmado' || $('pdops')) return;
+  await cargarAjustes();
+  const cli = data.contacto || {}, total = +((data.totales || {}).total || 0);
+  const puede = VE_TODO() && nivelDe2('V') >= 2;
+  const acts = $('dbody').querySelector('.acts:last-of-type');
+  acts.insertAdjacentHTML('beforebegin', `<div class="blk" id="pdops"><h3>Operativa</h3>
+    ${OPS.map(([k, t]) => `<label class="opchk ${opHecho(p, k) ? 'on' : ''}"><input type="checkbox" data-op="${k}" ${opHecho(p, k) ? 'checked' : ''} ${puede ? '' : 'disabled'}>
+      <span>${esc(t)}${k === 'pago' && p.forma_pago ? ` <span class="sm">· ${esc(p.forma_pago)}${/reembolso/i.test(p.forma_pago) ? ' (se cobra al entregar)' : ''}</span>` : ''}</span></label>`).join('')}
+    <div class="acts" style="margin:6px 0 0">
+      ${cli.email ? `<a class="btn sec" id="pdmailpago" data-ped="${id}" href="mailto:${esc(cli.email)}?subject=${encodeURIComponent('Datos para el pago de tu pedido ' + (p.numero || ''))}&body=${encodeURIComponent(textoEmailPago(p, total, cli.nombre))}">✉️ Preparar email con los datos de pago</a>` : '<span class="sm">El cliente no tiene email en su ficha.</span>'}
+    </div></div>`);
+  $('dbody').querySelectorAll('[data-op]').forEach(c => c.onchange = async () => {
+    const { data: r, error } = await db.rpc('marcar_operativa', { p_pedido: id, p_campo: c.dataset.op, p_hecho: c.checked });
+    if (error || (r && r.ok === false)) { c.checked = !c.checked; toast('No se ha podido guardar', true); return; }
+    c.closest('.opchk').classList.toggle('on', c.checked);
+    toast(c.checked ? (c.dataset.op === 'pago' ? 'Pago validado' + (p.factura_id ? ' · cobro anotado en la factura' : '') : 'Hecho') : 'Desmarcado');
+    if (TAB === 'ventas' && PEDSEC === 'ventas') pintarOperativa();
+  });
+  if ($('pdmailpago')) $('pdmailpago').addEventListener('click', () => setTimeout(async () => {
+    if (await preguntar('¿Has enviado el email con los datos de pago?', { titulo: 'Email de pago', ok: 'Sí, marcar como enviado' })) {
+      await db.rpc('marcar_operativa', { p_pedido: id, p_campo: 'email_pago', p_hecho: true }); verPedido(id);
+    }
+  }, 800));
+}
+
+/* Parte base; verPedido le añade el resto */
+async function verPedidoBase(id) {
   cargando($('dbody'), 'Abriendo el pedido…');
   $('dlg').showModal();
   const { data, error } = await RPC_ORIG('pedido_detalle', { p_id: id });
@@ -5686,7 +5811,67 @@ function montarPeriodo(el, o) {
 
 /* ---------------- ventas: tabla con totales ---------------- */
 
+/* Pedidos: la base y, en orden, las secciones, las llamadas y el botón de registrar llamada (antes eran 4 capas). */
 async function cargarVentas() {
+  // «Llamadas» solo para quien ve todo el equipo; la base pinta la cabecera como «Compras» y luego se sustituye
+  if (PEDSEC === 'llamadas' && !VE_TODO()) PEDSEC = 'ventas';
+  const sec = PEDSEC;
+  if (sec === 'llamadas') PEDSEC = 'compras';
+  await cargarVentasBase();
+  await pedidosSecciones();
+  await pedidosLlamadas(sec);
+  await pedidosBotonLlamada();
+}
+
+// Pedidos · Pestañas Ventas, Compras y Proveedores, y contenido de Compras y Proveedores
+async function pedidosSecciones() {
+  const v = $('v-ventas');
+  v.querySelector('.saludo h1').firstChild.textContent = 'Pedidos';
+  v.querySelector('.saludo .fecha').textContent = 'Ventas, compras y proveedores';
+  v.querySelector('.saludo').insertAdjacentHTML('afterend', `<div class="subnav" id="pedsub">
+    <button data-pedsec="ventas" aria-pressed="${PEDSEC === 'ventas'}">Ventas</button>
+    <button data-pedsec="compras" aria-pressed="${PEDSEC === 'compras'}">Compras</button>
+    <button data-pedsec="proveedores" aria-pressed="${PEDSEC === 'proveedores'}">Proveedores</button></div>`);
+  v.querySelectorAll('[data-pedsec]').forEach(b => b.onclick = () => { PEDSEC = b.dataset.pedsec; cargarVentas(); });
+  if (PEDSEC === 'ventas') return;
+  const acts = v.querySelector('.saludo .acts');
+  acts.innerHTML = puedeCompras() ? (PEDSEC === 'compras' ? '<button class="btn" id="compnueva">+ Nuevo pedido de compra</button>'
+    : '<button class="btn" id="provnuevo">+ Nuevo proveedor</button>') : '';
+  if ($('compnueva')) $('compnueva').onclick = () => editorCompra(null);
+  if ($('provnuevo')) $('provnuevo').onclick = () => editorProveedor(null);
+  if (PEDSEC === 'compras') pintarCompras(); else pintarProveedores();
+}
+
+// Pedidos · Pestaña Llamadas y operativa de ventas
+async function pedidosLlamadas(sec) {
+  PEDSEC = sec;
+  const sub = $('pedsub');
+  if (sub && VE_TODO() && !sub.querySelector('[data-pedsec="llamadas"]')) {
+    sub.insertAdjacentHTML('beforeend', `<button data-pedsec="llamadas" aria-pressed="${PEDSEC === 'llamadas'}">Llamadas</button>`);
+    sub.querySelector('[data-pedsec="llamadas"]').onclick = () => { PEDSEC = 'llamadas'; cargarVentas(); };
+  }
+  if (sub) sub.querySelectorAll('[data-pedsec]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.pedsec === PEDSEC)));
+  if (PEDSEC === 'ventas' && VE_TODO()) pintarOperativa();
+  if (PEDSEC === 'llamadas') {
+    const acts = $('v-ventas').querySelector('.saludo .acts');
+    acts.innerHTML = '<button class="btn" id="llnueva">+ Registrar llamada</button>';
+    $('llnueva').onclick = () => editorLlamada(null);
+    pintarLlamadas();
+  }
+}
+
+// Pedidos · Botón «Registrar llamada» en Ventas
+async function pedidosBotonLlamada() {
+  if (!VE_TODO() || PEDSEC !== 'ventas') return;
+  const acts = $('v-ventas').querySelector('.saludo .acts');
+  if (acts && !$('pedllam')) {
+    acts.insertAdjacentHTML('afterbegin', '<button class="btn sec" id="pedllam">📞 Registrar llamada</button>');
+    $('pedllam').onclick = () => editorLlamada(null);
+  }
+}
+
+/* Parte base; cargarVentas le añade el resto */
+async function cargarVentasBase() {
   vaciarModulos('v-ventas');
   $('v-ventas').innerHTML = `
     <div class="saludo"><div><h1>Ventas</h1><div class="fecha">Pedidos, unidades e importes</div></div>
@@ -6972,13 +7157,6 @@ async function faltaHorario(id) {
 }
 
 
-abrirVisita = (orig => async function (id) {
-  await orig(id);
-  if (!$('vguardar') || !await faltaHorario(id) || $('vhorario')) return;
-  const fh = $('dbody').querySelector('.fh');
-  if (fh) fh.insertAdjacentHTML('afterend', `<div class="avisoh" id="vhorario"><span>⚠ Falta su horario de consulta. Aprovecha la visita para preguntarlo
-    y complétalo después en <b>Editar ficha</b>.</span></div>`);
-})(abrirVisita);
 
 /* ---------------- ayudas ---------------- */
 
@@ -7009,7 +7187,24 @@ function campoDato(v, k, valor) {
   return `<label class="datol">${lab}<input data-dato="${k}" value="${esc(valor || '')}" placeholder="Opcional"></label>`;
 }
 
+/* Registrar visita: la ventana base y el aviso si falta el horario de consulta (antes eran 3 capas). */
 async function abrirVisita(id) {
+  return ventanaCargando(async () => {
+    await abrirVisitaBase(id);
+    await visitaAvisoHorario(id);
+  });
+}
+
+// Registrar visita · Aviso si el médico no tiene horario de consulta
+async function visitaAvisoHorario(id) {
+  if (!$('vguardar') || !await faltaHorario(id) || $('vhorario')) return;
+  const fh = $('dbody').querySelector('.fh');
+  if (fh) fh.insertAdjacentHTML('afterend', `<div class="avisoh" id="vhorario"><span>⚠ Falta su horario de consulta. Aprovecha la visita para preguntarlo
+    y complétalo después en <b>Editar ficha</b>.</span></div>`);
+}
+
+/* Parte base; abrirVisita le añade el resto */
+async function abrirVisitaBase(id) {
   const [{ data, error }, { data: clas }] = await Promise.all([db.rpc('ficha_medico', { p_id: id }), db.rpc('clasificadores_visita')]);
   if (error) { toast('No se ha podido abrir: ' + error.message, true); return; }
   const m = data.medico, cons = data.consultas || [];
@@ -7895,24 +8090,6 @@ const pillCompra = e => `<span class="pill ${e === 'Recibido' ? 'p-est' : e === 
 
 /* ---------------- módulo Pedidos ---------------- */
 
-cargarVentas = (orig => async function () {
-  await orig();
-  const v = $('v-ventas');
-  v.querySelector('.saludo h1').firstChild.textContent = 'Pedidos';
-  v.querySelector('.saludo .fecha').textContent = 'Ventas, compras y proveedores';
-  v.querySelector('.saludo').insertAdjacentHTML('afterend', `<div class="subnav" id="pedsub">
-    <button data-pedsec="ventas" aria-pressed="${PEDSEC === 'ventas'}">Ventas</button>
-    <button data-pedsec="compras" aria-pressed="${PEDSEC === 'compras'}">Compras</button>
-    <button data-pedsec="proveedores" aria-pressed="${PEDSEC === 'proveedores'}">Proveedores</button></div>`);
-  v.querySelectorAll('[data-pedsec]').forEach(b => b.onclick = () => { PEDSEC = b.dataset.pedsec; cargarVentas(); });
-  if (PEDSEC === 'ventas') return;
-  const acts = v.querySelector('.saludo .acts');
-  acts.innerHTML = puedeCompras() ? (PEDSEC === 'compras' ? '<button class="btn" id="compnueva">+ Nuevo pedido de compra</button>'
-    : '<button class="btn" id="provnuevo">+ Nuevo proveedor</button>') : '';
-  if ($('compnueva')) $('compnueva').onclick = () => editorCompra(null);
-  if ($('provnuevo')) $('provnuevo').onclick = () => editorProveedor(null);
-  if (PEDSEC === 'compras') pintarCompras(); else pintarProveedores();
-})(cargarVentas);
 
 /* ---------------- compras ---------------- */
 
@@ -8382,7 +8559,32 @@ async function pintarFacturas() {
   pinta();
 }
 
+/* Ver factura: la ventana base y los botones de PDF y email (antes eran 3 capas). */
 async function verFactura(id) {
+  return ventanaCargando(async () => {
+    await verFacturaBase(id);
+    await facturaBotonesPdfYEmail(id);
+  });
+}
+
+// Ver factura · Ver, descargar el PDF y enviarlo por email
+async function facturaBotonesPdfYEmail(id) {
+  const acts = $('dbody').querySelector('.acts:last-of-type');
+  if (!acts || !$('fvpdf')) return;
+  const { data } = await RPC_ORIG('factura_detalle', { p_id: id });
+  const f = data && data.factura; if (!f) return;
+  const rn = data.rectifica && data.rectifica.numero;
+  $('fvpdf').textContent = 'Ver';
+  $('fvpdf').classList.add('sec');
+  $('fvpdf').insertAdjacentHTML('afterend', `<button class="btn sec" id="fvdl">⬇ PDF</button>${puedeFacturar() ? '<button class="btn" id="fvmail">✉️ Enviar por email</button>' : ''}`);
+  $('fvdl').onclick = () => descargarFacturaPDF(f, rn);
+  if ($('fvmail')) $('fvmail').onclick = () => enviarFacturaEmail(f, rn);
+  // «Ver» abre el mismo PDF que se envía
+  $('fvpdf').onclick = async () => { const doc = await facturaPDF(f, rn); window.open(doc.output('bloburl'), '_blank'); };
+}
+
+/* Parte base; verFactura le añade el resto */
+async function verFacturaBase(id) {
   const { data } = await RPC_ORIG('factura_detalle', { p_id: id });
   if (!data || !data.factura) { toast('No se ha podido abrir la factura', true); return; }
   const f = data.factura, cob = data.cobros || [], vf = data.verifactu || {};
@@ -8676,22 +8878,6 @@ async function emitirFacturaPedido(pedidoId) {
   return r;
 }
 
-verPedido = (orig => async function (id) {
-  await orig(id);
-  if (!VE_TODO() || !$('dlg').open) return;
-  const acts = $('dbody').querySelector('.acts:last-of-type'); if (!acts) return;
-  const { data } = await RPC_ORIG('pedido_detalle', { p_id: id });
-  const p = data && data.pedido; if (!p) return;
-  const { data: fs } = await RPC_ORIG('facturas_lista', { q: null, lim: 1000 });
-  const fac = (fs || []).filter(f => f.pedido_id === id);
-  if (fac.length) {
-    acts.insertAdjacentHTML('afterbegin', fac.map(f => `<button class="btn sec" data-pvfac="${f.id}">🧾 ${esc(f.numero)}</button>`).join(''));
-    acts.querySelectorAll('[data-pvfac]').forEach(b => b.onclick = () => verFactura(b.dataset.pvfac));
-  } else if (p.estado === 'Confirmado' && puedeFacturar()) {
-    acts.insertAdjacentHTML('afterbegin', '<button class="btn" id="pvemitir">🧾 Emitir factura</button>');
-    $('pvemitir').onclick = async () => { const r = await emitirFacturaPedido(id); if (r) verFactura(r.id); };
-  }
-})(verPedido);
 
 // Emisión automática al validar, si está configurada
 const RPC_V2300 = db.rpc;
@@ -8906,34 +9092,6 @@ function textoEmailPago(p, total, cliente) {
     `En cuanto recibamos el pago preparamos el envío.\n\nUn saludo,\n${e.razon_social || nombreApp()}${e.telefono ? '\n' + e.telefono : ''}`;
 }
 
-verPedido = (orig => async function (id) {
-  await orig(id);
-  if (!$('dlg').open || !(VE_TODO() || PERFIL.rol === 'Administrador')) return;
-  const { data } = await RPC_ORIG('pedido_detalle', { p_id: id });
-  const p = data && data.pedido; if (!p || p.estado !== 'Confirmado' || $('pdops')) return;
-  await cargarAjustes();
-  const cli = data.contacto || {}, total = +((data.totales || {}).total || 0);
-  const puede = VE_TODO() && nivelDe2('V') >= 2;
-  const acts = $('dbody').querySelector('.acts:last-of-type');
-  acts.insertAdjacentHTML('beforebegin', `<div class="blk" id="pdops"><h3>Operativa</h3>
-    ${OPS.map(([k, t]) => `<label class="opchk ${opHecho(p, k) ? 'on' : ''}"><input type="checkbox" data-op="${k}" ${opHecho(p, k) ? 'checked' : ''} ${puede ? '' : 'disabled'}>
-      <span>${esc(t)}${k === 'pago' && p.forma_pago ? ` <span class="sm">· ${esc(p.forma_pago)}${/reembolso/i.test(p.forma_pago) ? ' (se cobra al entregar)' : ''}</span>` : ''}</span></label>`).join('')}
-    <div class="acts" style="margin:6px 0 0">
-      ${cli.email ? `<a class="btn sec" id="pdmailpago" data-ped="${id}" href="mailto:${esc(cli.email)}?subject=${encodeURIComponent('Datos para el pago de tu pedido ' + (p.numero || ''))}&body=${encodeURIComponent(textoEmailPago(p, total, cli.nombre))}">✉️ Preparar email con los datos de pago</a>` : '<span class="sm">El cliente no tiene email en su ficha.</span>'}
-    </div></div>`);
-  $('dbody').querySelectorAll('[data-op]').forEach(c => c.onchange = async () => {
-    const { data: r, error } = await db.rpc('marcar_operativa', { p_pedido: id, p_campo: c.dataset.op, p_hecho: c.checked });
-    if (error || (r && r.ok === false)) { c.checked = !c.checked; toast('No se ha podido guardar', true); return; }
-    c.closest('.opchk').classList.toggle('on', c.checked);
-    toast(c.checked ? (c.dataset.op === 'pago' ? 'Pago validado' + (p.factura_id ? ' · cobro anotado en la factura' : '') : 'Hecho') : 'Desmarcado');
-    if (TAB === 'ventas' && PEDSEC === 'ventas') pintarOperativa();
-  });
-  if ($('pdmailpago')) $('pdmailpago').addEventListener('click', () => setTimeout(async () => {
-    if (await preguntar('¿Has enviado el email con los datos de pago?', { titulo: 'Email de pago', ok: 'Sí, marcar como enviado' })) {
-      await db.rpc('marcar_operativa', { p_pedido: id, p_campo: 'email_pago', p_hecho: true }); verPedido(id);
-    }
-  }, 800));
-})(verPedido);
 
 async function pintarOperativa() {
   let c = $('operativa');
@@ -8953,26 +9111,6 @@ async function pintarOperativa() {
 
 /* ---------------- Pedidos: pestaña «Llamadas» ---------------- */
 
-cargarVentas = (orig => async function () {
-  if (PEDSEC === 'llamadas' && !VE_TODO()) PEDSEC = 'ventas';
-  const sec = PEDSEC;
-  if (sec === 'llamadas') PEDSEC = 'compras';     // la base pinta la cabecera; luego se sustituye
-  await orig();
-  PEDSEC = sec;
-  const sub = $('pedsub');
-  if (sub && VE_TODO() && !sub.querySelector('[data-pedsec="llamadas"]')) {
-    sub.insertAdjacentHTML('beforeend', `<button data-pedsec="llamadas" aria-pressed="${PEDSEC === 'llamadas'}">Llamadas</button>`);
-    sub.querySelector('[data-pedsec="llamadas"]').onclick = () => { PEDSEC = 'llamadas'; cargarVentas(); };
-  }
-  if (sub) sub.querySelectorAll('[data-pedsec]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.pedsec === PEDSEC)));
-  if (PEDSEC === 'ventas' && VE_TODO()) pintarOperativa();
-  if (PEDSEC === 'llamadas') {
-    const acts = $('v-ventas').querySelector('.saludo .acts');
-    acts.innerHTML = '<button class="btn" id="llnueva">+ Registrar llamada</button>';
-    $('llnueva').onclick = () => editorLlamada(null);
-    pintarLlamadas();
-  }
-})(cargarVentas);
 
 async function catLlamadas() {
   for (const k of ['MOTIVO_LLAMADA', 'RESULTADO_LLAMADA']) {
@@ -9279,21 +9417,6 @@ async function enviarFacturaEmail(f, rn) {
   };
 }
 
-verFactura = (orig => async function (id) {
-  await orig(id);
-  const acts = $('dbody').querySelector('.acts:last-of-type');
-  if (!acts || !$('fvpdf')) return;
-  const { data } = await RPC_ORIG('factura_detalle', { p_id: id });
-  const f = data && data.factura; if (!f) return;
-  const rn = data.rectifica && data.rectifica.numero;
-  $('fvpdf').textContent = 'Ver';
-  $('fvpdf').classList.add('sec');
-  $('fvpdf').insertAdjacentHTML('afterend', `<button class="btn sec" id="fvdl">⬇ PDF</button>${puedeFacturar() ? '<button class="btn" id="fvmail">✉️ Enviar por email</button>' : ''}`);
-  $('fvdl').onclick = () => descargarFacturaPDF(f, rn);
-  if ($('fvmail')) $('fvmail').onclick = () => enviarFacturaEmail(f, rn);
-  // «Ver» abre el mismo PDF que se envía
-  $('fvpdf').onclick = async () => { const doc = await facturaPDF(f, rn); window.open(doc.output('bloburl'), '_blank'); };
-})(verFactura);
 
 /* ---------------- email con los datos de pago: envío directo si está configurado ---------------- */
 
@@ -9771,11 +9894,11 @@ new MutationObserver(ms => {
   d.addEventListener('click', e => { if (e.target === d) cerrarSelector(); });
   d.addEventListener('cancel', e => { e.preventDefault(); cerrarSelector(); });
 })();
-cerrarSelector = function () {
+function cerrarSelector() {
   if (SELPOP) { SELPOP.remove(); SELPOP = null; }
   const d = $('seldlg'); if (d && d.open) d.close();
 };
-colocarPop = function (pop, ref) {
+function colocarPop(pop, ref) {
   const d = $('seldlg');
   if (!d.open) d.showModal();
   if (ES_MOVIL()) { d.classList.add('hoja'); d.style.top = ''; d.style.left = ''; return; }
@@ -9848,7 +9971,7 @@ window.addEventListener('resize', () => { if (!ES_MOVIL()) document.querySelecto
 
 const ICO_MOD = { inicio: '◉', agenda: '▤', rutas: '➤', directorio: '☰', pacientes: '👥', productos: '📦', seguimiento: '✔︎', ventas: '🛒',
   analitica: '📊', facturacion: '🧾', informe: '◉' };
-abrirMasMovil = function () {
+function abrirMasMovil() {
   const principales = ['inicio', 'agenda', 'rutas', 'directorio'];
   const mods = [...document.querySelectorAll('nav.main [data-t]')]
     .filter(x => !x.classList.contains('hide') && !x.disabled && !principales.includes(x.dataset.t))
@@ -10104,7 +10227,7 @@ async function buscarClientes(q) {
   return data || [];
 }
 
-editorLlamada = async function (l, previa) {
+async function editorLlamada(l, previa) {
   await catLlamadas();
   l = l || { direccion: 'Entrante', fecha: new Date().toISOString() };
   let cliente = l.contacto_id ? { id: l.contacto_id, nombre: l.cliente || l.nombre } : null, nuevo = !cliente && !l.id;
@@ -10230,15 +10353,6 @@ pintarLlamadas = (orig => async function () {
 })(pintarLlamadas);
 
 // Accesos a «Registrar llamada» desde Pedidos (ventas) y desde la ficha del cliente
-cargarVentas = (orig => async function () {
-  await orig();
-  if (!VE_TODO() || PEDSEC !== 'ventas') return;
-  const acts = $('v-ventas').querySelector('.saludo .acts');
-  if (acts && !$('pedllam')) {
-    acts.insertAdjacentHTML('afterbegin', '<button class="btn sec" id="pedllam">📞 Registrar llamada</button>');
-    $('pedllam').onclick = () => editorLlamada(null);
-  }
-})(cargarVentas);
 
 // Inicio: llamadas de seguimiento para hoy (televenta y administración)
 
@@ -10455,18 +10569,6 @@ Object.assign(RPC_TTL, { mis_alertas_descartadas: 30 });
 
 /* ---------------- carga en bloque ---------------- */
 
-verPedido = (orig => async function (...a) {
-  const d = $('dlg'); d.classList.add('cargando'); const s = setTimeout(() => d.classList.remove('cargando'), 8000);
-  try { return await orig.apply(this, a); } finally { clearTimeout(s); requestAnimationFrame(() => d.classList.remove('cargando')); }
-})(verPedido);
-verFactura = (orig => async function (...a) {
-  const d = $('dlg'); d.classList.add('cargando'); const s = setTimeout(() => d.classList.remove('cargando'), 8000);
-  try { return await orig.apply(this, a); } finally { clearTimeout(s); requestAnimationFrame(() => d.classList.remove('cargando')); }
-})(verFactura);
-abrirVisita = (orig => async function (...a) {
-  const d = $('dlg'); d.classList.add('cargando'); const s = setTimeout(() => d.classList.remove('cargando'), 8000);
-  try { return await orig.apply(this, a); } finally { clearTimeout(s); requestAnimationFrame(() => d.classList.remove('cargando')); }
-})(abrirVisita);
 
 // Módulos: al entrar, la pantalla se muestra entera cuando han llegado todos sus datos (el menú se ve siempre)
 let PEND = 0;
@@ -10704,37 +10806,6 @@ async function pintarPlan2() {
 }
 
 // No se puede superar el número de usuarios del plan
-nuevoUsuario = (orig => function (pre) {
-  const act = planDe(PLAN_ACTUAL.plan), maxU = act.incluidos + (+PLAN_ACTUAL.bloques_extra || 0) * act.bloque[0];
-  const activos = (USUARIOS || []).filter(u => u.activo && u.rol !== 'Medico').length;
-  orig();
-  $('ne').placeholder = 'nombre@empresa.com';
-  $('np').value = 'Tmp-' + Math.random().toString(36).slice(2, 8);
-  // Rol «Medico»: se elige un médico del directorio, no se crea uno nuevo
-  $('nr').insertAdjacentHTML('afterend', '');
-  $('nr').closest('.g2').insertAdjacentHTML('afterend', `<div id="nmedw" class="hide"><label>Médico del directorio</label><div id="nmed"></div>
-    <div class="sm" style="margin-top:4px">Tendrá acceso solo a su informe y a sus avisos. No cuenta como usuario del plan.</div></div>`);
-  let medico = pre && pre.medico ? pre.medico : null;
-  selectorMedico($('nmed'), { valor: medico, placeholder: 'Busca al médico', alElegir: async m => {
-    medico = m;
-    const { data: f } = await db.rpc('ficha_medico', { p_id: m.id });
-    if (f && f.medico) { if (!$('nn').value) $('nn').value = f.medico.nombre; if (!$('ne').value && f.medico.email) $('ne').value = f.medico.email; }
-  } });
-  const ver = () => $('nmedw').classList.toggle('hide', $('nr').value !== 'Medico');
-  $('nr').addEventListener('change', ver);
-  if (pre && pre.medico) { $('nr').value = 'Medico'; $('nn').value = pre.nombre || ''; $('ne').value = pre.email || ''; ver(); }
-  const crear = $('ncrear').onclick;
-  $('ncrear').onclick = async ev => {
-    if ($('nr').value !== 'Medico' && activos >= maxU) { toast(`Tu plan ${act.nombre} permite ${maxU} usuarios. Añade un bloque en Configuración → Plan.`, true); return; }
-    if ($('nr').value === 'Medico' && !medico) { toast('Elige el médico del directorio', true); return; }
-    await crear(ev);
-    if ($('nr').value === 'Medico' && medico && /Usuario creado/.test($('nmsg').textContent)) {
-      const { data: u } = await db.from('perfiles').select('id').eq('email', $('ne').value.trim()).single();
-      if (u) { await db.rpc('vincular_medico', { p_usuario: u.id, p_medico: medico.id }); $('nmsg').insertAdjacentHTML('beforeend', ` Vinculado a <b>${esc(medico.nombre)}</b>.`); }
-    }
-    if (TAB === 'config' && CFG_SEC === 'usuarios') pintarUsuarios2();
-  };
-})(nuevoUsuario);
 
 // Desde la ficha del médico: darle acceso a su espacio
 
@@ -11130,28 +11201,6 @@ async function pintarAlmacenes2() {
 
 /* ---------------- alta de usuario: resumen al terminar ---------------- */
 
-nuevoUsuario = (orig => function (pre) {
-  orig(pre);
-  const crear = $('ncrear').onclick;
-  $('ncrear').onclick = async ev => {
-    const datos = { nombre: $('nn').value.trim(), email: $('ne').value.trim(), pass: $('np').value, rol: $('nr').value };
-    await crear(ev);
-    const ok = /Usuario creado/.test($('nmsg') ? $('nmsg').textContent : '');
-    if (!ok) return;
-    const vinc = ($('nmsg').textContent.match(/Vinculado a (.+)\./) || [])[1];
-    delete $('dlg').dataset.sucio;
-    const url = location.origin + location.pathname;
-    const texto = `Hola ${datos.nombre.split(' ')[0]}, ya tienes acceso a ${nombreApp()}.\nEntra en ${url}\nUsuario: ${datos.email}\nContraseña temporal: ${datos.pass}\nCámbiala al entrar (Configuración → Mi perfil).`;
-    $('dbody').innerHTML = `<div class="fh"><div><h2>✓ Usuario creado</h2><div class="sm">Pásale estos datos para que entre</div></div><button class="x" data-cerrar aria-label="Cerrar">✕</button></div>
-      <div class="usrok"><div><span>Nombre</span><b>${esc(datos.nombre)}</b></div><div><span>Rol</span><b>${esc(datos.rol)}</b></div>
-        <div><span>Usuario</span><b>${esc(datos.email)}</b></div><div><span>Contraseña temporal</span><b class="mono">${esc(datos.pass)}</b></div>
-        ${vinc ? `<div><span>Médico vinculado</span><b>${esc(vinc)}</b></div>` : ''}<div><span>Dirección</span><b>${esc(url)}</b></div></div>
-      <p class="sm">Si la confirmación por correo está activada, primero deberá confirmar su email.</p>
-      <div class="acts" style="justify-content:flex-end;flex-wrap:wrap"><button class="btn sec" id="usrcop">Copiar los datos</button><button class="btn" data-cerrar>Hecho</button></div>`;
-    delete $('dlg').dataset.sucio;
-    $('usrcop').onclick = async () => { try { await navigator.clipboard.writeText(texto); toast('Copiado: pégalo en un mensaje'); } catch (e) { toast('No se ha podido copiar', true); } };
-  };
-})(nuevoUsuario);
 
 
 /* ============================================================
@@ -11169,7 +11218,7 @@ aplicarMarca = (orig => function () {
 })(aplicarMarca);
 aplicarMarca();
 // En la factura solo va el logo si la empresa ha subido el suyo
-logoData = async function () { if (MARCA.logo && (AJUSTES.marca || {}).logo_factura !== false) { LOGO_DATA = MARCA.logo; LOGO_CIRC = true; return MARCA.logo; } return null; };
+async function logoData() { if (MARCA.logo && (AJUSTES.marca || {}).logo_factura !== false) { LOGO_DATA = MARCA.logo; LOGO_CIRC = true; return MARCA.logo; } return null; };
 
 /* ---------------- planes alineados con el mercado ---------------- */
 
@@ -11888,7 +11937,7 @@ function arbolConfig() {
 const CFG_ANTES = { prefs: ['perfil'], horario: ['rutas', 'horario'], kpis: ['inicio', 'kpis'], mensajes: ['inicio', 'mensajes'], usuarios: ['equipo', 'usuarios'],
   roles: ['equipo', 'roles'], reglas: ['cartera', 'reglas'], frec: ['cartera', 'frec'], accesos: ['seguridad', 'accesos'], auditoria: ['seguridad', 'auditoria'],
   alm: ['stock', 'alm'], mues: ['stock', 'mues'], fiscal: ['fact', 'fiscal'], series: ['fact', 'series'], vf: ['fact', 'vf'] };
-cargarConfig = async function () {
+async function cargarConfig() {
   salirPanel();
   if (CFG_ANTES[CFG_SEC]) { const [k, s] = CFG_ANTES[CFG_SEC]; CFG_SEC = k; if (s) CFG_SUB = s; }
   const grupos = arbolConfig(), todos = grupos.flatMap(g => g[1]);
@@ -11940,7 +11989,7 @@ cargarConfig = async function () {
   if (ES_MOVIL() && !window.__CFG_DIRECTO) document.querySelector('.cfghub').classList.remove('detalle');
   window.__CFG_DIRECTO = false;
 };
-cfgMovil = function () {
+function cfgMovil() {
   const hub = document.querySelector('.cfghub'); if (!hub) return;
   hub.classList.toggle('movil', ES_MOVIL());
   if (!ES_MOVIL()) { hub.classList.remove('detalle'); return; }
@@ -12080,7 +12129,7 @@ pintarMarca = (orig => async function () {
 
 /* ---------------- detalle de usuario ordenado ---------------- */
 
-detalleUsuario = function (u) {
+function detalleUsuario(u) {
   const nombres = { inicio: 'Inicio', agenda: 'Agenda', rutas: 'Rutas', directorio: etiquetaContactos(), ventas: 'Pedidos', pacientes: 'Clientes', productos: 'Productos', facturacion: 'Facturación', analitica: 'Analítica', seguimiento: 'Calidad del dato' };
   const orden = ['inicio', 'agenda', 'rutas', 'directorio', 'ventas', 'pacientes', 'productos', 'facturacion', 'analitica', 'seguimiento'];
   const nivel = m => u.rol === 'Administrador' ? 3 : +((u.areas || {})[MODULO_AREA[m]] || 0);
@@ -12128,7 +12177,7 @@ function textoValor(v) {
   }
   return String(v);
 }
-resumenDetalle = function (d) {
+function resumenDetalle(d) {
   if (!d) return '';
   if (typeof d !== 'object') return String(d).slice(0, 120);
   if (d.nombre && typeof d.nombre !== 'object') return String(d.nombre);
