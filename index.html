@@ -1231,6 +1231,27 @@ nav.main [data-t="seguimiento"]{display:none!important}
 .matfila{grid-template-columns:1fr auto auto;gap:14px;padding:10px 14px}
 .matfila .vfswitch.mini{min-width:96px;justify-content:flex-end}
 @media (max-width:760px){.permtabla,.usracc{grid-template-columns:1fr}.matadd{grid-template-columns:1fr 1fr}.matadd input:not([type=checkbox]){grid-column:1/-1}}
+
+/* v2.52.0 · ancho completo, avisos a la derecha, listas completas, errores */
+@media (min-width:1100px){.top,nav.main .in,main{max-width:none!important;padding-left:clamp(18px,2.2vw,40px)!important;padding-right:clamp(18px,2.2vw,40px)!important}}
+@keyframes avisoDer{from{transform:translateX(120%);opacity:0}to{transform:none;opacity:1}}
+.toast,.upd{left:auto!important;right:16px!important;animation:avisoDer .28s cubic-bezier(.2,.8,.2,1)!important}
+@media (max-width:760px){.toast,.upd{left:12px!important;right:12px!important}}
+.extra{display:none!important}
+.vermas{display:block;width:100%;border:0;background:none;color:var(--sky);font:inherit;font-weight:700;font-size:13px;padding:8px 10px;text-align:left;cursor:pointer}
+.vermas:hover{text-decoration:underline}
+.icobtn{display:inline-grid!important;place-items:center;width:40px;min-width:40px;padding:0!important;margin-left:auto}
+.icobtn .ico{width:18px;height:18px}
+#dirtools .ico,#nuevoBtn .ico,#caldup .ico,#erdesc .ico{margin-right:4px}
+.errlista{display:flex;flex-direction:column;gap:6px;margin-top:10px}
+.errfila{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:start;padding:10px 12px;border:1px solid var(--line);border-left-width:4px;border-radius:10px;background:#fff}
+.errfila.e-error{border-left-color:var(--dang)}.errfila.e-api{border-left-color:#D97706}.errfila.e-reporte{border-left-color:var(--sky)}
+.errmsg{font-family:ui-monospace,Menlo,monospace;font-size:12px;margin-top:4px;word-break:break-word;color:var(--ink)}
+.errfila select{width:auto;min-height:34px;font-size:13px}
+.segs{display:inline-flex;gap:4px;padding:4px;border:1px solid var(--line);border-radius:12px;background:#fff}
+.segs button{border:0;background:none;border-radius:9px;padding:7px 12px;font:inherit;font-weight:650;color:var(--muted);cursor:pointer}
+.segs button.on{background:var(--grad);color:#fff}
+section.cargando-pend{}
 </style>
 </head>
 <body>
@@ -1365,6 +1386,6 @@ nav.main [data-t="seguimiento"]{display:none!important}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js" defer></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="./config.js"></script>
-<script src="./app.js?v=2.51.0"></script>
+<script src="./app.js?v=2.52.0"></script>
 </body>
 </html>
