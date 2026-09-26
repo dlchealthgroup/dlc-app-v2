@@ -9530,7 +9530,7 @@ async function fichaStock(s) {
   const [et, ec] = estadoStock(s);
   $('dbody').innerHTML = `
     <div class="fh"><div><h2>${esc(s.nombre)} <span class="pill ${ec}">${et}</span></h2>
-      <div class="sm">${num(s.stock)} unidades · consumo medio ${String(s.consumo_diario).replace('.', ',')} al día${s.dias_cobertura != null ? ` · cubre ${num(s.dias_cobertura)} días` : ''}</div></div>
+      <div class="sm">${num(s.stock)} unidades · ${+s.consumo_diario ? 'consumo medio ' + String(s.consumo_diario).replace('.', ',') + ' al día' : 'sin consumo en los últimos meses'}${s.dias_cobertura != null ? ` · cubre ${num(s.dias_cobertura)} días` : ''}</div></div>
       <button class="x" data-cerrar aria-label="Cerrar">✕</button></div>
     ${puedeCompras() ? `<div class="g2">
       <div><label for="stmin">Stock mínimo (aviso)</label><input id="stmin" type="number" min="0" value="${s.stock_minimo != null ? s.stock_minimo : ''}" placeholder="Sin mínimo"></div>
@@ -10029,7 +10029,7 @@ async function pintarRegistro() {
   $('fcuerpo').innerHTML = `<div class="panel"><div class="cuenta">Todo lo que ocurre en la facturación queda anotado: emisiones, rectificaciones, cobros y cambios de configuración.</div>
     <div class="dgrid-wrap"><div class="dgrid evs"><div class="dh"><span>Fecha y hora</span><span>Evento</span><span>Factura</span><span>Persona</span><span>Detalle</span></div>
     ${l.map(e => `<div class="dr" style="cursor:default"><span>${new Date(e.fecha).toLocaleString('es-ES', { dateStyle: 'short', timeStyle: 'short' })}</span><span><b>${esc(e.tipo)}</b></span>
-      <span>${esc(e.numero || '—')}</span><span>${esc(e.usuario || '—')}</span><span class="sm mono corta">${esc(JSON.stringify(e.detalle || {}).slice(0, 140))}</span></div>`).join('') || '<div class="vacio">Sin eventos.</div>'}
+      <span>${esc(e.numero || '—')}</span><span>${esc(e.usuario || '—')}</span><span class="sm corta">${esc(detalleEvento(e.detalle))}</span></div>`).join('') || '<div class="vacio">Sin eventos.</div>'}
     </div></div></div>`;
 }
 
@@ -14096,6 +14096,53 @@ detalleUsuario = function (u) {
     if (a === 'como') { $('dlg').close(); entrarComo(u.id); }
   });
 };
+
+
+/* ============================================================
+   v2.47.0 · Correcciones encontradas por la batería de QA
+   ============================================================ */
+
+// Auditoría: los cambios se leen como texto (antes salía «[object Object]» con valores complejos)
+function textoValor(v) {
+  if (v == null || v === '') return '—';
+  if (typeof v === 'boolean') return v ? 'sí' : 'no';
+  if (Array.isArray(v)) return v.length ? v.slice(0, 3).map(textoValor).join(', ') + (v.length > 3 ? '…' : '') : '—';
+  if (typeof v === 'object') {
+    if (v.nombre) return String(v.nombre);
+    const k = Object.keys(v); return k.length ? k.slice(0, 3).map(x => `${x}: ${textoValor(v[x])}`).join(', ') + (k.length > 3 ? '…' : '') : '—';
+  }
+  return String(v);
+}
+resumenDetalle = function (d) {
+  if (!d) return '';
+  if (typeof d !== 'object') return String(d).slice(0, 120);
+  if (d.nombre && typeof d.nombre !== 'object') return String(d.nombre);
+  const cambios = Object.keys(d).filter(k => Array.isArray(d[k]) && d[k].length === 2).slice(0, 4);
+  if (cambios.length) return cambios.map(k => `${k}: ${textoValor(d[k][0]).slice(0, 24)} → ${textoValor(d[k][1]).slice(0, 24)}`).join(' · ');
+  return Object.keys(d).slice(0, 4).map(k => `${k}: ${textoValor(d[k]).slice(0, 30)}`).join(' · ');
+};
+
+// Editar usuario y asignar cartera funcionan aunque la lista de usuarios aún no esté cargada (por ejemplo, desde una notificación)
+async function asegurarUsuario(id) {
+  if ((USUARIOS || []).some(x => x.id === id)) return;
+  const { data } = await RPC_ORIG('usuarios_resumen', {});
+  USUARIOS = (data || []).map(u => Object.assign({ medicos: u.cartera, visitas: u.visitas_mes }, u));
+}
+editarUsuario = (orig => async function (id, ...r) { await asegurarUsuario(id); return orig(id, ...r); })(editarUsuario);
+asignarCartera = (orig => async function (id, ...r) { await asegurarUsuario(id); return orig(id, ...r); })(asignarCartera);
+// Una llamada sin fecha se abre con la fecha de ahora (antes fallaba al abrirse)
+editorLlamada = (orig => function (l, ...r) { if (l && !l.fecha) l = Object.assign({}, l, { fecha: new Date().toISOString() }); return orig(l, ...r); })(editorLlamada);
+
+// Registro de facturación: el detalle de cada evento en texto legible
+const NOMBRES_DETALLE = { importe: 'Importe', forma: 'Forma de pago', motivo: 'Motivo', para: 'Para', asunto: 'Asunto', clave: 'Ajuste', total: 'Total', serie: 'Serie', numero: 'Número' };
+function detalleEvento(d) {
+  if (!d || typeof d !== 'object') return d ? String(d) : '—';
+  const partes = Object.keys(d).filter(k => d[k] != null && d[k] !== '' && k !== 'valor' && !/^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(String(d[k]))).map(k => {
+    const v = d[k]; const n = NOMBRES_DETALLE[k] || (k.charAt(0).toUpperCase() + k.slice(1).replace(/_/g, ' '));
+    return `${n}: ${typeof v === 'number' && /importe|total/.test(k) ? eur(v) : textoValor(v)}`;
+  });
+  return partes.join(' · ').slice(0, 160) || '—';
+}
 
 
 // Barra inferior del móvil y barra de «Entrar como» desde el primer momento
