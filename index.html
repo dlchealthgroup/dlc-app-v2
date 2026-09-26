@@ -1141,6 +1141,16 @@ html.recuperando body > *:not(#recupera):not(script):not(style){display:none!imp
 input:-webkit-autofill{animation-name:autorelleno;animation-duration:1ms}
 @keyframes autorelleno{from{opacity:1}to{opacity:1}}
 #lmsg{min-height:18px}
+
+/* v2.45.3 · Correo y firma alineado y con errores por campo */
+#cfgcuerpo .cfgpanel > p.sm,#cfgcuerpo .cfgpanel > h2 + p.sm{padding:0!important;margin:2px 0 12px!important}
+#cfgcuerpo .cfgpanel h2{padding:0 0 4px!important}
+.firmaed .g2:has(#flogo){align-items:end}
+.firmaed .g2:has(#flogo) > div:last-child{display:flex;align-items:flex-end;height:100%}
+.firmaed .vfswitch{margin:0!important;min-height:44px;align-items:center}
+.conerr{border-color:var(--dang)!important;box-shadow:0 0 0 3px rgba(194,65,65,.12)!important}
+.campoerr{display:block;color:var(--dang);font-size:12px;font-weight:600;margin-top:4px}
+#comsg{min-height:18px}
 </style>
 </head>
 <body>
@@ -1275,6 +1285,6 @@ input:-webkit-autofill{animation-name:autorelleno;animation-duration:1ms}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js" defer></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="./config.js"></script>
-<script src="./app.js?v=2.45.2"></script>
+<script src="./app.js?v=2.45.3"></script>
 </body>
 </html>

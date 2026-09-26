@@ -13383,6 +13383,7 @@ document.addEventListener('click', async e => {
 const PROVEEDORES_CORREO = {
   google: { n: 'Google Workspace o Gmail', host: 'smtp.gmail.com', puerto: 465, seg: 'ssl', ayuda: 'Usa una «contraseña de aplicación» (Cuenta de Google → Seguridad → Verificación en dos pasos → Contraseñas de aplicaciones), no la contraseña normal.' },
   microsoft: { n: 'Microsoft 365 u Outlook', host: 'smtp.office365.com', puerto: 587, seg: 'starttls', ayuda: 'La cuenta debe tener activado «SMTP autenticado» (lo activa el administrador de Microsoft 365).' },
+  mailjet: { n: 'Mailjet', host: 'in-v3.mailjet.com', puerto: 465, seg: 'ssl', ayuda: 'Usuario: la «API Key» y contraseña: la «Secret Key» (Mailjet → Account settings → API Key Management). El email del remitente debe estar validado en Mailjet.' },
   ionos: { n: 'IONOS', host: 'smtp.ionos.es', puerto: 465, seg: 'ssl', ayuda: 'Usuario: la dirección de correo completa.' },
   ovh: { n: 'OVHcloud', host: 'ssl0.ovh.net', puerto: 465, seg: 'ssl', ayuda: 'Usuario: la dirección de correo completa.' },
   otro: { n: 'Otro proveedor', host: '', puerto: 465, seg: 'ssl', ayuda: 'Pide a tu proveedor el servidor de salida (SMTP), el puerto y el tipo de seguridad.' }
@@ -13436,11 +13437,32 @@ async function pintarCorreo() {
   const guardar = async () => {
     const v = id => $(id).value.trim();
     const p = { proveedor: $('coprov').value, host: v('cohost'), puerto: +$('copuer').value || 465, seguridad: $('coseg').value, usuario: v('cousu'),
-      remitente_nombre: v('conom'), remitente_email: v('coemail') || v('cousu'), color: $('fcolor').value,
+      remitente_nombre: v('conom'), remitente_email: v('coemail') || (/@/.test(v('cousu')) ? v('cousu') : ''), color: $('fcolor').value,
       firma: { nombre: v('fnom'), cargo: v('fcar'), empresa: v('femp'), web: v('fweb'), telefono: v('ftel'), telefono2: v('ftel2'), direccion: v('fdir'), aviso: $('faviso').value.trim(), logo: $('flogo').checked ? 'si' : 'no' } };
-    if (!p.host || !p.usuario) { toast('Indica el servidor y el usuario', true); return false; }
+    // Cada dato que falta se marca en su campo
+    document.querySelectorAll('#cfgcuerpo .campoerr').forEach(x => x.remove());
+    document.querySelectorAll('#cfgcuerpo .conerr').forEach(x => x.classList.remove('conerr'));
+    const falta = (id, t) => { const el = $(id); el.classList.add('conerr'); (el.closest('.selw, .numw') || el).insertAdjacentHTML('afterend', `<span class="campoerr">${t}</span>`); };
+    const errores = [];
+    if (!p.host) errores.push(['cohost', 'Indica el servidor de salida']);
+    if (!p.usuario) errores.push(['cousu', 'Indica el usuario']);
+    if (!cfg.hay_clave && !$('copass').value) errores.push(['copass', 'Escribe la contraseña']);
+    if (!p.remitente_email) errores.push(['coemail', 'Indica el email del remitente']);
+    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(p.remitente_email)) errores.push(['coemail', 'Ese email no es válido']);
+    if (errores.length) {
+      errores.forEach(([id, t]) => falta(id, t));
+      $('comsg').innerHTML = `<b style="color:var(--dang)">${errores.length === 1 ? 'Falta un dato' : 'Faltan ' + errores.length + ' datos'}:</b> revisa los campos marcados en rojo.`;
+      $(errores[0][0]).focus(); return false;
+    }
     const { data: r, error } = await db.rpc('guardar_correo', { p, p_clave: $('copass').value || null });
-    if (error || (r && r.ok === false)) { toast('No se ha podido guardar', true); return false; }
+    if (error || (r && r.ok === false)) {
+      const motivo = error ? (error.message || error.code || '') : r.error;
+      const txt = /Could not find the function|PGRST202|does not exist/i.test(motivo) ? 'La base de datos no tiene el SQL 48 aplicado (falta la función del correo).'
+        : motivo === 'permiso' ? 'Solo administración puede configurar el correo.' : 'No se ha podido guardar: ' + motivo;
+      $('comsg').innerHTML = `<b style="color:var(--dang)">${esc(txt)}</b>`; toast(txt, true); return false;
+    }
+    if ($('copass').value) cfg.hay_clave = true;
+    $('comsg').innerHTML = '<b style="color:var(--ok)">✓ Guardado.</b>';
     $('copass').value = ''; $('copass').placeholder = '•••••••• guardada · escribe solo para cambiarla'; toast('Correo guardado'); return true;
   };
   $('cook').onclick = guardar;
