@@ -1127,6 +1127,20 @@ html.recuperando body > *:not(#recupera):not(script):not(style){display:none!imp
 #recupera .lbox{width:min(400px,100%);display:flex;flex-direction:column;text-align:left}
 #recupera .lbox img{height:84px;width:84px;border-radius:50%;margin:0 auto 12px;object-fit:cover;display:block}
 #recupera h1{text-align:center;font-size:22px;margin:0 0 4px}#recupera .lbox > p.sm:first-of-type{text-align:center}
+
+/* v2.45.2 · contraseñas y acceso */
+.clavemed{margin:6px 0 2px}
+.clavebar{display:grid;grid-template-columns:repeat(4,1fr);gap:4px}
+.clavebar i{height:6px;border-radius:4px;background:#E3EAF1;transition:background .2s}
+.clavetxt{display:block;font-size:12px;font-weight:700;margin-top:4px;min-height:14px}
+.clavereq{list-style:none;padding:0;margin:4px 0 0;display:grid;grid-template-columns:1fr 1fr;gap:2px 10px;font-size:11.5px;color:var(--muted)}
+.clavereq li::before{content:"○ ";color:#B7C4D1}
+.clavereq li.ok{color:var(--ok)}.clavereq li.ok::before{content:"✓ ";color:var(--ok)}
+.clavecoin{min-height:16px;margin-top:4px;font-weight:600}
+.btn:disabled{opacity:.45;cursor:not-allowed;box-shadow:none;filter:none}
+input:-webkit-autofill{animation-name:autorelleno;animation-duration:1ms}
+@keyframes autorelleno{from{opacity:1}to{opacity:1}}
+#lmsg{min-height:18px}
 </style>
 </head>
 <body>
@@ -1261,6 +1275,6 @@ html.recuperando body > *:not(#recupera):not(script):not(style){display:none!imp
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js" defer></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="./config.js"></script>
-<script src="./app.js?v=2.45.1"></script>
+<script src="./app.js?v=2.45.2"></script>
 </body>
 </html>
